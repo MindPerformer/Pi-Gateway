@@ -608,6 +608,11 @@ func (s *Store) SaveAccountModelCatalog(ctx context.Context, id int64, catalog *
 	if catalog.Error == "" && catalog.FetchedAt <= 0 {
 		return errors.New("store: successful model catalog needs a fetched timestamp")
 	}
+	// Validate raw metadata before any stale-attempt or missing-account no-op.
+	// Invalid input must return an error, not success or a new cache revision.
+	if _, err := json.Marshal(catalog.Models); err != nil {
+		return fmt.Errorf("store: encode account model catalog: %w", err)
+	}
 	attempted := catalog.AttemptedAt
 	if attempted <= 0 {
 		attempted = NowMS()

@@ -1,0 +1,38 @@
+# Allow only the files needed by the multi-stage build. In particular, never
+# include local configs, data, research, captures, CI secrets or narrator state.
+**
+!Dockerfile
+!.dockerignore
+!go.mod
+!go.sum
+!config.example.yaml
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!web/
+!web/**
+
+# Generated files and sensitive files remain excluded inside allowed trees.
+**/node_modules
+**/dist
+**/.git
+**/.env
+**/.env.*
+**/config.yaml
+**/credentials.json
+**/auth.json
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
+**/*.log
+**/*.exe
+**/*.exe~
+**/coverage*
+**/test-results*

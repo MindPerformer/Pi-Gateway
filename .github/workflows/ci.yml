@@ -1,0 +1,207 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run check:i18n
+      - run: npm run check:capture
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: internal/webui/dist
+          if-no-files-found: error
+
+  backend:
+    needs: frontend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: pi_gateway_test
+          POSTGRES_USER: pi_gateway
+          POSTGRES_PASSWORD: ci-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pi_gateway -d pi_gateway_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7.4-bookworm
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PI_GATEWAY_TEST_POSTGRES_DSN: postgres://pi_gateway:ci-postgres-password@127.0.0.1:5432/pi_gateway_test?sslmode=disable
+      PI_GATEWAY_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/webui/dist
+      - run: go vet ./...
+      - name: Validate the container smoke probe against a local gateway
+        run: python3 -m unittest discover -s .github -p test_compose_smoke.py -v
+      - name: Run unit and real-service integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -json ./... | tee test-results.jsonl
+      - name: Require integration tests to execute successfully (no skips)
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          events = [json.loads(line) for line in Path('test-results.jsonl').read_text().splitlines()]
+          required = {'TestPostgresStoreIntegration', 'TestRedisIntegration', 'TestBackendMatrixIntegration'}
+          required.update(f'TestBackendMatrixIntegration/{variant}' for variant in ('sqlite-memory', 'sqlite-redis', 'postgres-memory', 'postgres-redis'))
+          for test in sorted(required):
+              matches = [event for event in events if event.get('Test') == test]
+              assert any(event.get('Action') == 'run' for event in matches), f'{test} did not run'
+              assert any(event.get('Action') == 'pass' for event in matches), f'{test} did not pass'
+              assert not any(event.get('Action') == 'skip' for event in matches), f'{test} was skipped'
+          skipped = [event['Test'] for event in events if event.get('Action') == 'skip' and any(event.get('Test', '').startswith(test + '/') for test in required)]
+          assert not skipped, f'Integration subtests were skipped: {skipped}'
+          print('Real PostgreSQL/Redis contracts and all four protocol variants executed and passed.')
+          PY
+
+  image:
+    needs: backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build both supported architectures
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Load the amd64 image for Compose runtime tests
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: pi-gateway:ci-${{ github.sha }}
+      - name: Check runtime user and save the tested image
+        env:
+          TEST_IMAGE: pi-gateway:ci-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Config.User}}' "$TEST_IMAGE")" = '10001:10001'
+          docker save --output "$RUNNER_TEMP/pi-gateway-image.tar" "$TEST_IMAGE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-gateway-test-image
+          path: ${{ runner.temp }}/pi-gateway-image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  compose:
+    needs: image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sqlite
+            files: -f compose.yaml
+            redis: false
+          - name: postgres
+            files: -f compose.yaml -f compose.postgres.yaml
+            redis: false
+          - name: sqlite-redis
+            files: -f compose.yaml -f compose.redis.yaml
+            redis: true
+          - name: postgres-redis
+            files: -f compose.yaml -f compose.postgres.yaml -f compose.redis.yaml
+            redis: true
+    name: Compose (${{ matrix.name }})
+    env:
+      COMPOSE_PROJECT_NAME: pi-gateway-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.name }}
+      PI_GATEWAY_IMAGE: pi-gateway:ci-${{ github.sha }}
+      PI_GATEWAY_ADMIN_PASSWORD: ci-admin-password
+      POSTGRES_PASSWORD: ci-postgres-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: pi-gateway-test-image
+          path: ${{ runner.temp }}
+      - name: Load the verified local image
+        run: docker load --input "$RUNNER_TEMP/pi-gateway-image.tar"
+      - name: Start, persist data, recreate, and verify the stack
+        env:
+          COMPOSE_FILES: ${{ matrix.files }}
+          USE_REDIS: ${{ matrix.redis }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r -a files <<< "$COMPOSE_FILES"
+          compose=(docker compose --env-file .env.example "${files[@]}")
+          state_file="$RUNNER_TEMP/$COMPOSE_PROJECT_NAME.json"
+          cleanup() {
+            status=$?
+            if (( status != 0 )); then
+              "${compose[@]}" logs --no-color --tail=120 || true
+            fi
+            "${compose[@]}" down --volumes --remove-orphans || true
+            rm -f "$state_file"
+            exit "$status"
+          }
+          trap cleanup EXIT
+          "${compose[@]}" config --quiet
+          "${compose[@]}" up -d --no-build --wait --wait-timeout 180
+          python3 .github/compose_smoke.py seed --state "$state_file"
+          if [[ "$USE_REDIS" == true ]]; then
+            "${compose[@]}" exec -T redis redis-cli SET "$COMPOSE_PROJECT_NAME:probe" kept EX 600
+          fi
+          # Remove containers, but retain named volumes. This tests storage rather
+          # than merely restarting a process in the same container filesystem.
+          "${compose[@]}" down
+          "${compose[@]}" up -d --no-build --wait --wait-timeout 180
+          python3 .github/compose_smoke.py verify --state "$state_file"
+          if [[ "$USE_REDIS" == true ]]; then
+            test "$("${compose[@]}" exec -T redis redis-cli --raw GET "$COMPOSE_PROJECT_NAME:probe")" = kept
+            "${compose[@]}" exec -T redis redis-cli DEL "$COMPOSE_PROJECT_NAME:probe"
+          fi

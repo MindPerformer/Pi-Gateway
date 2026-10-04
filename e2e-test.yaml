@@ -1,0 +1,27 @@
+schema_version: 1
+timezone: Asia/Shanghai
+server:
+  host: 127.0.0.1
+  port: 8400
+admin:
+  username: admin
+  password: testpass123
+  session_ttl_minutes: 1440
+data:
+  database: data/e2e-test.db
+upstream:
+  base_url: https://api.openai.com/v1
+  transport: passthrough
+  sse_zstd: false
+  websocket_pool: true
+accounts:
+  default_strategy: round_robin
+capture:
+  enabled: true
+  per_account_limit: 50
+  persist: true
+oauth:
+  callback_host: 127.0.0.1
+  callback_port: 1455
+logging:
+  level: info

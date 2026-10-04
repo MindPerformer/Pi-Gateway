@@ -1,0 +1,28 @@
+services:
+  pi-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${PI_GATEWAY_IMAGE:-pi-gateway:local}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    ports:
+      - "${PI_GATEWAY_PORT:-8317}:8317"
+    environment:
+      PI_GATEWAY_HOST: 0.0.0.0
+      PI_GATEWAY_PORT: 8317
+      PI_GATEWAY_DATABASE: /app/data/pi-gateway.db
+      PI_GATEWAY_ADMIN_PASSWORD: ${PI_GATEWAY_ADMIN_PASSWORD:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - pi-gateway-data:/app/data
+    healthcheck:
+      test: [ "CMD", "/usr/local/bin/pi-gateway", "--healthcheck", "--config", "/app/config.yaml", "--host", "127.0.0.1", "--port", "8317" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  pi-gateway-data:

@@ -1,0 +1,75 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import type { Account, QuotaWindow } from '../../api/types'
+import { formatUntil } from '../../stores/ui'
+import { RotateCcw } from 'lucide-vue-next'
+import { useI18n } from '../../i18n'
+const { t } = useI18n()
+
+const props = defineProps<{ account: Account; onOpen: (account: Account) => void; onLink: (account: Account) => void }>()
+const windows = computed(() => [props.account.quota?.session, props.account.quota?.weekly].filter((item): item is QuotaWindow => Boolean(item)))
+const credits = computed(() => props.account.quota?.report?.credits)
+const creditBalance = computed(() => {
+	const balance = credits.value?.balance?.trim()
+	// Avoid Number conversion: credit balances can contain high-precision decimals.
+	if (!balance || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(balance)) return ''
+	return /[1-9]/.test(balance.split(/[eE]/)[0] ?? '') ? balance : ''
+})
+const showCredits = computed(() => Boolean(credits.value?.unlimited || creditBalance.value))
+const resetCount = computed(() => props.account.quota?.reset_credits?.available_count ?? 0)
+function tone(window: QuotaWindow) { return window.limit_reached || window.used_percent >= 100 ? 'danger' : window.used_percent >= 80 ? 'warn' : 'success' }
+function label(window: QuotaWindow) { return window.kind === '5h' ? '5h' : window.kind === '7d' ? '7d' : window.kind }
+</script>
+
+<template>
+	<div class="quota-cell">
+		<template v-if="!account.codex_linked">
+			<span class="quota-muted">—</span>
+			<button class="btn btn-ghost quota-link" type="button" @click="onLink(account)">{{ t('accounts.linkCodex') }}</button>
+		</template>
+		<template v-else>
+			<button class="quota-button" type="button" :title="t('quota.viewDetails')" @click="onOpen(account)">
+				<span class="quota-overview">
+					<span class="quota-windows">
+						<template v-if="windows.length">
+							<span v-for="window in windows.slice(0, 1)" :key="window.role" class="quota-window">
+								<span class="quota-line"><span>{{ label(window) }}<small v-if="windows.length > 1" class="additional-window">+{{ windows.length - 1 }}</small></span><strong :class="`quota-${tone(window)}`">{{ Math.round(window.used_percent) }}%</strong></span>
+								<span class="quota-track"><i :class="`quota-${tone(window)}`" :style="{ width: `${Math.min(100, Math.max(0, window.used_percent))}%` }" /></span>
+							</span>
+						</template>
+						<span v-else class="quota-muted">{{ t('quota.never') }}</span>
+					</span>
+					<span v-if="showCredits" class="quota-balance"><span>{{ t('quota.credits') }}</span><strong v-if="credits?.unlimited">{{ t('quota.creditsUnlimited') }}</strong><strong v-else>{{ creditBalance }}</strong></span>
+				</span>
+				<span v-if="windows[0]?.reset_at || resetCount > 0" class="quota-meta">
+					<span v-if="windows[0]?.reset_at" class="quota-reset" :title="t('quota.resetsIn', { when: formatUntil(windows[0].reset_at - Date.now()) })">{{ formatUntil(windows[0].reset_at - Date.now()) }}</span>
+					<span v-if="resetCount > 0" class="quota-credit" :title="t('quota.resetCreditsAvailable', { count: resetCount })"><RotateCcw :size="10" aria-hidden="true" />{{ t('quota.resetCredits') }}: {{ resetCount }}</span>
+				</span>
+			</button>
+		</template>
+	</div>
+</template>
+
+<style scoped>
+.quota-cell { width: 168px; max-width: 100%; min-width: 0; min-height: 52px; display: grid; align-content: center; gap: 4px; }
+.quota-button { width: 100%; min-width: 0; padding: 4px 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.quota-overview { display: flex; align-items: center; gap: 10px; }
+.quota-windows { flex: 1; min-width: 0; }
+.quota-window { display: block; }
+.quota-balance { display: grid; gap: 3px; max-width: 48%; color: var(--color-ink-faint); font-size: 9px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
+.quota-balance strong { color: var(--color-ink-muted); font-family: var(--font-mono); font-size: 11px; font-weight: 650; }
+.quota-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin-top: 6px; font-size: 10px; line-height: 1.4; }
+.quota-credit { display: inline-flex; max-width: 100%; align-items: center; gap: 4px; color: var(--color-ink-faint); white-space: normal; overflow-wrap: anywhere; }
+.quota-credit svg { flex-shrink: 0; }
+.additional-window { margin-left: 6px; border-radius: 4px; padding: 1px 4px; background: var(--color-surface-2); font-family: var(--font-mono); font-size: 9px; }
+.quota-line { display: flex; justify-content: space-between; gap: 8px; color: var(--color-ink-faint); font-size: 10px; line-height: 1; }
+.quota-line strong { font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.quota-track { display: block; height: 4px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: var(--color-surface-3); }
+.quota-track i { display: block; height: 100%; border-radius: inherit; }
+.quota-reset, .quota-muted { color: var(--color-ink-faint); font-size: 10px; }
+.quota-link { min-height: 24px; padding: 3px 4px; font-size: 11px; justify-self: start; }
+.quota-success { color: var(--color-success); }
+.quota-warn { color: var(--color-warn); }
+.quota-danger { color: var(--color-danger); }
+.quota-track i { background: currentColor; }
+</style>

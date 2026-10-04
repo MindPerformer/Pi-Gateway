@@ -1,0 +1,24 @@
+# docker compose -f compose.yaml -f compose.redis.yaml up -d
+services:
+  pi-gateway:
+    environment:
+      PI_GATEWAY_REDIS_ENABLED: "true"
+      PI_GATEWAY_REDIS_URL: redis://redis:6379/0
+      PI_GATEWAY_REDIS_PREFIX: ${PI_GATEWAY_REDIS_PREFIX:-pi-gateway:}
+    depends_on:
+      redis:
+        condition: service_healthy
+  redis:
+    image: redis:7.4-bookworm
+    restart: unless-stopped
+    command: [ "redis-server", "--appendonly", "yes" ]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  redis-data:

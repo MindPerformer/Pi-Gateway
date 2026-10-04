@@ -1,0 +1,191 @@
+# pi-gateway configuration
+#
+# Every value below is optional; the defaults shown here are what the binary uses
+# when the key is omitted. Environment variables prefixed with PI_GATEWAY_ override
+# the corresponding entry (see internal/config/config.go).
+
+schema_version: 1
+
+# Display timezone for the admin UI only. It never influences what is sent
+# upstream: the environment context is dropped entirely to match Pi.
+timezone: Asia/Shanghai
+
+server:
+  # Bind address for the data plane, the admin API and the web UI.
+  host: 127.0.0.1
+  port: 8317
+  public_url: ''
+
+admin:
+  username: admin
+  # Leave empty and a random password is generated on first start and printed to
+  # the log. Set it here (or via PI_GATEWAY_ADMIN_PASSWORD) to pin the password.
+  password: ''
+  session_ttl_minutes: 1440
+
+data:
+  # sqlite (default) or postgres. PI_GATEWAY_DATABASE_DRIVER overrides this.
+  driver: sqlite
+  # Legacy SQLite path; ignored for PostgreSQL. PI_GATEWAY_DATABASE overrides it.
+  database: data/pi-gateway.db
+  # PostgreSQL requires a DSN; for SQLite a nonempty DSN overrides database.
+  # Prefer PI_GATEWAY_DATABASE_DSN for credentials rather than storing them here.
+  # Example: postgres://gateway:password@localhost:5432/gateway?sslmode=require
+  dsn: ''
+  # PI_GATEWAY_DATABASE_MAX_OPEN_CONNS / MAX_IDLE_CONNS / CONN_MAX_LIFETIME_SECONDS.
+  # Zero connection limits use defaults; idle is capped by open; lifetime 0 is unlimited.
+  # In-memory SQLite always uses one connection and an unlimited lifetime.
+  max_open_conns: 8
+  max_idle_conns: 8
+  conn_max_lifetime_seconds: 0
+
+# All four database/Redis combinations target a SINGLE ACTIVE gateway instance.
+# Redis stores only bounded, disposable metadata: never request/response bodies,
+# transcripts or credentials. Metadata cannot recover a dead upstream socket;
+# start a new chain with full history when connection-local continuation is lost.
+# Unavailable Redis does not prevent ordinary full requests or catalog DB fallback.
+redis:
+  # PI_GATEWAY_REDIS_ENABLED / URL / PASSWORD / TLS / PREFIX.
+  enabled: false
+  # When enabled, supply redis://host:6379/0 or rediss://host:6379/0 via environment.
+  url: ''
+  password: ''
+  tls: false
+  # A persistent, non-secret database UUID is appended for deployment isolation.
+  prefix: 'pi-gateway:'
+  # These limits apply to the memory backend too. Environment overrides are
+  # PI_GATEWAY_REDIS_SESSION_TTL_SECONDS / COMMIT_TIMEOUT_MS / MAX_ENTRIES /
+  # MAX_RECORD_BYTES / MAX_BYTES / CATALOG_TTL_SECONDS (each with PI_GATEWAY_REDIS_).
+  session_ttl_seconds: 14400
+  commit_timeout_ms: 100
+  max_entries: 10000
+  max_record_bytes: 65536
+  max_bytes: 67108864
+  catalog_ttl_seconds: 30
+
+# Docker uses: pi-gateway --healthcheck [--config PATH] [--host HOST] [--port PORT].
+# This probes local /healthz before opening any database or running migrations.
+upstream:
+  # Pi's modern openai provider uses this URL for both API keys and the
+  # "Sign in with ChatGPT" subscription grant. The OAuth resource is the same
+  # URL; model requests go to /v1/responses. api.chatgpt.com is not a Pi endpoint.
+  # Legacy openai-codex instead uses chatgpt.com/backend-api/codex/responses,
+  # with a different OAuth grant and wire shape; changing only this URL does not
+  # switch providers. Linked Codex quota requests remain on /backend-api/wham/*
+  # independently of this setting, and do not measure the direct ChatGPT grant.
+  base_url: https://api.openai.com/v1
+
+  # Optional WebSocket suffix relative to base_url's path (e.g. /responses).
+  # Empty uses the Responses path above with ws/wss; no transport is removed.
+  ws_path: ''
+
+  # How requests reach the backend. The account's own upstream_protocol always
+  # wins; this is only the fallback for accounts that leave it empty:
+  #   sse              always use the SSE endpoint (default; matches the ChatGPT route)
+  #   passthrough      mirror the client (SSE client -> SSE upstream, WS client -> WS upstream)
+  #   websocket        a fresh WebSocket per request
+  #   websocket-cached reuse a pooled WebSocket per session (sends incremental input)
+  #   auto             prefer websocket-cached, fall back to SSE on transport failure
+  transport: sse
+
+  # Compress SSE request bodies with zstd and send content-encoding: zstd. Off by
+  # default: the ChatGPT route does not compress its request body.
+  sse_zstd: false
+
+  # Reuse WebSocket connections across turns for the same session + account.
+  websocket_pool: true
+  # Bounded local continuation baselines and pool capacity. Environment overrides:
+  # PI_GATEWAY_UPSTREAM_WEBSOCKET_MAX_BASELINE_BYTES / MAX_TOTAL_BASELINE_BYTES /
+  # MAX_POOL_CONNECTIONS (each with PI_GATEWAY_UPSTREAM_WEBSOCKET_).
+  websocket_max_baseline_bytes: 2097152
+  websocket_max_total_baseline_bytes: 67108864
+  websocket_max_pool_connections: 256
+
+  connect_timeout_seconds: 15
+  # How long to wait for the upstream to send response headers before giving up.
+  # Covers the gap before the first byte; it does not bound a healthy long stream.
+  # 0 falls back to connect_timeout_seconds.
+  response_header_timeout_seconds: 0
+  # Abandon a stream when the upstream goes silent for this long.
+  idle_timeout_seconds: 300
+  # Explicit request timeout. When > 0 it is also advertised as
+  # "X-Stainless-Timeout: <seconds>", mirroring Pi, which only sends that header
+  # when the caller passes an explicit timeout. 0 keeps the header absent (the SDK
+  # default does not advertise it either).
+  request_timeout_seconds: 0
+
+  # Empty means a plausible Pi User-Agent is used: "pi (linux 6.1.0; x64)".
+  user_agent: ''
+  originator: pi
+
+  # Pi sends the SDK's platform fingerprint headers (X-Stainless-OS/Arch/Runtime/
+  # Runtime-Version). Set these to match the machine actually running Pi, not this
+  # gateway host: OS is one of MacOS/Windows/Linux/..., arch one of x64/arm64/...,
+  # runtime "node" and runtime_version the target Node version.
+  # Empty values fall back to the defaults below.
+  # Each is also overridable by environment variable, which wins over this file:
+  #   PI_GATEWAY_UPSTREAM_STAINLESS_OS / _ARCH / _RUNTIME / _RUNTIME_VERSION
+  stainless_os: Linux
+  stainless_arch: x64
+  stainless_runtime: node
+  stainless_runtime_version: v24.21.0
+
+accounts:
+  # Refresh an access token when it expires within this window.
+  refresh_margin_seconds: 3600
+  refresh_interval_seconds: 30
+  refresh_concurrency: 2
+  max_concurrent_per_account: 3
+  # round_robin | sticky | least_inflight | single
+  default_strategy: round_robin
+  # Applied to newly added accounts. Empty means direct (no proxy).
+  default_proxy_url: ''
+
+capture:
+  enabled: true
+  # Keep the most recent N exchanges per account; older ones are trimmed.
+  per_account_limit: 50
+  # Bound the stored payload per record (headers and frames included).
+  max_bytes_per_record: 8388608
+  include_headers: true
+  # Persist to the selected database so the analysis view survives restarts.
+  persist: true
+
+oauth:
+  # The localhost callback Pi and the Codex CLI use. This listener is on the
+  # gateway host: if the gateway runs remotely, the user pastes the redirect URL
+  # into the web UI instead.
+  callback_host: 127.0.0.1
+  callback_port: 1455
+  flow_timeout_seconds: 300
+
+reasoning:
+  # Sent only when the client omits reasoning. Empty means omit the block, which
+  # keeps whatever the client asked for.
+  default_effort: ''
+  default_summary: auto
+
+models:
+  # Used when a client sends no model.
+  default_model: ''
+  # Rewrite requested model ids, e.g. {"gpt-4o": "gpt-5.1-codex"}.
+  mappings: { }
+  # Catalog discovery only, and only for accounts with linked Codex credentials.
+  # Generation still uses upstream.base_url and the main ChatGPT credentials.
+  # Independent of upstream.base_url and Codex quota requests. Accepts a base
+  # ending in /backend-api, /codex, or the complete /models endpoint; a bare
+  # origin uses /backend-api/codex/models. Local/custom gateways are supported.
+  # Must be HTTP(S), without userinfo, fragments or credential query parameters;
+  # api.openai.com is rejected to avoid sending Codex tokens to the main API.
+  # Override with PI_GATEWAY_CODEX_BASE_URL.
+  codex_base_url: https://chatgpt.com/backend-api
+  # Version from the local reference implementation, not a latest-version claim.
+  # Empty uses the default; nonempty values must be 1-64 ASCII letters/digits or
+  # . _ + -, starting with a letter/digit (no whitespace). Existing URL query
+  # parameters are retained; client_version is replaced with this value.
+  # Override with PI_GATEWAY_CODEX_CLIENT_VERSION.
+  codex_client_version: '0.153.4'
+
+logging:
+  level: info
+  file: ''

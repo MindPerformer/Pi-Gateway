@@ -1,0 +1,56 @@
+schema_version: 1
+timezone: Asia/Shanghai
+
+server:
+  host: 127.0.0.1
+  port: 18317
+
+admin:
+  username: admin
+  password: smoke-test-password
+  session_ttl_minutes: 1440
+
+data:
+  database: .tmp-smoke/pi-gateway.db
+
+upstream:
+  base_url: https://api.openai.com/v1
+  transport: sse
+  sse_zstd: false
+  websocket_pool: true
+  connect_timeout_seconds: 15
+  idle_timeout_seconds: 300
+  user_agent: ''
+  originator: pi
+
+accounts:
+  refresh_margin_seconds: 3600
+  refresh_interval_seconds: 30
+  refresh_concurrency: 2
+  max_concurrent_per_account: 3
+  default_strategy: round_robin
+  default_proxy_url: ''
+
+capture:
+  enabled: true
+  per_account_limit: 50
+  max_bytes_per_record: 8388608
+  include_headers: true
+  persist: true
+
+oauth:
+  callback_host: 127.0.0.1
+  callback_port: 1455
+  flow_timeout_seconds: 300
+
+reasoning:
+  default_effort: ''
+  default_summary: auto
+
+models:
+  default_model: ''
+  mappings: { }
+
+logging:
+  level: debug
+  file: ''

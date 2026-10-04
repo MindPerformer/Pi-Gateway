@@ -35,9 +35,23 @@ func newModelAdmin(t *testing.T, target string) (*Server, *store.Account) {
 	}
 	st.DB().SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = st.Close() })
+	// Keep the linked credential for generation-isolation tests, but never send
+	// its fake token to the default public Codex endpoint during catalog refresh.
+	codex := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/codex/models" ||
+			r.Header.Get("Authorization") != "Bearer secret-codex" || r.Header.Get("ChatGPT-Account-Id") != "codex-account" ||
+			r.URL.Query().Get("client_version") == "" {
+			t.Errorf("unexpected local Codex catalog request: %s %s", r.Method, r.URL.Path)
+		}
+		// Primary-only fixtures exercise partial success and total failure;
+		// explicit dual-source tests install their own successful Codex handler.
+		http.Error(w, "local Codex catalog unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(codex.Close)
 	cfg := config.Default()
 	cfg.Upstream.BaseURL = target + "/v1"
 	cfg.Upstream.UserAgent = "model-test-pi"
+	cfg.Models.CodexBaseURL = codex.URL + "/codex"
 	factory := egress.NewFactory(egress.Options{ConnectTimeout: time.Second, ResponseHeaderTimeout: time.Second})
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	manager := accounts.New(st, oauth.NewClient(nil), factory, accounts.Options{Logger: logger})
@@ -439,5 +453,140 @@ func TestAccountModelDiagnosticTransportAndCompletedOutput(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"response":{"status":"completed","output":[{"content":[{"type":"output_text","text":"terminal only"}]}]}}`), &data)
 	if err := collector.onEvent(&upstream.Event{Type: "response.completed", Data: data}); err != errModelTestComplete || !collector.completed || collector.output.String() != "terminal only" || result.FirstTokenMS == nil {
 		t.Fatalf("terminal text not collected: err=%v output=%s", err, collector.output.String())
+	}
+}
+
+func TestAccountModelCatalogDualSourceLocalContracts(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		linked              bool
+		chatGPT, codex      int
+		wantStatus          int
+		wantChat, wantCodex string
+	}{
+		{"both_success", true, 200, 200, 200, "chatgpt-new", "codex-new"},
+		{"chatgpt_failure", true, 503, 200, 200, "chatgpt-old", "codex-new"},
+		{"codex_failure", true, 200, 503, 200, "chatgpt-new", "codex-old"},
+		{"both_failure", true, 503, 503, 502, "chatgpt-old", "codex-old"},
+		{"codex_unlinked", false, 200, 200, 200, "chatgpt-new", ""},
+		{"unlinked_primary_failure", false, 503, 200, 502, "chatgpt-old", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var second atomic.Bool
+			var chatCalls, codexCalls atomic.Int32
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				status, suffix := http.StatusOK, "old"
+				if second.Load() {
+					suffix = "new"
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/v1/models":
+					chatCalls.Add(1)
+					if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer selected-primary" || r.Header.Get("ChatGPT-Account-Id") != "" {
+						t.Error("ChatGPT catalog used the wrong method or credential")
+					}
+					if second.Load() {
+						status = tc.chatGPT
+					}
+					w.WriteHeader(status)
+					if status != http.StatusOK {
+						fmt.Fprint(w, `{"error":"selected-primary must-not-leak"}`)
+						return
+					}
+					fmt.Fprintf(w, `{"data":[{"id":"shared","name":"ChatGPT name","supports_parallel_tool_calls":false,"supported_reasoning_levels":[]},{"id":"chatgpt-%s"}]}`, suffix)
+				case "/codex/models":
+					codexCalls.Add(1)
+					if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer secret-codex" || r.Header.Get("ChatGPT-Account-Id") != "codex-account" || r.URL.Query().Get("client_version") != config.DefaultCodexClientVersion {
+						t.Error("Codex catalog used the wrong method, credential, identity or version")
+					}
+					if second.Load() {
+						status = tc.codex
+					}
+					w.WriteHeader(status)
+					if status != http.StatusOK {
+						fmt.Fprint(w, `{"error":"secret-codex must-not-leak"}`)
+						return
+					}
+					fmt.Fprintf(w, `{"models":[{"slug":"shared","display_name":"Codex name","supports_parallel_tool_calls":true,"supported_reasoning_levels":[{"effort":"high"}],"context_window":128000},{"slug":"codex-%s"}]}`, suffix)
+				default:
+					t.Errorf("unexpected upstream route: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer target.Close()
+			s, account := newModelAdmin(t, target.URL)
+			s.cfg.Models.CodexBaseURL = target.URL + "/codex"
+			ctx := context.Background()
+			if !tc.linked {
+				if err := s.store.ClearCodexCredential(ctx, account.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.store.PatchAccountManagementFields(ctx, account.ID, store.AccountManagementPatch{SupplementalModels: []string{"shared", "manual-only"}}); err != nil {
+				t.Fatal(err)
+			}
+			refresh := func(wantStatus int) store.ModelCatalog {
+				t.Helper()
+				w, _ := modelAdminRequest(t, s.handleRefreshAccountModels, ctx, account.ID, http.MethodPost, "")
+				if w.Code != wantStatus {
+					t.Fatalf("refresh status=%d want=%d body=%s", w.Code, wantStatus, w.Body.String())
+				}
+				for _, secret := range []string{"selected-primary", "secret-codex", "must-not-leak"} {
+					if strings.Contains(w.Body.String(), secret) {
+						t.Fatalf("catalog response leaked %q", secret)
+					}
+				}
+				var catalog store.ModelCatalog
+				if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
+					t.Fatal(err)
+				}
+				return catalog
+			}
+			first := refresh(http.StatusOK)
+			if first.Error != "" {
+				t.Fatalf("initial local refresh failed: %s", first.Error)
+			}
+			second.Store(true)
+			got := refresh(tc.wantStatus)
+			models := make(map[string]store.CatalogModel)
+			for _, model := range got.Models {
+				models[model.ID] = model
+			}
+			wantCount := 3
+			if tc.linked {
+				wantCount++
+			}
+			if len(got.Models) != wantCount || len(models) != wantCount || models[tc.wantChat].ID == "" || (tc.wantCodex != "" && models[tc.wantCodex].ID == "") || models["manual-only"].Source != "manual" {
+				t.Fatalf("source replacement/cache retention/manual precedence: %+v", got.Models)
+			}
+			shared := models["shared"]
+			wantOrigins := store.ModelSourceChatGPT
+			if tc.linked {
+				wantOrigins += "," + store.ModelSourceCodex
+				if len(got.SourceCatalogs[store.ModelSourceCodex].Models) != 2 || string(shared.Metadata["context_window"]) != "128000" || string(got.SourceCatalogs[store.ModelSourceCodex].Models[1].Metadata["supports_parallel_tool_calls"]) != "true" {
+					t.Fatal("Codex metadata was lost or its source snapshot was overwritten")
+				}
+			}
+			if shared.Source != "upstream" || shared.Name != "ChatGPT name" || strings.Join(shared.Origins, ",") != wantOrigins || string(shared.Metadata["supports_parallel_tool_calls"]) != "false" || string(shared.Metadata["supported_reasoning_levels"]) != "[]" {
+				t.Fatalf("merged model lost primary capabilities or origins: %+v", shared)
+			}
+			if (got.SourceCatalogs[store.ModelSourceChatGPT].Error != "") != (tc.chatGPT != 200) || (got.SourceCatalogs[store.ModelSourceCodex].Error != "") != (tc.linked && tc.codex != 200) {
+				t.Fatalf("incorrect per-source errors: %+v", got.SourceCatalogs)
+			}
+			if (got.Error != "") != (tc.chatGPT != 200 || (tc.linked && tc.codex != 200)) {
+				t.Fatalf("partial/complete failure was hidden: %q", got.Error)
+			}
+			wantCodexCalls := int32(2)
+			if !tc.linked {
+				wantCodexCalls = 0
+				if source := got.SourceCatalogs[store.ModelSourceCodex]; !source.Skipped || source.SkipReason != "codex_not_linked" || len(source.Models) != 0 {
+					t.Fatalf("unlinked Codex was not skipped: %+v", source)
+				}
+			}
+			if chatCalls.Load() != 2 || codexCalls.Load() != wantCodexCalls {
+				t.Fatalf("unexpected real requests: chatgpt=%d codex=%d", chatCalls.Load(), codexCalls.Load())
+			}
+		})
 	}
 }

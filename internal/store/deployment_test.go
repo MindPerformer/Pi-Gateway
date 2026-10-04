@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -88,8 +87,8 @@ func checkDeploymentIdentity(t *testing.T, opts Options) string {
 }
 
 func TestDeploymentIDConcurrentAndRestartStable(t *testing.T) {
-	one := checkDeploymentIdentity(t, Options{Path: filepath.Join(t.TempDir(), "one.db")})
-	two := checkDeploymentIdentity(t, Options{Path: filepath.Join(t.TempDir(), "two.db")})
+	one := checkDeploymentIdentity(t, Options{Path: storeTestPath(t)})
+	two := checkDeploymentIdentity(t, Options{Path: storeTestPath(t)})
 	if one == two {
 		t.Fatal("independent databases share a deployment identity")
 	}

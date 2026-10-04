@@ -87,6 +87,13 @@ func readModelEntries(t *testing.T, h *testHarness, suffix string) []map[string]
 func modelEntryFields(t *testing.T, model store.CatalogModel, id string, codex bool) map[string]any {
 	t.Helper()
 	fields := map[string]any{"object": "model", "owned_by": "openai", "name": model.Name, "source": model.Source}
+	if len(model.Origins) > 0 {
+		origins := make([]any, len(model.Origins))
+		for i, origin := range model.Origins {
+			origins[i] = origin
+		}
+		fields["origins"] = origins
+	}
 	if model.Description != "" {
 		fields["description"] = model.Description
 	}
@@ -382,7 +389,7 @@ func TestModelsReturnPublicCatalogFieldsAndAliases(t *testing.T) {
 		t.Fatalf("empty catalog=%v", got)
 	}
 	target := store.CatalogModel{
-		ID: "target", Name: "Target display name", Description: "Target description", Source: "upstream",
+		ID: "target", Name: "Target display name", Description: "Target description", Source: "upstream", Origins: []string{store.ModelSourceChatGPT},
 		Metadata: map[string]json.RawMessage{
 			"id":                                   json.RawMessage(`"target"`),
 			"model":                                json.RawMessage(`"target"`),
@@ -441,8 +448,15 @@ func TestModelsReturnPublicCatalogFieldsAndAliases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(catalog.Models[0], target) {
-		t.Fatalf("alias changed stored target: %+v", catalog.Models[0])
+	var storedTarget *store.CatalogModel
+	for i := range catalog.Models {
+		if catalog.Models[i].ID == target.ID {
+			storedTarget = &catalog.Models[i]
+			break
+		}
+	}
+	if storedTarget == nil || !reflect.DeepEqual(*storedTarget, target) {
+		t.Fatalf("alias changed stored target: %+v", catalog.Models)
 	}
 }
 
@@ -540,11 +554,11 @@ func TestModelsDuplicateIDsChooseDeterministicEligibleMetadata(t *testing.T) {
 	if err := h.store.CreateAccount(ctx, second); err != nil {
 		t.Fatal(err)
 	}
-	firstModel := store.CatalogModel{ID: "shared", Name: "First account model", Description: "First description", Source: "upstream", Metadata: map[string]json.RawMessage{
+	firstModel := store.CatalogModel{ID: "shared", Name: "First account model", Description: "First description", Source: "upstream", Origins: []string{store.ModelSourceChatGPT}, Metadata: map[string]json.RawMessage{
 		"context_window": json.RawMessage(`1000`), "nullable": json.RawMessage(`null`), "supported": json.RawMessage(`false`),
 		"empty": json.RawMessage(`[]`), "levels": json.RawMessage(`["low"]`), "nested": json.RawMessage(`{"first":true}`),
 	}}
-	secondModel := store.CatalogModel{ID: "shared", Name: "Second account model", Description: "Second description", Source: "upstream", Metadata: map[string]json.RawMessage{
+	secondModel := store.CatalogModel{ID: "shared", Name: "Second account model", Description: "Second description", Source: "upstream", Origins: []string{store.ModelSourceChatGPT}, Metadata: map[string]json.RawMessage{
 		"context_window": json.RawMessage(`2000`), "nullable": json.RawMessage(`"replacement"`), "supported": json.RawMessage(`true`),
 		"empty": json.RawMessage(`["new"]`), "levels": json.RawMessage(`["high"]`), "nested": json.RawMessage(`{"second":true}`),
 		"new_capability": json.RawMessage(`{"enabled":true}`),
@@ -613,7 +627,7 @@ func TestModelsPreferUpstreamWithoutFillingManualDefaults(t *testing.T) {
 	}
 	// Legacy upstream snapshots can legitimately know no capabilities. Neither
 	// earlier nor later manual accounts may inject guessed reasoning defaults.
-	upstreamModel := store.CatalogModel{ID: "shared", Name: "Observed name", Description: "Observed description", Source: "upstream"}
+	upstreamModel := store.CatalogModel{ID: "shared", Name: "Observed name", Description: "Observed description", Source: "upstream", Origins: []string{store.ModelSourceChatGPT}}
 	if err := h.store.SaveAccountModelCatalog(ctx, upstreamAccount.ID, &store.ModelCatalog{Models: []store.CatalogModel{upstreamModel}, FetchedAt: store.NowMS(), AttemptedAt: store.NowMS()}); err != nil {
 		t.Fatal(err)
 	}

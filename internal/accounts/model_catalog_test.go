@@ -139,8 +139,23 @@ func TestParseModelCatalogEnvelopeAndCountBounds(t *testing.T) {
 func TestModelCatalogRefreshThroughProxyPrimaryTokenAndFailurePreservation(t *testing.T) {
 	var status atomic.Int64
 	status.Store(200)
-	var targetCalls, proxyCalls atomic.Int64
+	var targetCalls, codexCalls, proxyCalls atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/codex/models" {
+			codexCalls.Add(1)
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer codex-secret" ||
+				r.Header.Get("ChatGPT-Account-Id") != "codex-id" || r.Header.Get("User-Agent") != "catalog-test-pi" ||
+				r.Header.Get("Proxy-Authorization") != "" || r.URL.Query().Get("client_version") != config.DefaultCodexClientVersion {
+				t.Errorf("incorrect local Codex request: %s %s headers=%v", r.Method, r.URL, r.Header)
+			}
+			w.WriteHeader(int(status.Load()))
+			if status.Load() == http.StatusOK {
+				fmt.Fprint(w, `{"models":[]}`)
+			} else {
+				fmt.Fprint(w, `{"error":"primary-secret codex-secret proxy-password"}`)
+			}
+			return
+		}
 		targetCalls.Add(1)
 		if r.Method != "GET" || r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer primary-secret" {
 			t.Errorf("incorrect catalog target/credential: method=%s path=%s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
@@ -190,6 +205,7 @@ func TestModelCatalogRefreshThroughProxyPrimaryTokenAndFailurePreservation(t *te
 	a, _ = st.GetAccount(context.Background(), a.ID)
 	cfg := config.Default()
 	cfg.Upstream.BaseURL = target.URL + "/v1"
+	cfg.Models.CodexBaseURL = target.URL + "/codex"
 	first, err := manager.RefreshModelCatalog(context.Background(), a, cfg, "catalog-test-pi")
 	if err != nil || first == nil || len(first.Models) != 1 || first.Models[0].ID != "real-model" || first.FetchedAt == 0 || first.Error != "" {
 		t.Fatalf("refresh=%+v err=%v", first, err)
@@ -217,8 +233,8 @@ func TestModelCatalogRefreshThroughProxyPrimaryTokenAndFailurePreservation(t *te
 			t.Fatal("catalog error leaked secret")
 		}
 	}
-	if targetCalls.Load() != 2 || proxyCalls.Load() != 2 {
-		t.Fatalf("wrong outbound path: target=%d proxy=%d", targetCalls.Load(), proxyCalls.Load())
+	if targetCalls.Load() != 2 || codexCalls.Load() != 2 || proxyCalls.Load() != 4 {
+		t.Fatalf("wrong outbound path: primary=%d codex=%d proxy=%d", targetCalls.Load(), codexCalls.Load(), proxyCalls.Load())
 	}
 }
 

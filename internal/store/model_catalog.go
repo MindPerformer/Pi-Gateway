@@ -599,8 +599,8 @@ func (s *Store) SaveAccountModelCatalogRefresh(ctx context.Context, id int64, at
 }
 
 // SaveAccountModelCatalog is the legacy ChatGPT-only writer. It must not replace
-// Codex state. Legacy attempts have no opaque token, so ambiguous equal-time
-// attempts are rejected; an active tokenized refresh also takes precedence.
+// Codex state. Equal-time legacy writes follow transaction order, while active
+// and consumed tokenized refreshes continue to protect their source snapshots.
 func (s *Store) SaveAccountModelCatalog(ctx context.Context, id int64, catalog *ModelCatalog) error {
 	if catalog == nil || id <= 0 {
 		return errors.New("store: invalid account model catalog")
@@ -637,13 +637,17 @@ func (s *Store) SaveAccountModelCatalog(ctx context.Context, id int64, catalog *
 	previous := state.Sources[ModelSourceChatGPT]
 	fence := state.Pending[ModelSourceChatGPT]
 	watermark := max(previous.AttemptedAt, fence.AttemptedAt)
-	if fence.Token != "" || attempted < watermark ||
+	// Tokenized refreshes fence all older work. Legacy attempts instead track
+	// the latest successful list and latest attempt independently: an older
+	// success may improve the list without clearing a newer failure.
+	if fence.Token != "" ||
+		(attempted < watermark && (attempted <= fence.AttemptedAt || catalog.Error != "" || catalog.FetchedAt <= previous.FetchedAt)) ||
 		(catalog.Error == "" && catalog.FetchedAt < previous.FetchedAt) {
 		return tx.Commit()
 	}
-	if attempted == watermark {
-		// Preserve legacy cache invalidation for repeated same-millisecond
-		// writes without letting an ambiguous attempt replace a newer snapshot.
+	if attempted == watermark && attempted <= fence.AttemptedAt {
+		// Preserve legacy cache invalidation without letting a same-millisecond
+		// legacy attempt overwrite a snapshot protected by a tokenized refresh.
 		if err := changeCatalogRevision(ctx, tx); err != nil {
 			return err
 		}
@@ -670,9 +674,17 @@ func (s *Store) SaveAccountModelCatalog(ctx context.Context, id int64, catalog *
 	if err != nil {
 		return err
 	}
+	if attempted < previous.AttemptedAt {
+		incoming.AttemptedAt = previous.AttemptedAt
+		incoming.Error = previous.Error
+		incoming.Skipped = previous.Skipped
+		incoming.SkipReason = previous.SkipReason
+	}
 	state.Sources[ModelSourceChatGPT] = incoming
-	state.Pending[ModelSourceChatGPT] = modelCatalogFence{AttemptedAt: attempted}
-	if err := writeLockedModelCatalog(ctx, tx, id, state, before, false); err != nil {
+	// Pending watermarks belong only to tokenized refreshes. Treating every
+	// legacy failure as a fence would discard a late successful snapshot.
+	// Identical legacy writes still invalidate caches when their clocks tie.
+	if err := writeLockedModelCatalog(ctx, tx, id, state, before, attempted == watermark); err != nil {
 		return err
 	}
 	return tx.Commit()

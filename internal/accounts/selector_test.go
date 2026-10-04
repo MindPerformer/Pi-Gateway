@@ -2,8 +2,6 @@ package accounts
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -146,19 +144,18 @@ func TestRoundRobinAdvancesCursor(t *testing.T) {
 
 func newAccountsTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "accounts.db")
-	st, err := store.Open(dbPath)
+	// These tests exercise account selection and credential/catalog behavior,
+	// not persistence or multiple database pools (covered by the store suite).
+	// Avoid platform-dependent WAL/temp-directory deletion races on Windows.
+	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Cleanups run LIFO: close the store, then delete the SQLite side files, so
-	// Windows can remove the TempDir afterwards.
 	t.Cleanup(func() {
-		for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
-			_ = os.Remove(dbPath + suffix)
+		if err := st.Close(); err != nil {
+			t.Errorf("close account test store: %v", err)
 		}
 	})
-	t.Cleanup(func() { _ = st.Close() })
 	return st
 }
 

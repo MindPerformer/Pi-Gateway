@@ -197,7 +197,7 @@ func TestAdminSupplementalModelsCatalogRefreshAndImmediateRemoval(t *testing.T) 
 	}
 	success := readCatalog(s.handleRefreshAccountModels, "POST", 200)
 	want := []store.CatalogModel{
-		{ID: "shared", Name: "Real upstream name", Source: "upstream", Metadata: map[string]json.RawMessage{
+		{ID: "shared", Name: "Real upstream name", Source: "upstream", Origins: []string{store.ModelSourceChatGPT}, Metadata: map[string]json.RawMessage{
 			"id": json.RawMessage(`"shared"`), "name": json.RawMessage(`"Real upstream name"`),
 		}},
 		store.NewManualCatalogModel("manual-only"),

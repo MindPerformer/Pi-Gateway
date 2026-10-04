@@ -232,6 +232,12 @@ func mergeAccountModelCatalogSources(out *ModelCatalog, raw, sourcesRaw, supplem
 }
 
 func decodeModelCatalogState(raw, sourcesRaw string, fetched, attempted int64, lastError string) (*modelCatalogState, error) {
+	// models_json remains part of the persisted catalog contract, including for
+	// dual-source rows. Never hide a corrupt legacy projection behind valid sources.
+	var legacy []CatalogModel
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+		return nil, fmt.Errorf("store: decode account model catalog: %w", err)
+	}
 	var state modelCatalogState
 	if err := json.Unmarshal([]byte(sourcesRaw), &state); err != nil {
 		return nil, fmt.Errorf("store: decode model catalog sources: %w", err)
@@ -252,10 +258,6 @@ func decodeModelCatalogState(raw, sourcesRaw string, fetched, attempted int64, l
 	if state.Sources == nil {
 		// A default {} marks an old single-source snapshot. An explicit empty
 		// sources object instead means a source was cleared; do not revive it.
-		var legacy []CatalogModel
-		if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
-			return nil, fmt.Errorf("store: decode account model catalog: %w", err)
-		}
 		state.Sources = make(map[string]ModelCatalogSource)
 		if fetched > 0 || attempted > 0 || lastError != "" {
 			if fetched <= 0 {
@@ -629,8 +631,17 @@ func (s *Store) SaveAccountModelCatalog(ctx context.Context, id int64, catalog *
 	}
 	previous := state.Sources[ModelSourceChatGPT]
 	fence := state.Pending[ModelSourceChatGPT]
-	if fence.Token != "" || attempted <= max(previous.AttemptedAt, fence.AttemptedAt) ||
+	watermark := max(previous.AttemptedAt, fence.AttemptedAt)
+	if fence.Token != "" || attempted < watermark ||
 		(catalog.Error == "" && catalog.FetchedAt < previous.FetchedAt) {
+		return tx.Commit()
+	}
+	if attempted == watermark {
+		// Preserve legacy cache invalidation for repeated same-millisecond
+		// writes without letting an ambiguous attempt replace a newer snapshot.
+		if err := changeCatalogRevision(ctx, tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	// A merged read can contain Codex-only models. They must never become

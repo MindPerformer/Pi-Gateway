@@ -3,3 +3,5 @@
 .narrafork
 _research
 internal/webui/dist/
+*.exe
+./config.yaml

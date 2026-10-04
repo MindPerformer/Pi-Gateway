@@ -144,7 +144,8 @@ func TestModelCatalogRefreshThroughProxyPrimaryTokenAndFailurePreservation(t *te
 		if r.URL.Path == "/codex/models" {
 			codexCalls.Add(1)
 			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer codex-secret" ||
-				r.Header.Get("ChatGPT-Account-Id") != "codex-id" || r.Header.Get("User-Agent") != "catalog-test-pi" ||
+				r.Header.Get("ChatGPT-Account-Id") != "codex-id" || r.Header.Get("User-Agent") != "codex-tui/"+config.DefaultCodexClientVersion ||
+				r.Header.Get("Version") != config.DefaultCodexClientVersion || r.Header.Get("Originator") != codexCatalogOriginator ||
 				r.Header.Get("Proxy-Authorization") != "" || r.URL.Query().Get("client_version") != config.DefaultCodexClientVersion {
 				t.Errorf("incorrect local Codex request: %s %s headers=%v", r.Method, r.URL, r.Header)
 			}
@@ -206,6 +207,7 @@ func TestModelCatalogRefreshThroughProxyPrimaryTokenAndFailurePreservation(t *te
 	cfg := config.Default()
 	cfg.Upstream.BaseURL = target.URL + "/v1"
 	cfg.Models.CodexBaseURL = target.URL + "/codex"
+	cfg.Models.CodexClientVersion = config.DefaultCodexClientVersion
 	first, err := manager.RefreshModelCatalog(context.Background(), a, cfg, "catalog-test-pi")
 	if err != nil || first == nil || len(first.Models) != 1 || first.Models[0].ID != "real-model" || first.FetchedAt == 0 || first.Error != "" {
 		t.Fatalf("refresh=%+v err=%v", first, err)

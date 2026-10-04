@@ -42,6 +42,7 @@ func newProxyHarness(t *testing.T, target, transport string) *proxyHarness {
 	ctx := context.Background()
 	st := newAdminTestStore(t)
 	cfg := config.Default()
+	cfg.Models.CodexClientVersion = config.DefaultCodexClientVersion
 	cfg.Admin.Password = "local-admin-password"
 	cfg.Upstream.BaseURL = target
 	cfg.Upstream.Transport = transport

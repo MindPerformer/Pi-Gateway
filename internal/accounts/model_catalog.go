@@ -172,7 +172,7 @@ func (m *Manager) fetchCatalogSource(ctx context.Context, accountID int64, sourc
 	}
 	var models []store.CatalogModel
 	if source == store.ModelSourceCodex {
-		models, err = m.fetchCodexModelCatalog(ctx, account, cfg, userAgent)
+		models, err = m.fetchCodexModelCatalog(ctx, account, cfg)
 	} else {
 		models, err = m.fetchModelCatalog(ctx, account, cfg, userAgent)
 	}
@@ -193,7 +193,7 @@ func (m *Manager) fetchCatalogSource(ctx context.Context, accountID int64, sourc
 	return result
 }
 
-func (m *Manager) fetchCodexModelCatalog(ctx context.Context, account *store.Account, cfg *config.Config, userAgent string) ([]store.CatalogModel, error) {
+func (m *Manager) fetchCodexModelCatalog(ctx context.Context, account *store.Account, cfg *config.Config) ([]store.CatalogModel, error) {
 	token, accountID, linked, err := m.EnsureFreshCodexToken(ctx, account)
 	if err != nil {
 		return nil, errors.New("could not obtain the account's linked Codex credential")
@@ -201,29 +201,24 @@ func (m *Manager) fetchCodexModelCatalog(ctx context.Context, account *store.Acc
 	if !linked || token == "" || strings.TrimSpace(accountID) == "" {
 		return nil, errors.New("a linked Codex credential and its own account identity are required")
 	}
-	if strings.TrimSpace(userAgent) == "" {
-		userAgent = cfg.Upstream.UserAgent
+	version, err := m.resolveCodexClientVersion(ctx, cfg.Models.CodexClientVersion, account.ProxyURL)
+	if err != nil {
+		return nil, modelCatalogContextError(err)
 	}
-	if strings.TrimSpace(userAgent) == "" {
-		version := cfg.Models.CodexClientVersion
-		if version == "" {
-			version = config.DefaultCodexClientVersion
-		}
-		userAgent = "codex_cli_rs/" + version
-	}
-	originator := cfg.Upstream.Originator
-	if strings.TrimSpace(originator) == "" {
-		originator = "pi"
-	}
+	// Use a request-local copy; concurrent catalog refreshes and primary requests
+	// must never observe a mutated shared configuration.
+	resolved := *cfg
+	resolved.Models.CodexClientVersion = version
 	// Primary ChatGPT headers deliberately omit this Codex identity. Build this
-	// small header allowlist separately; never copy incoming/browser headers.
+	// small header allowlist separately; never copy incoming/browser/Pi headers.
 	headers := make(http.Header)
 	headers.Set("Authorization", "Bearer "+token)
 	headers.Set("ChatGPT-Account-Id", accountID)
 	headers.Set("Accept", "application/json")
-	headers.Set("User-Agent", userAgent)
-	headers.Set("Originator", originator)
-	return m.fetchModelCatalogRequest(ctx, account, cfg.CodexModelsURL(), headers, store.ModelSourceCodex)
+	headers.Set("User-Agent", "codex-tui/"+version)
+	headers.Set("Originator", codexCatalogOriginator)
+	headers.Set("Version", version)
+	return m.fetchModelCatalogRequest(ctx, account, resolved.CodexModelsURL(), headers, store.ModelSourceCodex)
 }
 
 func modelCatalogContextError(err error) error {

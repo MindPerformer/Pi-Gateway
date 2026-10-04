@@ -31,6 +31,9 @@ type Manager struct {
 	logger  *slog.Logger
 	factory *egress.Factory
 
+	// Codex catalog negotiation is independent of Pi generation identity.
+	codexVersions codexVersionCache
+
 	mu sync.Mutex
 	// inflight tracks concurrent requests per account id.
 	inflight map[int64]int

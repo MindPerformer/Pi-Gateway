@@ -11,9 +11,10 @@ import (
 const (
 	// DefaultCodexBaseURL is independent of the main ChatGPT upstream.
 	DefaultCodexBaseURL = "https://chatgpt.com/backend-api"
-	// DefaultCodexClientVersion comes from the local reference implementation;
-	// it is a configurable compatibility value, not a claim about the latest release.
-	DefaultCodexClientVersion = "0.153.4"
+	// AutoCodexClientVersion asks the caller to resolve the current stable release.
+	AutoCodexClientVersion = "auto"
+	// DefaultCodexClientVersion is the offline fallback for automatic resolution.
+	DefaultCodexClientVersion = "0.160.0"
 )
 
 // UpstreamModelsURL derives the model-list endpoint beside the configured
@@ -30,8 +31,10 @@ func (c *Config) UpstreamModelsURL() string {
 }
 
 // CodexModelsURL derives the catalog endpoint independently of Upstream.BaseURL.
-// Zero-value model settings use defaults. Invalid settings return an empty URL;
-// Validate reports the same failure without exposing configured URLs or values.
+// It performs no network lookup: auto and empty versions use the offline fallback.
+// Callers may set a resolved version on a config copy before deriving the URL.
+// Invalid settings return an empty URL; Validate reports the same failure without
+// exposing configured URLs or values.
 func (c *Config) CodexModelsURL() string {
 	u, err := c.codexModelsURL()
 	if err != nil {
@@ -45,7 +48,7 @@ func (c *Config) codexModelsURL() (*url.URL, error) {
 	if base == "" {
 		base = DefaultCodexBaseURL
 	}
-	if version == "" {
+	if version == "" || version == AutoCodexClientVersion {
 		version = DefaultCodexClientVersion
 	}
 	if len(version) > 64 {

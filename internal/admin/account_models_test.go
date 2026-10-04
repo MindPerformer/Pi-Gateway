@@ -40,8 +40,10 @@ func newModelAdmin(t *testing.T, target string) (*Server, *store.Account) {
 	codex := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/codex/models" ||
 			r.Header.Get("Authorization") != "Bearer secret-codex" || r.Header.Get("ChatGPT-Account-Id") != "codex-account" ||
-			r.URL.Query().Get("client_version") == "" {
-			t.Errorf("unexpected local Codex catalog request: %s %s", r.Method, r.URL.Path)
+			r.URL.Query().Get("client_version") != config.DefaultCodexClientVersion ||
+			r.Header.Get("Originator") != "codex_cli_rs" || r.Header.Get("Version") != config.DefaultCodexClientVersion ||
+			r.Header.Get("User-Agent") != "codex-tui/"+config.DefaultCodexClientVersion || r.Header.Get("Accept") != "application/json" {
+			t.Errorf("unexpected local Codex catalog request: %s %s headers=%v", r.Method, r.URL, r.Header)
 		}
 		// Primary-only fixtures exercise partial success and total failure;
 		// explicit dual-source tests install their own successful Codex handler.
@@ -49,6 +51,7 @@ func newModelAdmin(t *testing.T, target string) (*Server, *store.Account) {
 	}))
 	t.Cleanup(codex.Close)
 	cfg := config.Default()
+	cfg.Models.CodexClientVersion = config.DefaultCodexClientVersion
 	cfg.Upstream.BaseURL = target + "/v1"
 	cfg.Upstream.UserAgent = "model-test-pi"
 	cfg.Models.CodexBaseURL = codex.URL + "/codex"
@@ -483,8 +486,9 @@ func TestAccountModelCatalogDualSourceLocalContracts(t *testing.T) {
 				switch r.URL.Path {
 				case "/v1/models":
 					chatCalls.Add(1)
-					if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer selected-primary" || r.Header.Get("ChatGPT-Account-Id") != "" {
-						t.Error("ChatGPT catalog used the wrong method or credential")
+					if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer selected-primary" || r.Header.Get("ChatGPT-Account-Id") != "" ||
+						r.Header.Get("User-Agent") != "model-test-pi" || r.Header.Get("Originator") != "" || r.Header.Get("Version") != "" || r.URL.Query().Has("client_version") {
+						t.Error("ChatGPT catalog used the wrong method, credential or primary identity")
 					}
 					if second.Load() {
 						status = tc.chatGPT
@@ -497,7 +501,9 @@ func TestAccountModelCatalogDualSourceLocalContracts(t *testing.T) {
 					fmt.Fprintf(w, `{"data":[{"id":"shared","name":"ChatGPT name","supports_parallel_tool_calls":false,"supported_reasoning_levels":[]},{"id":"chatgpt-%s"}]}`, suffix)
 				case "/codex/models":
 					codexCalls.Add(1)
-					if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer secret-codex" || r.Header.Get("ChatGPT-Account-Id") != "codex-account" || r.URL.Query().Get("client_version") != config.DefaultCodexClientVersion {
+					if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer secret-codex" || r.Header.Get("ChatGPT-Account-Id") != "codex-account" ||
+						r.URL.Query().Get("client_version") != config.DefaultCodexClientVersion || r.Header.Get("Version") != config.DefaultCodexClientVersion ||
+						r.Header.Get("User-Agent") != "codex-tui/"+config.DefaultCodexClientVersion || r.Header.Get("Originator") != "codex_cli_rs" || r.Header.Get("Accept") != "application/json" {
 						t.Error("Codex catalog used the wrong method, credential, identity or version")
 					}
 					if second.Load() {

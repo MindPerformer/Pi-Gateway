@@ -238,6 +238,7 @@ func newHarnessWithStore(t *testing.T, upstreamHandler http.Handler, transport s
 	}
 
 	cfg := config.Default()
+	cfg.Models.CodexClientVersion = config.DefaultCodexClientVersion
 	cfg.Upstream.BaseURL = upstreamSrv.URL + "/backend-api"
 	cfg.Upstream.Transport = transport
 	// Keep the wire assertion focused on headers/body rather than compression.

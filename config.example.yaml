@@ -179,12 +179,15 @@ models:
   # api.openai.com is rejected to avoid sending Codex tokens to the main API.
   # Override with PI_GATEWAY_CODEX_BASE_URL.
   codex_base_url: https://chatgpt.com/backend-api
-  # Version from the local reference implementation, not a latest-version claim.
-  # Empty uses the default; nonempty values must be 1-64 ASCII letters/digits or
-  # . _ + -, starting with a letter/digit (no whitespace). Existing URL query
-  # parameters are retained; client_version is replaced with this value.
-  # Override with PI_GATEWAY_CODEX_CLIENT_VERSION.
-  codex_client_version: '0.153.4'
+  # auto (or empty) queries the official openai/codex latest stable release and
+  # caches the resolved version for 1h. Network failures use the last successful
+  # version, or the built-in offline fallback (0.160.0) if none is available.
+  # An explicit version pins the catalog/client headers and disables release
+  # queries. It must be 1-64 ASCII letters/digits or . _ + -, starting with a
+  # letter/digit (no whitespace). Existing URL query parameters are retained;
+  # client_version is replaced with the resolved or explicitly configured version.
+  # Override with PI_GATEWAY_CODEX_CLIENT_VERSION (empty also selects auto).
+  codex_client_version: auto
 
 logging:
   level: info

@@ -165,6 +165,7 @@ type ModelsConfig struct {
 	// Generation continues to use Upstream.BaseURL and the main credentials.
 	CodexBaseURL string `yaml:"codex_base_url"`
 	// CodexClientVersion negotiates the Codex catalog and its client headers.
+	// Auto or empty resolves the current stable release; explicit versions stay fixed.
 	CodexClientVersion string `yaml:"codex_client_version"`
 }
 
@@ -243,7 +244,7 @@ func Default() *Config {
 		Models: ModelsConfig{
 			Mappings:           map[string]string{},
 			CodexBaseURL:       DefaultCodexBaseURL,
-			CodexClientVersion: DefaultCodexClientVersion,
+			CodexClientVersion: AutoCodexClientVersion,
 		},
 		Logging: LoggingConfig{Level: "info"},
 	}
@@ -456,7 +457,7 @@ func (c *Config) normalize() {
 		c.Models.CodexBaseURL = DefaultCodexBaseURL
 	}
 	if c.Models.CodexClientVersion == "" {
-		c.Models.CodexClientVersion = DefaultCodexClientVersion
+		c.Models.CodexClientVersion = AutoCodexClientVersion
 	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "info"

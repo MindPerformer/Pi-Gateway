@@ -50,6 +50,7 @@ func captureFilterFromQuery(r *http.Request) store.CaptureFilter {
 		f.Offset = v
 	}
 	f.IncludePayloads = q.Get("include_payloads") == "true"
+	f.Unassigned = q.Get("unassigned") == "true"
 	return f
 }
 
@@ -90,7 +91,15 @@ func (s *Server) handleClearCaptures(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.ParseInt(r.URL.Query().Get("account_id"), 10, 64); err == nil {
 		accountID = v
 	}
-	n, err := s.store.ClearCaptures(r.Context(), accountID)
+	var n int64
+	var err error
+	if r.URL.Query().Get("unassigned") == "true" {
+		n, err = s.store.ClearUnassignedCaptures(r.Context())
+	} else {
+		var deleted int64
+		deleted, err = s.store.ClearCaptures(r.Context(), accountID)
+		n = deleted
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

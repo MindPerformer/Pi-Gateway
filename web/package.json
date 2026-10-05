@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "check:i18n": "node check-i18n.mjs",
-    "check:capture": "node check-capture-diff.mjs && node check-capture-inspection.mjs"
+    "check:capture": "node check-capture-diff.mjs && node check-capture-inspection.mjs",
+    "check:rules": "node check-rules.mjs"
   },
   "dependencies": {
     "echarts": "^6.1.0",

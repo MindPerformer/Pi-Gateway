@@ -6,6 +6,7 @@ import { diffPayloads, equalPayloads } from '../../utils/captureDiff'
 import JsonViewer from '../JsonViewer.vue'
 import Badge from '../Badge.vue'
 import { useCaptureLocale } from './captureLocale'
+import { useI18n } from '../../i18n'
 
 const props = withDefaults(defineProps<{
 	title: string
@@ -15,8 +16,11 @@ const props = withDefaults(defineProps<{
 	afterLabel: string
 	initialOpen?: boolean
 	partial?: boolean
-}>(), { initialOpen: false, partial: false })
+	sources?: string[]
+	sourceNote?: string
+}>(), { initialOpen: false, partial: false, sources: () => [], sourceNote: '' })
 const { c } = useCaptureLocale()
+const { t } = useI18n()
 const open = ref(props.initialOpen)
 const complete = computed(() => props.before.available && props.after.available)
 const same = computed(() => complete.value && equalPayloads(props.before.value, props.after.value))
@@ -34,6 +38,11 @@ const singleLabel = computed(() => props.after.available ? props.afterLabel : pr
 			<ChevronDown :size="15" class="diff-chevron" :class="{ rotated: open }" />
 		</summary>
 		<div class="diff-directions"><span>{{ beforeLabel }}</span><span aria-hidden="true">→</span><span>{{ afterLabel }}</span></div>
+		<div v-if="sources?.length || sourceNote" class="diff-sources" role="note">
+			<strong>{{ t('capture.rules.sources') }}</strong>
+			<span v-for="(source, index) in sources" :key="index" class="diff-source">{{ source }}</span>
+			<span v-if="sourceNote" class="capture-note">{{ sourceNote }}</span>
+		</div>
 		<div v-if="open" class="diff-body">
 			<template v-if="!complete">
 				<p class="capture-note">{{ c('unavailable') }}</p>
@@ -64,6 +73,7 @@ const singleLabel = computed(() => props.after.available ? props.afterLabel : pr
 .diff-summary :deep(.badge) { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .diff-chevron { flex-shrink: 0; margin-left: auto; transition: transform .15s ease; }.diff-chevron.rotated { transform: rotate(180deg); }
 .diff-directions { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 14px 12px; color: var(--color-ink-muted); font-size: 11px; }
+.diff-sources { display: flex; flex-wrap: wrap; gap: 5px 10px; padding: 0 14px 12px; font-size: 11px; overflow-wrap: anywhere; }.diff-sources > .capture-note { flex-basis: 100%; }.diff-source { color: var(--color-ink-muted); }
 .diff-body { display: grid; gap: 10px; min-width: 0; padding: 12px; border-top: 1px solid var(--color-line); }
 .diff-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 11px; }
 .removed-label { color: var(--color-danger); }.added-label { color: var(--color-success); }

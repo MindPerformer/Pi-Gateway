@@ -28,9 +28,12 @@ type Recorder struct {
 	includeHeaders bool
 	startedAt      time.Time
 
-	seq       int
-	truncated bool
-	seenBytes int64
+	seq           int
+	truncated     bool
+	seenBytes     int64
+	traceBytes    int
+	ruleEventID   string
+	latestInbound int
 }
 
 // Options controls recorder behaviour.
@@ -58,6 +61,7 @@ func New(scaffold *store.Capture, opts Options) *Recorder {
 		maxFrames:      defaultMaxFrames,
 		includeHeaders: opts.IncludeHeaders,
 		startedAt:      time.Now(),
+		latestInbound:  -1,
 	}
 }
 
@@ -180,6 +184,12 @@ func (r *Recorder) OnFrame(dir, kind, eventType string, raw []byte, parsed map[s
 // appendFrameLocked appends one frame, honouring the byte budget and the frame
 // cap. Callers must hold r.mu.
 func (r *Recorder) appendFrameLocked(dir, kind, eventType string, raw []byte, parsed map[string]any) {
+	// Every real inbound payload begins a new event. Never carry a dropped event's
+	// association into a later successful delivery (including when frames are full).
+	if dir == "in" && rulePayloadKind(kind) {
+		r.ruleEventID = ""
+		r.latestInbound = -1
+	}
 	if r.maxFrames > 0 && len(r.cap.ResponseFrames) >= r.maxFrames {
 		r.truncated = true
 		return
@@ -194,6 +204,17 @@ func (r *Recorder) appendFrameLocked(dir, kind, eventType string, raw []byte, pa
 		Bytes: len(raw),
 	}
 	r.seq++
+	if dir == DirClientOut && rulePayloadKind(kind) && r.ruleEventID != "" {
+		if r.traceRemainingLocked() >= len(r.ruleEventID) {
+			frame.RuleEventID = r.ruleEventID
+			r.chargeTraceLocked(len(r.ruleEventID))
+		} else {
+			r.cap.RulesTraceTruncated = true
+		}
+	}
+	if dir == "in" && rulePayloadKind(kind) {
+		r.latestInbound = len(r.cap.ResponseFrames)
+	}
 
 	// Store the parsed payload when the frame is JSON, otherwise the raw text.
 	// If the raw event cannot fit in the remaining budget, avoid marshaling the
@@ -276,6 +297,9 @@ func (r *Recorder) Finalize(outcome, errMessage string) *store.Capture {
 	}
 	if r.cap.ResponseFrames == nil {
 		r.cap.ResponseFrames = []store.Frame{}
+	}
+	if r.cap.RuleTraces == nil {
+		r.cap.RuleTraces = []json.RawMessage{}
 	}
 	return r.cap
 }

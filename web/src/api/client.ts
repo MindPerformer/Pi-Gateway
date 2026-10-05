@@ -16,6 +16,11 @@ import type {
     ProxyList,
     ProxyTestResult,
     QuotaView,
+    Rule,
+    RuleList,
+    RuleSimulationRequest,
+    RuleSimulationResult,
+    RuleValidation,
     SavedProxy,
     SavedProxyTest,
     Settings,
@@ -26,6 +31,7 @@ import type {
     UsageRecord,
 } from './types'
 import {translateNow} from '../i18n'
+import type {BackendRuleSchema} from '../utils/ruleSchemaAdapter'
 
 const TOKEN_KEY = 'pi-gateway-token'
 
@@ -321,8 +327,8 @@ export const api = {
     async deleteCapture(id: number) {
         return request<{ ok: boolean }>(`/api/captures/${id}`, {method: 'DELETE'})
     },
-    async clearCaptures(accountId?: number) {
-        const query = accountId ? `?account_id=${accountId}` : ''
+    async clearCaptures(accountId?: number, unassigned = false) {
+        const query = unassigned ? '?unassigned=true' : accountId ? `?account_id=${accountId}` : ''
         return request<{ deleted: number }>(`/api/captures${query}`, {method: 'DELETE'})
     },
     exportUrl(params: Record<string, string | number | undefined>) {
@@ -342,10 +348,109 @@ export const api = {
     async putSettings(settings: Settings) {
         return request<{ settings: Settings }>('/api/settings', {method: 'PUT', body: JSON.stringify(settings)})
     },
+    // unified JSON rules management; the old /api/middlewares client remains below for compatibility.
+    async listRules(params: {
+        search?: string;
+        phase?: string;
+        enabled?: boolean;
+        limit?: number;
+        offset?: number
+    } = {}) {
+        const query = new URLSearchParams()
+        for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '' && key !== 'limit' && key !== 'offset') query.set(key, String(value))
+        const pageSize = params.limit ?? 20
+        query.set('page_size', String(pageSize))
+        query.set('page', String(Math.floor((params.offset ?? 0) / pageSize) + 1))
+        const result = await request<RuleList & { page?: number; page_size?: number }>(`/api/rules?${query.toString()}`)
+        return {
+            ...result,
+            limit: result.page_size ?? result.limit ?? pageSize,
+            offset: result.page ? (result.page - 1) * (result.page_size ?? pageSize) : result.offset ?? params.offset ?? 0
+        }
+    },
+    async getRule(id: string) {
+        return request<{ rule: Rule; version?: number }>(`/api/rules/${encodeURIComponent(id)}`)
+    },
+    async createRule(rule: Rule, expected_version?: number) {
+        return request<{ rule: Rule; version?: number }>('/api/rules', {
+            method: 'POST',
+            body: JSON.stringify({rule, expected_version})
+        })
+    },
+    async updateRule(id: string, rule: Rule, expected_revision?: number) {
+        return request<{ rule: Rule; version?: number }>(`/api/rules/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({rule, expected_revision})
+        })
+    },
+    async deleteRule(id: string, expected_revision?: number) {
+        const query = expected_revision === undefined ? '' : `?expected_revision=${encodeURIComponent(String(expected_revision))}`
+        return request<{
+            ok: boolean;
+            version?: number
+        }>(`/api/rules/${encodeURIComponent(id)}${query}`, {method: 'DELETE'})
+    },
+    async duplicateRule(id: string, expected_revision?: number, name?: string) {
+        return request<{
+            rule: Rule;
+            version?: number
+        }>(`/api/rules/${encodeURIComponent(id)}/duplicate`, {
+            method: 'POST',
+            body: JSON.stringify({expected_revision, name})
+        })
+    },
+    async moveRule(id: string, expected_revision: number, direction: 'up' | 'down', expected_version: number) {
+        return request<{ rules: Rule[]; version?: number }>('/api/rules/reorder', {
+            method: 'POST',
+            body: JSON.stringify({id, expected_revision, direction, expected_version})
+        })
+    },
+    async reorderRules(items: Array<{
+        id: string;
+        expected_revision?: number;
+        order_index?: number;
+        priority?: number
+    }>, expected_version?: number) {
+        return request<{ rules: Rule[]; version?: number }>('/api/rules/reorder', {
+            method: 'POST',
+            body: JSON.stringify({items, expected_version})
+        })
+    },
+    async batchRules(items: Array<{
+        id: string;
+        expected_revision?: number
+    }>, enabled: boolean, expected_version?: number) {
+        return request<{ rules: Rule[]; version?: number }>('/api/rules/batch', {
+            method: 'POST',
+            body: JSON.stringify({items, enabled, expected_version})
+        })
+    },
+    async getRuleSchema() {
+        return request<BackendRuleSchema>('/api/rules/schema')
+    },
+    async validateRule(rule: Rule | Rule[], asBatch = false) {
+        return request<RuleValidation & { rules?: Rule[] }>('/api/rules/validate', {
+            method: 'POST',
+            body: JSON.stringify(asBatch ? {rules: rule} : {rule})
+        })
+    },
+    async simulateRules(payload: RuleSimulationRequest | { rules: Rule[]; phase: string; input: unknown }) {
+        return request<{
+            valid: boolean;
+            result?: RuleSimulationResult;
+            errors?: Array<{ path: string; message: string }>;
+            error?: string
+        }>('/api/rules/simulate', {method: 'POST', body: JSON.stringify(payload)})
+    },
     async listMiddlewares() {
         return request<{ middlewares: Middleware[] }>('/api/middlewares')
     },
-    async updateMiddleware(name: string, patch: { enabled?: boolean; order_index?: number; config?: string }) {
+    async updateMiddleware(name: string, patch: {
+        enabled?: boolean;
+        order_index?: number;
+        config?: string;
+        expected_revision?: number
+    }) {
         return request<{ middleware: MiddlewareRow }>(`/api/middlewares/${name}`, {
             method: 'PUT',
             body: JSON.stringify(patch),

@@ -215,13 +215,22 @@ func (s *Server) serveWSExchange(ctx context.Context, writer *wsFrameWriter, r *
 	defer cancel()
 
 	p, apiErr := s.prepare(exchangeCtx, r, raw, "ws")
-	if apiErr != nil {
-		_ = writer.writeJSON(ctx, errorFramePayload(apiErr))
-		return apiErr
-	}
-	if p.Recorder != nil && len(rawIn) > 0 {
-		// The client hop, as received (still carrying the response.create envelope).
+	if p != nil && p.Recorder != nil && len(rawIn) > 0 {
+		// Retain the original response.create envelope even when policy blocks it.
 		p.Recorder.OnFrame(capture.DirClientIn, "ws_frame", "response.create", rawIn, nil)
+	}
+	if apiErr != nil {
+		if p != nil {
+			frame := errorFramePayload(apiErr)
+			if werr := writer.writeJSON(ctx, frame); werr == nil && p.Recorder != nil {
+				encoded, _ := json.Marshal(frame)
+				p.Recorder.OnFrame(capture.DirClientOut, "ws_frame", "error", encoded, frame)
+			}
+			s.finish(context.WithoutCancel(exchangeCtx), p, store.OutcomeError, apiErr)
+		} else {
+			_ = writer.writeJSON(ctx, errorFramePayload(apiErr))
+		}
+		return apiErr
 	}
 
 	outcome := store.OutcomeOK
@@ -246,6 +255,13 @@ func (s *Server) serveWSExchange(ctx context.Context, writer *wsFrameWriter, r *
 			if p.Recorder != nil {
 				p.Recorder.NoteTTFB()
 			}
+		}
+		event, transformErr := p.transformResponseEvent(exchangeCtx, event)
+		if transformErr != nil {
+			return transformErr
+		}
+		if event == nil {
+			return nil
 		}
 		// Preserve ordinary events verbatim. Error events carry the safe retry
 		// metadata since this socket has already completed its HTTP upgrade.

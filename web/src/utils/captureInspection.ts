@@ -1,4 +1,4 @@
-import type {Capture, CaptureFrame, CaptureHeader} from '../api/types'
+import type {Capture, CaptureFrame, CaptureHeader, CaptureRuleChange, CaptureRuleTrace} from '../api/types'
 import {equalPayloads, normalizeHeaders} from './captureDiff'
 
 export interface CaptureSnapshot {
@@ -11,6 +11,60 @@ export interface CaptureRow {
     frame?: CaptureFrame;
     before?: CaptureFrame;
     after?: CaptureFrame
+}
+
+// Sources are selected only from stored execution traces, never inferred from a
+// final payload diff. Missing event IDs cannot attribute a particular response.
+export function ruleTraces(capture: Capture, phase?: string, eventID?: string): CaptureRuleTrace[] {
+    const traces = Array.isArray(capture.rule_traces) ? capture.rule_traces : []
+    return traces.filter(trace => trace && typeof trace === 'object'
+        && (!phase || trace.phase === phase)
+        && (eventID === undefined || trace.event_id === eventID))
+}
+
+export function isRuleChange(trace: CaptureRuleTrace): boolean {
+    return !trace.rolled_back && (trace.status === 'changed' || trace.status === 'dropped')
+}
+
+export function ruleSources(capture: Capture, phase?: string, eventID?: string): CaptureRuleTrace[] {
+    if (!phase && !eventID) return []
+    return ruleTraces(capture, phase, eventID).filter(isRuleChange)
+}
+
+export function ruleChangeSnapshot(change: CaptureRuleChange, side: 'before' | 'after'): CaptureSnapshot {
+    const exists = side === 'before' ? change.before_exists : change.after_exists
+    // A known absent field is not a missing capture. Wrap the existence bit so
+    // absent, explicit null, and a literal preview string remain distinguishable.
+    if (exists === false) return {available: true, value: {exists: false}}
+    if (exists !== true || !own(change, side)) return missing()
+    return {available: true, value: {exists: true, value: change[side]}}
+}
+
+export function lastRuleWriters(capture: Capture): Set<string> {
+    const result = new Set<string>()
+    if (capture.truncated || capture.rules_trace_truncated || capture.rules_trace_omitted) return result
+    const traces = ruleTraces(capture)
+    if (traces.some(trace => trace.trace_truncated || trace.omitted_changes || trace.changes?.some(change => change.truncated))) return result
+    const scopes = new Map<string, { paths: Set<string>; parents: Set<string> }>()
+    for (let index = traces.length - 1; index >= 0; index--) {
+        const trace = traces[index]!
+        if (!isRuleChange(trace)) continue
+        const scope = JSON.stringify([trace.phase, trace.event_id ?? ''])
+        const later = scopes.get(scope) ?? {paths: new Set<string>(), parents: new Set<string>()}
+        scopes.set(scope, later)
+        const changes = trace.changes ?? []
+        for (let changeIndex = changes.length - 1; changeIndex >= 0; changeIndex--) {
+            const path = changes[changeIndex]!.path
+            if (typeof path !== 'string') continue
+            const parents = path.split('/').slice(0, -1).map((_, depth) => path.split('/').slice(0, depth + 1).join('/'))
+            const overwritten = later.paths.has(path) || later.parents.has(path) || parents.some(parent => later.paths.has(parent))
+            // Numeric paths can refer to different elements after array edits.
+            if (!overwritten && !/\/(?:0|[1-9]\d*)(?:\/|$)/.test(path)) result.add(`${index}:${changeIndex}`)
+            later.paths.add(path)
+            for (const parent of parents) later.parents.add(parent)
+        }
+    }
+    return result
 }
 
 export type HopProtocol = 'sse' | 'ws' | 'http' | 'unknownProtocol'
@@ -85,6 +139,7 @@ function isResponse(frame: CaptureFrame) {
 }
 
 function related(before: CaptureFrame, after: CaptureFrame): boolean {
+    if (before.rule_event_id || after.rule_event_id) return Boolean(before.rule_event_id && after.rule_event_id && before.rule_event_id === after.rule_event_id)
     const left = frameSnapshot(before), right = frameSnapshot(after)
     if (!left.available || !right.available) return false
     if (equalPayloads(left.value, right.value)) return true
@@ -102,20 +157,34 @@ export function captureRows(capture: Capture, compact: boolean): CaptureRow[] {
     if (!compact) return frames.map((frame, index) => ({key: `${index}:${frame.seq}`, frame}))
     const {consumed} = requestSnapshots(capture)
     const rows: CaptureRow[] = []
+    const eventRows = new Map<string, number>()
+    const counts = new Map<string, { before: number; after: number }>()
+    for (const frame of frames) {
+        if (!frame.rule_event_id || !isResponse(frame)) continue
+        const count = counts.get(frame.rule_event_id) ?? {before: 0, after: 0}
+        if (frame.dir === 'in') count.before++
+        if (frame.dir === 'client_out') count.after++
+        counts.set(frame.rule_event_id, count)
+    }
     let pending = -1
     for (const [index, frame] of frames.entries()) {
         if (consumed.has(frame.seq)) continue
         if (frame.dir === 'client_out' && frame.kind === 'handshake_response') continue
         if (frame.dir === 'client_out' && isResponse(frame)) {
-            const candidate = rows[pending]?.frame
-            if (!capture.truncated && candidate?.dir === 'in' && related(candidate, frame)) {
-                rows[pending] = {key: rows[pending]!.key, before: candidate, after: frame}
+            const id = frame.rule_event_id
+            const count = id ? counts.get(id) : undefined
+            const explicit = Boolean(id && count?.before === 1 && count.after === 1)
+            const position = explicit ? eventRows.get(id!) ?? -1 : id ? -1 : pending
+            const candidate = rows[position]?.frame
+            if (candidate?.dir === 'in' && (explicit || (!capture.truncated && !capture.rules_trace_truncated)) && related(candidate, frame)) {
+                rows[position] = {key: rows[position]!.key, before: candidate, after: frame}
                 pending = -1
                 continue
             }
             pending = -1
         }
         rows.push({key: `${index}:${frame.seq}`, frame})
+        if (frame.dir === 'in' && isResponse(frame) && frame.rule_event_id) eventRows.set(frame.rule_event_id, rows.length - 1)
         if (frame.dir === 'in') pending = isResponse(frame) ? rows.length - 1 : -1
         else if (frame.dir === 'client_in' || frame.dir === 'out') pending = -1
     }

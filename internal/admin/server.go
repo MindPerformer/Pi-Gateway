@@ -216,8 +216,21 @@ func (s *Server) Routes(mux *http.ServeMux, spa http.Handler) {
 	mux.HandleFunc("PUT /api/settings", s.requireAuth(s.handlePutSettings))
 	mux.HandleFunc("POST /api/settings/password", s.requireAuth(s.handleChangePassword))
 
-	mux.HandleFunc("GET /api/middlewares", s.requireAuth(s.handleListMiddlewares))
-	mux.HandleFunc("PUT /api/middlewares/{name}", s.requireAuth(s.handleUpdateMiddleware))
+	mux.HandleFunc("GET /api/rules", s.requireAuth(s.handleListRules))
+	mux.HandleFunc("POST /api/rules", s.requireAuth(s.handleCreateRule))
+	// Literal subroutes are registered explicitly; they take precedence over {id}.
+	mux.HandleFunc("GET /api/rules/schema", s.requireAuth(s.handleRulesSchema))
+	mux.HandleFunc("POST /api/rules/validate", s.requireAuth(s.handleValidateRules))
+	mux.HandleFunc("POST /api/rules/simulate", s.requireAuth(s.handleSimulateRules))
+	mux.HandleFunc("POST /api/rules/reorder", s.requireAuth(s.handleReorderRules))
+	mux.HandleFunc("POST /api/rules/batch", s.requireAuth(s.handleBatchRules))
+	mux.HandleFunc("GET /api/rules/{id}", s.requireAuth(s.handleGetRule))
+	mux.HandleFunc("PUT /api/rules/{id}", s.requireAuth(s.handleUpdateRule))
+	mux.HandleFunc("DELETE /api/rules/{id}", s.requireAuth(s.handleDeleteRule))
+	mux.HandleFunc("POST /api/rules/{id}/duplicate", s.requireAuth(s.handleDuplicateRule))
+
+	mux.HandleFunc("GET /api/middlewares", s.requireAuth(s.handleListLegacyRules))
+	mux.HandleFunc("PUT /api/middlewares/{name}", s.requireAuth(s.handleUpdateLegacyRule))
 	mux.HandleFunc("GET /api/model-presets", s.requireAuth(s.handleModelPresets))
 
 	if spa != nil {

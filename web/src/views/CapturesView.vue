@@ -27,13 +27,21 @@ const filters = ref({
 	offset: 0,
 })
 
+const unassigned = computed(() => filters.value.account_id === 'unassigned')
+const accountFilter = computed(() => ({
+	account_id: unassigned.value ? undefined : filters.value.account_id || undefined,
+	unassigned: unassigned.value ? 'true' : undefined,
+}))
+const displayCaptures = computed(() => captures.value.map(capture => capture.account_id === 0
+	? { ...capture, account_name: t('capture.unassigned') } : capture))
+
 let searchTimer: number | undefined
 
 async function load() {
 	loading.value = true
 	try {
 		const result = await api.listCaptures({
-			account_id: filters.value.account_id || undefined,
+			...accountFilter.value,
 			outcome: filters.value.outcome || undefined,
 			transport: filters.value.transport || undefined,
 			search: filters.value.search || undefined,
@@ -88,10 +96,10 @@ function openCapture(capture: Capture) {
 }
 
 async function clearAll() {
-	const scope = filters.value.account_id ? t('captures.clearScopeAccount') : t('captures.clearScopeAll')
+	const scope = unassigned.value ? t('captures.clearScopeUnassigned') : filters.value.account_id ? t('captures.clearScopeAccount') : t('captures.clearScopeAll')
 	if (!confirm(t('captures.clearConfirm', { scope }))) return
 	try {
-		const result = await api.clearCaptures(filters.value.account_id ? Number(filters.value.account_id) : undefined)
+		const result = await api.clearCaptures(unassigned.value ? undefined : filters.value.account_id ? Number(filters.value.account_id) : undefined, unassigned.value)
 		toast.success(`${result.deleted}`)
 		filters.value.offset = 0
 		await load()
@@ -106,7 +114,7 @@ async function clearAll() {
 		<PageHeader :title="t('captures.title')" :subtitle="t('captures.subtitle')">
 			<a
 				class="btn"
-				:href="api.exportUrl({ account_id: filters.account_id, outcome: filters.outcome, transport: filters.transport, search: filters.search })"
+				:href="api.exportUrl({ ...accountFilter, outcome: filters.outcome, transport: filters.transport, search: filters.search })"
 			>
 				<Download class="h-3.5 w-3.5" />
 				{{ t('captures.export') }}
@@ -128,6 +136,7 @@ async function clearAll() {
 					<label class="label" for="f-account">{{ t('captures.filter.account') }}</label>
 					<select id="f-account" v-model="filters.account_id" class="input">
 						<option value="">{{ t('captures.filter.allAccounts') }}</option>
+						<option value="unassigned">{{ t('capture.unassigned') }}</option>
 						<option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.name }}</option>
 					</select>
 				</div>
@@ -186,7 +195,7 @@ async function clearAll() {
 							</tr>
 						</thead>
 						<tbody>
-							<CaptureRow v-for="capture in captures" :key="capture.id" :capture="capture" @click="openCapture(capture)" />
+							<CaptureRow v-for="capture in displayCaptures" :key="capture.id" :capture="capture" @click="openCapture(capture)" />
 						</tbody>
 					</table>
 				</div>

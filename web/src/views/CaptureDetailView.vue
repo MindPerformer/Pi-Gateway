@@ -3,14 +3,15 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDownLeft, ArrowLeft, ArrowUpRight, Download, Info } from 'lucide-vue-next'
 import { api } from '../api/client'
-import type { Capture, CaptureFrame } from '../api/types'
+import type { Capture, CaptureFrame, CaptureRuleTrace } from '../api/types'
 import { useToastStore, formatBytes, formatDuration, formatTime } from '../stores/ui'
 import { useI18n } from '../i18n'
-import { captureRows, frameSnapshot, hopProtocol, payloadPreview, requestSnapshots, responseHeaderSnapshots } from '../utils/captureInspection'
+import { captureRows, frameSnapshot, hopProtocol, payloadPreview, requestSnapshots, responseHeaderSnapshots, ruleSources } from '../utils/captureInspection'
 import Badge from '../components/Badge.vue'
 import JsonViewer from '../components/JsonViewer.vue'
 import CaptureDiff from '../components/capture/CaptureDiff.vue'
 import CaptureStreamPanel from '../components/capture/CaptureStreamPanel.vue'
+import RuleTracePanel from '../components/capture/RuleTracePanel.vue'
 import { useCaptureLocale, type CaptureTextKey } from '../components/capture/captureLocale'
 
 const route = useRoute()
@@ -74,6 +75,26 @@ function frameTone(frame: CaptureFrame) {
 function preview(frame: CaptureFrame) {
 	return payloadPreview(frameSnapshot(frame).value)
 }
+function sourceLabel(trace: CaptureRuleTrace) {
+	const name = trace.source_kind === 'gateway' ? `${t('capture.rules.gateway')}: ${trace.rule_name || trace.rule_id}` : trace.rule_name || trace.rule_id || c('unrecorded')
+	const action = trace.action_type ? ` · ${trace.action_type} #${(trace.action_index ?? 0) + 1}` : ''
+	const priority = trace.priority === undefined ? '' : ` · ${t('capture.rules.priority', { value: trace.priority })}`
+	const identity = trace.rule_id ? ` [${trace.rule_id}]` : ''
+	return `${name}${identity}${action}${priority} · ${t('capture.rules.version', { version: trace.rules_version ?? capture.value?.rules_version ?? 0 })}`
+}
+function sourceLabels(phase?: string, eventID?: string) {
+	if (!capture.value) return []
+	return ruleSources(capture.value, phase, eventID).map(sourceLabel)
+}
+function sourceNote() {
+	if (capture.value?.rules_trace_truncated || capture.value?.rules_trace_omitted) return t('capture.rules.truncated', { count: capture.value.rules_trace_omitted ?? 0 })
+	if (!capture.value?.rule_traces?.length) return t(capture.value?.rules_version ? 'capture.rules.noChanges' : 'capture.rules.legacy')
+	return t('capture.rules.imprecise')
+}
+function rowSources(before?: CaptureFrame, after?: CaptureFrame) {
+	const eventID = after?.rule_event_id || before?.rule_event_id
+	return eventID ? sourceLabels(undefined, eventID) : []
+}
 function downloadJson() {
 	if (!capture.value) return
 	const blob = new Blob([JSON.stringify(capture.value, null, 2)], { type: 'application/json' })
@@ -92,7 +113,7 @@ function downloadJson() {
 			<div>
 				<button class="capture-back" @click="router.push('/captures')"><ArrowLeft :size="14" />{{ t('capture.back') }}</button>
 				<h1 class="page-title">{{ t('capture.exchange') }} #{{ capture?.id ?? '—' }} <Badge v-if="capture" :tone="outcomeTone(capture.outcome)">{{ outcomeLabel(capture.outcome) }}</Badge></h1>
-				<p class="page-description">{{ capture?.account_name || '—' }} · {{ capture?.model || '—' }} · {{ capture ? formatTime(capture.created_at) : '' }}</p>
+				<p class="page-description">{{ capture?.account_id === 0 ? t('capture.unassigned') : capture?.account_name || '—' }} · {{ capture?.model || '—' }} · {{ capture ? formatTime(capture.created_at) : '' }}</p>
 			</div>
 			<div class="capture-actions"><button class="btn" :disabled="!capture" @click="downloadJson"><Download :size="14" />{{ t('capture.download') }}</button><button class="btn" :disabled="loading" @click="load">{{ t('common.refresh') }}</button></div>
 		</header>
@@ -109,6 +130,7 @@ function downloadJson() {
 			<p v-if="capture.truncated" class="notice notice-warning" role="status">{{ c('truncated') }}</p>
 			<div class="flow-legend" aria-label="direction"><Badge tone="neutral">{{ c('clientIn') }}</Badge><Badge tone="info">{{ c('upstreamOut') }}</Badge><Badge tone="neutral">{{ c('upstreamIn') }}</Badge><Badge tone="info">{{ c('clientOut') }}</Badge></div>
 			<p class="capture-hint">{{ c('participantNote') }} {{ c('semanticNote') }} {{ c('headersNote') }}</p>
+			<RuleTracePanel v-if="capture" :capture="capture" />
 			<div class="segmented capture-tabs" :aria-label="t('common.viewDetails')"><button v-for="item in tabs" :key="item.key" class="segmented-button" :class="{ 'is-active': tab === item.key }" :aria-pressed="tab === item.key" @click="tab = item.key as typeof tab">{{ item.label }}</button></div>
 
 			<section v-if="tab === 'timeline'" class="flow-section">
@@ -116,7 +138,7 @@ function downloadJson() {
 				<section v-if="compact" class="request-stage">
 					<div class="flow-stage-heading"><h2>{{ c('requestStage') }}</h2><span>{{ c('requestRoute') }}</span></div>
 					<code v-if="capture.url" class="target-url">{{ capture.url }}</code>
-					<CaptureDiff :title="c('requestBody')" :before="request.beforeBody" :after="request.afterBody" :before-label="c('clientIn')" :after-label="c('upstreamOut')" :partial="capture.truncated" initial-open />
+					<CaptureDiff :title="c('requestBody')" :before="request.beforeBody" :after="request.afterBody" :before-label="c('clientIn')" :after-label="c('upstreamOut')" :partial="capture.truncated" :sources="sourceLabels('request')" :source-note="sourceNote()" initial-open />
 					<CaptureDiff :title="c('requestHeaders')" :before="request.beforeHeaders" :after="request.afterHeaders" :before-label="c('clientIn')" :after-label="c('upstreamOut')" :partial="capture.truncated" />
 					<p class="capture-hint">{{ c('localOnly') }}</p>
 				</section>
@@ -124,7 +146,7 @@ function downloadJson() {
 				<div v-for="(row, index) in visibleRows" :key="`${compact}:${row.key}`" class="flow-row" :data-paired="Boolean(row.before && row.after)">
 					<template v-if="row.before && row.after">
 						<div class="flow-event-meta"><span>{{ c('protocolChange', { before: frameProtocol(row.before), after: frameProtocol(row.after) }) }}</span><span>+{{ row.before.at_ms }} → +{{ row.after.at_ms }} ms</span></div>
-						<CaptureDiff :title="row.before.type === row.after.type ? row.before.type || c('responsePayload') : `${row.before.type || frameLabel(row.before)} → ${row.after.type || frameLabel(row.after)}`" :before="frameSnapshot(row.before)" :after="frameSnapshot(row.after)" :before-label="c('upstreamIn')" :after-label="c('clientOut')" :partial="capture.truncated" :initial-open="index < 2" />
+						<CaptureDiff :title="row.before.type === row.after.type ? row.before.type || c('responsePayload') : `${row.before.type || frameLabel(row.before)} → ${row.after.type || frameLabel(row.after)}`" :before="frameSnapshot(row.before)" :after="frameSnapshot(row.after)" :before-label="c('upstreamIn')" :after-label="c('clientOut')" :partial="capture.truncated" :sources="rowSources(row.before, row.after)" :source-note="sourceNote()" :initial-open="index < 2" />
 					</template>
 					<details v-else-if="row.frame" class="card individual-frame" :open="index < 2" :data-direction="row.frame.dir" :data-kind="row.frame.kind">
 						<summary><component :is="row.frame.kind === 'note' ? Info : row.frame.dir === 'out' || row.frame.dir === 'client_out' ? ArrowUpRight : ArrowDownLeft" :size="15" /><strong class="frame-direction">{{ direction(row.frame) }}</strong><Badge :tone="frameTone(row.frame)">{{ frameLabel(row.frame) }}</Badge><code>{{ row.frame.type || '' }}</code><span class="frame-meta">+{{ row.frame.at_ms }} ms · {{ formatBytes(row.frame.bytes) }}</span></summary>
@@ -140,7 +162,7 @@ function downloadJson() {
 				<p class="capture-hint">{{ c('localOnly') }}</p>
 				<p v-if="!request.beforeBody.available" class="notice notice-warning">{{ c('requestNotRecorded') }}</p>
 				<CaptureDiff :title="c('requestHeaders')" :before="request.beforeHeaders" :after="request.afterHeaders" :before-label="c('clientIn')" :after-label="c('upstreamOut')" :partial="capture.truncated" initial-open />
-				<CaptureDiff :title="c('requestBody')" :before="request.beforeBody" :after="request.afterBody" :before-label="c('clientIn')" :after-label="c('upstreamOut')" :partial="capture.truncated" initial-open />
+				<CaptureDiff :title="c('requestBody')" :before="request.beforeBody" :after="request.afterBody" :before-label="c('clientIn')" :after-label="c('upstreamOut')" :partial="capture.truncated" :sources="sourceLabels('request')" :source-note="sourceNote()" initial-open />
 			</section>
 			<section v-else-if="tab === 'response'" class="flow-section">
 				<div class="flow-stage-heading"><h2>{{ c('responseHeaders') }}</h2><span>{{ c('responseRoute') }}</span></div>

@@ -214,6 +214,44 @@ export interface CaptureHeader {
     value: string
 }
 
+export interface CaptureRuleChange {
+    path: string
+    operation: string
+    before_exists?: boolean
+    after_exists?: boolean
+    before?: unknown
+    after?: unknown
+    truncated?: boolean
+}
+
+export interface CaptureRuleTrace {
+    rule_id?: string
+    rule_name?: string
+    revision?: number
+    priority?: number
+    phase?: string
+    action_id?: string
+    action_type?: string
+    type?: string
+    action_index?: number
+    index?: number
+    matched?: boolean
+    status?: string
+    rolled_back?: boolean
+    error?: string
+    duration_ns?: number
+    changes?: CaptureRuleChange[]
+    omitted_changes?: number
+    event_type?: string
+    event_id?: string
+    sequence?: unknown
+    upstream_seq?: number
+    rules_version?: number
+    source?: string
+    source_kind?: string
+    trace_truncated?: boolean
+}
+
 export interface CaptureFrame {
     seq: number
     dir: 'out' | 'in' | 'client_in' | 'client_out'
@@ -223,6 +261,7 @@ export interface CaptureFrame {
     bytes: number
     data?: unknown
     text?: string
+    rule_event_id?: string
 }
 
 export interface Capture {
@@ -246,6 +285,10 @@ export interface Capture {
     request_bytes: number
     response_headers: CaptureHeader[]
     response_frames: CaptureFrame[]
+    rule_traces?: CaptureRuleTrace[]
+    rules_version?: number
+    rules_trace_truncated?: boolean
+    rules_trace_omitted?: number
     response_text: string
     response_id: string
     prompt_tokens: number
@@ -288,7 +331,24 @@ export interface SettingsResponse {
     static: StaticConfig
 }
 
+export type {
+    Rule,
+    RuleRecord,
+    RuleSchema,
+    RuleCondition,
+    RuleAction,
+    ValueExpr,
+    RuleFieldError,
+    RuleList,
+    RuleSimulationRequest,
+    RuleSimulationResult,
+    RuleValidation
+} from './rules'
+
 export interface Middleware {
+    revision?: number
+    compatible?: boolean
+    rule_id?: string
     name: string
     description: string
     enabled: boolean

@@ -29,7 +29,7 @@ const nav = computed(() => [
 	{ name: 'stats', label: t('nav.stats'), to: '/stats', icon: ChartNoAxesCombined },
 	{ name: 'usage', label: t('nav.usage'), to: '/usage', icon: ListFilter },
 	{ name: 'captures', label: t('nav.captures'), to: '/captures', icon: Activity },
-	{ name: 'middlewares', label: t('nav.middlewares'), to: '/middlewares', icon: Braces },
+	{ name: 'rules', label: t('rules.title'), to: '/rules', icon: Braces },
 	{ name: 'settings', label: t('nav.settings'), to: '/settings', icon: SettingsIcon },
 ])
 const activeName = computed(() => route.name === 'capture-detail' ? 'captures' : String(route.name ?? ''))

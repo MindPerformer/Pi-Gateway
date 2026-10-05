@@ -31,7 +31,12 @@ func (s *Server) handleResponsesHTTP(w http.ResponseWriter, r *http.Request) {
 
 	p, apiErr := s.prepare(ctx, r, rawBody, "sse")
 	if apiErr != nil {
-		writeError(w, apiErr)
+		if p != nil {
+			writeError(captureJSONResponse(w, p.Recorder, "error"), apiErr)
+			s.finish(context.WithoutCancel(ctx), p, outcomeFor(apiErr, ctx), apiErr)
+		} else {
+			writeError(w, apiErr)
+		}
 		return
 	}
 
@@ -141,6 +146,13 @@ func (s *Server) serveSSE(w http.ResponseWriter, ctx context.Context, p *prepare
 				p.Recorder.NoteTTFB()
 			}
 		}
+		event, transformErr := p.transformResponseEvent(ctx, event)
+		if transformErr != nil {
+			return transformErr
+		}
+		if event == nil {
+			return nil
+		}
 		commit()
 		setResponseWriteDeadline(w)
 		if _, werr := w.Write(formatSSEFrame(event.Raw)); werr != nil {
@@ -224,9 +236,16 @@ func (s *Server) serveAggregated(w http.ResponseWriter, ctx context.Context, p *
 	var lastEvent *upstream.Event
 
 	_, err := s.upstream.Stream(ctx, req, func(event *upstream.Event) error {
-		lastEvent = event
-		if upstream.IsTerminal(event.Type) {
-			terminal = event.Data
+		transformed, transformErr := p.transformResponseEvent(ctx, event)
+		if transformErr != nil {
+			return transformErr
+		}
+		if transformed == nil {
+			return nil
+		}
+		lastEvent = transformed
+		if upstream.IsTerminal(transformed.Type) {
+			terminal = transformed.Data
 		}
 		return nil
 	})
@@ -249,6 +268,12 @@ func (s *Server) serveAggregated(w http.ResponseWriter, ctx context.Context, p *
 	payload := terminal
 	if resp, ok := terminal["response"].(map[string]any); ok {
 		payload = resp
+	}
+	var transformErr error
+	payload, transformErr = p.transformResponseBody(ctx, payload)
+	if transformErr != nil {
+		writeError(captureJSONResponse(w, p.Recorder, "error"), errorFromUpstream(transformErr, p.ResponseHeaders))
+		return store.OutcomeError, transformErr
 	}
 	writeJSON(captureJSONResponse(w, p.Recorder, "response"), http.StatusOK, payload)
 	return store.OutcomeOK, nil

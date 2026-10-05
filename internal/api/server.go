@@ -22,6 +22,8 @@ import (
 	"pi-gateway/internal/keylimit"
 	"pi-gateway/internal/middleware"
 	"pi-gateway/internal/piwire"
+	"pi-gateway/internal/rules"
+	"pi-gateway/internal/rulesruntime"
 	"pi-gateway/internal/session"
 	"pi-gateway/internal/settings"
 	"pi-gateway/internal/store"
@@ -40,6 +42,7 @@ type Server struct {
 	settings     *settings.Holder
 	limiter      *keylimit.Limiter
 	registry     map[string]middleware.Middleware
+	ruleService  *rulesruntime.Service
 	logger       *slog.Logger
 	wsMaxAge     time.Duration
 	lifecycle    wsLifecycle
@@ -79,6 +82,7 @@ func New(opts Options) *Server {
 		settings:     opts.Settings,
 		limiter:      keylimit.NewLimiter(opts.Store),
 		registry:     middleware.Registry(),
+		ruleService:  rulesruntime.New(opts.Store),
 		logger:       logger,
 		wsMaxAge:     opts.WSConnectionMaxAge,
 		catalogCache: newModelCatalogCache(opts.CatalogCache, opts.CatalogTTL, opts.CatalogTimeout, logger),
@@ -122,138 +126,102 @@ type prepared struct {
 	// diagnostic capture is off.
 	Usage *usageTracker
 	MW    middleware.Result
+	// RuleEngine pins the same immutable snapshot for request and response stages.
+	RuleEngine   *rules.Engine
+	RuleVersion  int64
+	RuleContext  map[string]any
+	RuleEventSeq int64
 	// WantsStream reports whether the client asked for SSE.
 	WantsStream bool
 	// RawRequestBody preserves the client's original bytes for diagnostics.
 	RawRequestBody []byte
 }
 
-// prepare validates the client request, normalises it into Pi's wire shape, runs
-// the middleware chain and reserves an account.
+// prepare pins the rule snapshot before admission and retains diagnostic state
+// for every later early return, including requests which never select an account.
 func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, clientTransport string) (*prepared, *apiError) {
 	key, err := s.authenticate(ctx, r)
 	if err != nil {
 		return nil, &apiError{Status: http.StatusUnauthorized, Message: "invalid or missing API key", Type: "invalid_request_error"}
 	}
-
 	var clientBody map[string]any
 	if len(rawBody) > 0 {
 		if err := json.Unmarshal(rawBody, &clientBody); err != nil {
-			return nil, &apiError{
-				Status:  http.StatusBadRequest,
-				Message: "request body is not valid JSON: " + err.Error(),
-				Type:    "invalid_request_error",
-			}
+			return nil, &apiError{Status: http.StatusBadRequest, Message: "request body is not valid JSON: " + err.Error(), Type: "invalid_request_error"}
 		}
 	}
 	if clientBody == nil {
 		clientBody = map[string]any{}
 	}
-
 	rt := s.settings.Get()
-
-	// Keep the internal pool key separate from the optional wire session. Generated
-	// ids must never leak into session headers or the prompt_cache_key body field.
-	// Client headers inform these ids but are never forwarded verbatim.
-	headerHints := []string{
-		r.Header.Get("x-client-request-id"),
-		r.Header.Get("session-id"),
-		r.Header.Get("session_id"),
-		r.Header.Get("x-session-id"),
-	}
+	headerHints := []string{r.Header.Get("x-client-request-id"), r.Header.Get("session-id"), r.Header.Get("session_id"), r.Header.Get("x-session-id")}
 	sessionID := piwire.DeriveSessionID(clientBody, headerHints, func() string { return internalSessionID(ctx) })
 	promptCacheKey := piwire.DeriveSessionID(clientBody, headerHints, nil)
-
 	built, err := piwire.BuildRequest(clientBody, piwire.BuildOptions{
-		DefaultModel:            rt.DefaultModel,
-		ModelMappings:           rt.ModelMappings,
-		DefaultReasoningEffort:  rt.ReasoningEffort,
-		DefaultReasoningSummary: rt.ReasoningSummary,
-		SessionID:               promptCacheKey,
-		ExtraFields:             extraFieldsFrom(rt),
+		DefaultModel: rt.DefaultModel, ModelMappings: rt.ModelMappings,
+		DefaultReasoningEffort: rt.ReasoningEffort, DefaultReasoningSummary: rt.ReasoningSummary,
+		SessionID: promptCacheKey, ExtraFields: extraFieldsFrom(rt),
 	})
 	if err != nil {
 		return nil, &apiError{Status: http.StatusBadRequest, Message: err.Error(), Type: "invalid_request_error"}
 	}
+	p := &prepared{
+		Key: key, ClientBody: clientBody, Built: built, SessionID: sessionID,
+		WireSessionID: promptCacheKey, PoolSessionID: poolSessionID(ctx, sessionID),
+		WantsStream: wantsStream(clientBody), RawRequestBody: rawBody,
+		RuleContext: map[string]any{"original_model": built.Model, "model": built.Model,
+			"api_key_id": key.ID, "client_protocol": clientTransport,
+			"request_path": r.URL.Path, "request_method": r.Method},
+	}
+	if rt.CaptureEnabled {
+		p.Recorder = s.newRecorder(key, nil, clientTransport, "", built)
+		p.Recorder.OnClientRequest(r.Header, rawBody)
+	}
+	if apiErr := s.applyRequestRules(ctx, p); apiErr != nil {
+		return p, apiErr
+	}
 
-	// Middleware chain: the last chance to rewrite or drop the request before it
-	// reaches the backend.
-	chain, err := s.buildChain(ctx)
+	// Enforce transport invariants independently of user rules, with a distinct
+	// provenance record so a later repair is not blamed on the last user rule.
+	beforeShape, _ := json.Marshal(built.Body)
+	shapeChanges := piwire.EnforcePiShape(built.Body)
+	built.JSON, err = json.Marshal(built.Body)
 	if err != nil {
-		return nil, &apiError{Status: http.StatusInternalServerError, Message: err.Error(), Type: "server_error"}
+		return p, &apiError{Status: http.StatusInternalServerError, Message: "could not encode rule-transformed request", Type: "server_error", Code: "rule_error"}
 	}
-
-	mwReq := &middleware.Request{
-		Body:      built.Body,
-		Model:     built.Model,
-		SessionID: sessionID,
-		APIKeyID:  key.ID,
-		Meta:      map[string]any{"client_body": clientBody, "client_transport": clientTransport},
+	if len(shapeChanges) > 0 {
+		p.MW.Changes = append(p.MW.Changes, shapeChanges...)
+		p.recordGatewayDifference("pi_shape", "Pi protocol invariants", beforeShape, built.JSON)
 	}
-	mwResult, err := chain.Apply(ctx, mwReq)
-	if err != nil {
-		return nil, &apiError{Status: http.StatusInternalServerError, Message: err.Error(), Type: "server_error"}
-	}
-	if mwResult.Dropped {
-		return nil, &apiError{Status: http.StatusForbidden, Message: mwResult.Reason, Type: "invalid_request_error"}
-	}
-
-	// Middlewares may have changed the model or body; re-serialise. The Pi shape is
-	// re-asserted first, because middleware can drop or reintroduce fields and the
-	// upstream rejects a body that carries them.
-	built.Model = mwReq.Model
 	built.SessionID = sessionID
-	if shapeChanges := piwire.EnforcePiShape(mwReq.Body); len(shapeChanges) > 0 {
-		mwResult.Changes = append(mwResult.Changes, shapeChanges...)
-	}
-	if raw, err := json.Marshal(mwReq.Body); err == nil {
-		built.JSON = raw
-	}
-	if mwReq.SessionID != sessionID {
-		sessionID = mwReq.SessionID
-		built.SessionID = sessionID
-	}
-	// Resolve the final middleware-shaped request, not unvalidated client hints.
-	rawPrevious, _ := mwReq.Body.Get("previous_response_id")
+	rawPrevious, _ := built.Body.Get("previous_response_id")
 	continuation, previousID, continuationErr := s.resolveContinuation(ctx, key.ID, rawPrevious)
 	if continuationErr != nil {
-		return nil, continuationErr
+		return p, continuationErr
 	}
 	if continuation != nil {
-		// The stored opaque lane wins over any new downstream session hint.
 		sessionID = continuation.SessionID
 		built.SessionID = sessionID
 	}
+	p.SessionID, p.PreviousResponseID, p.Continuation = sessionID, previousID, continuation
+	p.PoolSessionID = poolSessionID(ctx, sessionID)
 
-	// Per-key admission: concurrency, requests per minute and spend budgets.
-	// It runs after normalisation and before an account slot is taken, so a
-	// denied request never occupies an account. A limiter error fails open: a
-	// database hiccup must not take the data plane down.
 	keyRelease := func() {}
 	if key != nil {
 		dec, rel, lerr := s.limiter.Admit(ctx, key.ID, keylimit.LimitsFromKey(key), time.Now())
 		if lerr != nil {
 			s.logger.Warn("key admission check failed; allowing request", "error", lerr, "key_id", key.ID)
 		} else if !dec.Allowed {
-			return nil, &apiError{
-				Status:          http.StatusTooManyRequests,
-				Message:         admissionMessage(dec),
-				Type:            "rate_limit_error",
-				Code:            dec.Reason,
-				ResponseHeaders: retryAfterHeaders(dec.RetryAfter),
-			}
+			return p, &apiError{Status: http.StatusTooManyRequests, Message: admissionMessage(dec), Type: "rate_limit_error", Code: dec.Reason, ResponseHeaders: retryAfterHeaders(dec.RetryAfter)}
 		} else {
 			keyRelease = rel
 		}
 	}
-
 	var account *store.Account
 	var release func()
 	if continuation != nil {
 		account, release, err = s.accounts.AcquirePinned(ctx, key, continuation.AccountID, built.Model)
 	} else {
-		// Only an actual downstream WS lane or an explicit logical session gets
-		// a soft hint. Anonymous HTTP requests must not share a generated lane.
 		scope := ""
 		connection, _ := ctx.Value(downstreamWSContextKey{}).(string)
 		if connection != "" || promptCacheKey != "" {
@@ -264,54 +232,27 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	if err != nil {
 		keyRelease()
 		if continuation != nil && errors.Is(err, accounts.ErrNoAccounts) {
-			return nil, continuationAPIError(session.ErrMiss)
+			return p, continuationAPIError(session.ErrMiss)
 		}
 		if errors.Is(err, accounts.ErrModelUnavailable) {
-			return nil, &apiError{Status: http.StatusForbidden, Message: "This model is disabled for the eligible accounts or groups.", Type: "invalid_request_error", Code: "model_disabled"}
+			return p, &apiError{Status: http.StatusForbidden, Message: "This model is disabled for the eligible accounts or groups.", Type: "invalid_request_error", Code: "model_disabled"}
 		}
-		return nil, &apiError{Status: http.StatusServiceUnavailable, Message: err.Error(), Type: "server_error"}
+		return p, &apiError{Status: http.StatusServiceUnavailable, Message: err.Error(), Type: "server_error"}
 	}
 	release = composeRelease(keyRelease, release)
-
 	transport := s.resolveTransport(rt, key, account, clientTransport)
 	if continuation != nil && transport != "websocket-cached" && transport != "auto" {
 		release()
-		return nil, continuationAPIError(session.ErrMiss)
+		return p, continuationAPIError(session.ErrMiss)
 	}
-
-	p := &prepared{
-		Key:                key,
-		Account:            account,
-		Release:            release,
-		ClientBody:         clientBody,
-		Built:              built,
-		SessionID:          sessionID,
-		WireSessionID:      promptCacheKey,
-		PoolSessionID:      poolSessionID(ctx, sessionID),
-		PreviousResponseID: previousID,
-		Continuation:       continuation,
-		Transport:          transport,
-		MW:                 mwResult,
-		WantsStream:        wantsStream(clientBody),
-		RawRequestBody:     rawBody,
+	p.Account, p.Release, p.Transport = account, release, transport
+	p.RuleContext["account_id"], p.RuleContext["upstream_protocol"] = account.ID, transport
+	p.RuleContext["model"] = built.Model
+	if p.Recorder != nil {
+		p.Recorder.SetRoute(account.ID, account.Name, built.Model, sessionID, transport)
 	}
-
-	// The ledger entry is created for every request, regardless of whether
-	// diagnostic capture is enabled.
 	p.Usage = s.newUsageTracker(key, account, built.Model, clientTransport, transport, sessionID, stringField(clientBody, "service_tier"))
 	s.startUsage(ctx, p.Usage)
-
-	if rt.CaptureEnabled {
-		p.Recorder = s.newRecorder(key, account, clientTransport, transport, built)
-		if p.Recorder != nil {
-			// Record the client hop first: what the client actually sent, before
-			// any Pi normalisation, so both hops of the gateway are auditable.
-			p.Recorder.OnClientRequest(r.Header, rawBody)
-			if len(mwResult.Changes) > 0 {
-				p.Recorder.Note("middleware", strings.Join(mwResult.Changes, "; "))
-			}
-		}
-	}
 	return p, nil
 }
 
@@ -395,17 +336,20 @@ func (s *Server) buildChain(ctx context.Context) (*middleware.Chain, error) {
 
 func (s *Server) newRecorder(key *store.APIKey, account *store.Account, clientTransport, upstreamTransport string, built *piwire.BuiltRequest) *capture.Recorder {
 	scaffold := &store.Capture{
-		AccountID:         account.ID,
-		AccountName:       account.Name,
-		APIKeyID:          key.ID,
-		APIKeyName:        key.Name,
-		ClientTransport:   clientTransport,
-		UpstreamTransport: upstreamTransport,
-		Model:             built.Model,
-		SessionID:         built.SessionID,
-		Outcome:           store.OutcomePending,
-		RequestBytes:      int64(len(built.JSON)),
+		ClientTransport: clientTransport, UpstreamTransport: upstreamTransport,
+		Outcome: store.OutcomePending,
 	}
+	if key != nil {
+		scaffold.APIKeyID, scaffold.APIKeyName = key.ID, key.Name
+	}
+	if account != nil {
+		scaffold.AccountID, scaffold.AccountName = account.ID, account.Name
+	}
+	if built != nil {
+		scaffold.Model, scaffold.SessionID = built.Model, built.SessionID
+	}
+	// RequestBytes/RequestBody describe actual upstream traffic, not a prepared
+	// payload which may be blocked before an account or connection is acquired.
 	return capture.New(scaffold, capture.Options{
 		MaxBytesPerRecord: s.cfg.Capture.MaxBytesPerRecord,
 		IncludeHeaders:    s.cfg.Capture.IncludeHeaders,
@@ -439,6 +383,20 @@ func (s *responseHeaderSink) OnResponseHeaders(status int, headers http.Header) 
 	// Replace rather than merge: a retry/fallback response supersedes its predecessor.
 	s.prepared.ResponseHeaders = safeRetryHeaders(headers)
 	s.Sink.OnResponseHeaders(status, headers)
+}
+
+// Observe the successful wire protocol, not the configured routing mode. This
+// also handles cached WebSockets and auto fallback with capture disabled.
+func (s *responseHeaderSink) OnFrame(dir, kind, eventType string, raw []byte, parsed map[string]any) {
+	if dir == "in" && s.prepared.RuleContext != nil {
+		switch kind {
+		case store.KindSSEEvent:
+			s.prepared.RuleContext["upstream_protocol"] = "sse"
+		case store.KindWSFrame:
+			s.prepared.RuleContext["upstream_protocol"] = "ws"
+		}
+	}
+	s.Sink.OnFrame(dir, kind, eventType, raw, parsed)
 }
 
 // finish persists the capture, releasing the account slot.
@@ -558,6 +516,11 @@ func errorFromUpstream(err error, responseHeaders ...http.Header) (apiErr *apiEr
 			apiErr.ResponseHeaders.Set("x-request-id", apiErr.RequestID)
 		}
 	}()
+	var policyError *apiError
+	if errors.As(err, &policyError) {
+		copy := *policyError
+		return &copy
+	}
 	if errors.Is(err, upstream.ErrContinuationUnavailable) {
 		return continuationAPIError(err)
 	}

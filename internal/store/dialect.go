@@ -200,7 +200,7 @@ func postgresConnectionError(phase string, err error) error {
 	return fmt.Errorf("store: PostgreSQL %s: %s", phase, category)
 }
 
-const postgresSchemaVersion int64 = 2
+const postgresSchemaVersion int64 = 3
 
 const postgresVersionSchema = `CREATE TABLE IF NOT EXISTS schema_migrations (
  version BIGINT PRIMARY KEY CHECK (version > 0),
@@ -251,8 +251,9 @@ func (s *Store) migratePostgres() error {
 		return tx.Commit()
 	}
 	// Version 1 adopts unversioned PostgreSQL databases and creates fresh ones.
-	// Version 2 adds per-source model catalogs. Replaying the idempotent schema
-	// and additive columns also upgrades existing version-1 databases.
+	// Version 2 adds per-source model catalogs; version 3 adds independent rules,
+	// publication metadata and rule capture fields. Replaying the idempotent
+	// schema and additive columns upgrades all prior database versions.
 	// Execute statements individually: pgx extended protocol rejects multi-command prepares.
 	for _, statement := range strings.Split(postgresSchema(schemaSQL), ";") {
 		if strings.TrimSpace(statement) == "" {

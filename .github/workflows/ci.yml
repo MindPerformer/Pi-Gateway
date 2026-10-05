@@ -22,10 +22,15 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - run: npm ci
       - run: npm run typecheck
       - run: npm run check:i18n
       - run: npm run check:capture
+      - run: npm run check:rules
       - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
@@ -90,7 +95,7 @@ jobs:
           results = Path('test-results.jsonl')
           assert results.is_file(), 'Go test results are missing; inspect the preceding test/build step'
           events = [json.loads(line) for line in results.read_text().splitlines()]
-          required = {'TestPostgresStoreIntegration', 'TestRedisIntegration', 'TestBackendMatrixIntegration'}
+          required = {'TestPostgresStoreIntegration', 'TestRedisIntegration', 'TestBackendMatrixIntegration', 'TestRulesPostgresPublicationAndUpgrade'}
           required.update(f'TestBackendMatrixIntegration/{variant}' for variant in ('sqlite-memory', 'sqlite-redis', 'postgres-memory', 'postgres-redis'))
           for test in sorted(required):
               matches = [event for event in events if event.get('Test') == test]

@@ -313,6 +313,10 @@ CREATE TABLE IF NOT EXISTS captures (
  request_bytes INTEGER NOT NULL DEFAULT 0,
  response_headers TEXT NOT NULL DEFAULT '[]',
  response_frames TEXT NOT NULL DEFAULT '[]',
+ rule_traces TEXT NOT NULL DEFAULT '[]',
+ rules_version INTEGER NOT NULL DEFAULT 0,
+ rules_trace_truncated INTEGER NOT NULL DEFAULT 0,
+ rules_trace_omitted INTEGER NOT NULL DEFAULT 0,
  response_text TEXT NOT NULL DEFAULT '',
  response_id TEXT NOT NULL DEFAULT '',
  prompt_tokens INTEGER NOT NULL DEFAULT 0,
@@ -331,6 +335,31 @@ CREATE TABLE IF NOT EXISTS middlewares (
  config TEXT NOT NULL DEFAULT '{}',
  updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rules (
+ id TEXT PRIMARY KEY,
+ rule_json TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK (revision > 0),
+ name TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ phase TEXT NOT NULL,
+ enabled INTEGER NOT NULL DEFAULT 1,
+ priority INTEGER NOT NULL DEFAULT 0,
+ order_index INTEGER NOT NULL DEFAULT 0,
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL,
+ legacy_name TEXT NOT NULL DEFAULT '',
+ source TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_rules_order ON rules(phase,priority,order_index,id);
+CREATE INDEX IF NOT EXISTS idx_rules_legacy ON rules(legacy_name);
+CREATE TABLE IF NOT EXISTS rule_set_metadata (
+ singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+ version INTEGER NOT NULL DEFAULT 0,
+ legacy_migrated INTEGER NOT NULL DEFAULT 0,
+ legacy_source TEXT NOT NULL DEFAULT '[]',
+ updated_at INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO rule_set_metadata(singleton) VALUES (1) ON CONFLICT(singleton) DO NOTHING;
 CREATE TABLE IF NOT EXISTS audit_events (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  action TEXT NOT NULL,
@@ -427,6 +456,12 @@ func additiveColumns() map[string]map[string]string {
 			"requests_per_minute": "INTEGER NOT NULL DEFAULT 0",
 			"daily_limit_usd":     "REAL NOT NULL DEFAULT 0",
 			"weekly_limit_usd":    "REAL NOT NULL DEFAULT 0",
+		},
+		"captures": {
+			"rule_traces":           "TEXT NOT NULL DEFAULT '[]'",
+			"rules_version":         "INTEGER NOT NULL DEFAULT 0",
+			"rules_trace_truncated": "INTEGER NOT NULL DEFAULT 0",
+			"rules_trace_omitted":   "INTEGER NOT NULL DEFAULT 0",
 		},
 		"account_model_catalog": {"source_catalogs_json": "TEXT NOT NULL DEFAULT '{}'"},
 		"account_groups":        {"disabled_models": "TEXT NOT NULL DEFAULT '[]'"},

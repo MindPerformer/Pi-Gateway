@@ -27,7 +27,8 @@ const router = createRouter({
                     name: 'capture-detail',
                     component: () => import('../views/CaptureDetailView.vue')
                 },
-                {path: 'middlewares', name: 'middlewares', component: () => import('../views/MiddlewaresView.vue')},
+                {path: 'rules', name: 'rules', component: () => import('../views/MiddlewaresView.vue')},
+                {path: 'middlewares', redirect: '/rules'},
                 {path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue')},
             ],
         },

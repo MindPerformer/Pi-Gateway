@@ -17,7 +17,11 @@ const {
     captureRows,
     hopProtocol,
     streamSnapshot,
-    payloadPreview
+    payloadPreview,
+    ruleSources,
+    ruleTraces,
+    ruleChangeSnapshot,
+    lastRuleWriters,
 } = await import(
     moduleURL(compile('captureInspection').replace("from './captureDiff'", `from '${diffURL}'`)),
     )
@@ -184,4 +188,88 @@ check('binary WebSocket frames still identify the protocol', () => {
     assert.equal(hopProtocol(record, 'upstream'), 'ws')
     assert.equal(streamSnapshot(record, 'upstream').socket.length, 1)
 })
+check('explicit event IDs pair interleaved and truncated records without guessing', () => {
+    const first = {...frame(0, 'in', 'sse_event', {delta: 'first'}, 'delta'), rule_event_id: 'first'}
+    const second = {...frame(1, 'in', 'sse_event', {delta: 'second'}, 'delta'), rule_event_id: 'second'}
+    const out = {...frame(2, 'client_out', 'http_response', {result: 'changed'}, 'response'), rule_event_id: 'first'}
+    const rows = captureRows(capture([first, second, out], {truncated: true}), true)
+    assert.equal(rows.length, 2)
+    assert.equal(rows[0].before.rule_event_id, 'first')
+    assert.equal(rows[0].after.rule_event_id, 'first')
+    assert.equal(rows[1].frame.rule_event_id, 'second')
+})
+check('different, one-sided, and duplicated event IDs never fall back to content matching', () => {
+    const before = {...frame(0, 'in', 'sse_event', event, event.type), rule_event_id: 'before'}
+    const after = {...frame(1, 'client_out', 'sse_event', event, event.type), rule_event_id: 'after'}
+    assert.equal(captureRows(capture([before, after]), true).length, 2)
+    assert.equal(captureRows(capture([before, {...after, rule_event_id: undefined}]), true).length, 2)
+    assert.equal(captureRows(capture([before, {...before, seq: 1}, {
+        ...after,
+        seq: 2,
+        rule_event_id: 'before'
+    }]), true).length, 3)
+    assert.equal(captureRows(capture([before, {...after, rule_event_id: 'before'}, {
+        ...after,
+        seq: 2,
+        rule_event_id: 'before'
+    }]), true).length, 3)
+})
+check('dropped events remain visible and never manufacture a client delivery', () => {
+    const dropped = {...frame(0, 'in', 'sse_event', {delta: 'drop'}, 'delta'), rule_event_id: 'drop'}
+    const next = {...frame(1, 'in', 'sse_event', {delta: 'next'}, 'delta'), rule_event_id: 'next'}
+    const delivered = {...frame(2, 'client_out', 'sse_event', {delta: 'next'}, 'delta'), rule_event_id: 'next'}
+    const rows = captureRows(capture([dropped, next, delivered]), true)
+    assert.equal(rows.length, 2)
+    assert.equal(rows[0].frame.rule_event_id, 'drop')
+    assert.equal(rows[1].before.rule_event_id, 'next')
+})
+check('rule sources preserve historical identity and exclude no-op, failed, and rolled-back actions', () => {
+    const record = capture([], {
+        rules_version: 17, rule_traces: [
+            {rule_id: 'old', rule_name: 'old name', phase: 'request', status: 'changed'},
+            {rule_id: 'noop', phase: 'request', matched: true, status: 'no_change'},
+            {rule_id: 'failed', phase: 'request', status: 'error'},
+            {rule_id: 'rolled', phase: 'request', status: 'changed', rolled_back: true},
+            {rule_id: 'response', phase: 'response_event', status: 'changed', event_id: 'second'},
+            {rule_id: 'body', phase: 'response_body', status: 'changed', event_id: 'second'},
+            {rule_id: 'gateway:normalize', source_kind: 'gateway', phase: 'request', status: 'changed'},
+        ]
+    })
+    assert.deepEqual(ruleSources(record, 'request').map(trace => trace.rule_id), ['old', 'gateway:normalize'])
+    assert.equal(ruleSources(record, 'request')[0].rule_name, 'old name')
+    assert.deepEqual(ruleSources(record, undefined, 'second').map(trace => trace.rule_id), ['response', 'body'])
+    assert.deepEqual(ruleSources(record), [])
+    assert.deepEqual(ruleSources(record, 'response_event', 'first'), [])
+    assert.deepEqual(ruleTraces(capture()), [])
+    assert.deepEqual(ruleSources(capture(), 'request'), [])
+})
+check('change snapshots distinguish absent, null, false and unrecorded values', () => {
+    assert.deepEqual(ruleChangeSnapshot({before_exists: false, before: null}, 'before'), {
+        available: true,
+        value: {exists: false}
+    })
+    assert.deepEqual(ruleChangeSnapshot({before_exists: true, before: null}, 'before'), {
+        available: true,
+        value: {exists: true, value: null}
+    })
+    assert.deepEqual(ruleChangeSnapshot({after_exists: true, after: false}, 'after'), {
+        available: true,
+        value: {exists: true, value: false}
+    })
+    assert.deepEqual(ruleChangeSnapshot({before_exists: true}, 'before'), {available: false})
+    assert.deepEqual(ruleChangeSnapshot({}, 'before'), {available: false})
+})
+check('last writer follows execution order and refuses positional or incomplete attribution', () => {
+    const change = path => ({path, operation: 'replace', before_exists: true, after_exists: true, before: 1, after: 2})
+    const trace = (path, extra = {}) => ({phase: 'request', status: 'changed', changes: [change(path)], ...extra})
+    const record = capture([], {rule_traces: [trace('/same'), trace('/same'), trace('/array/0')]})
+    assert.deepEqual([...lastRuleWriters(record)], ['1:0'])
+    assert.deepEqual([...lastRuleWriters({...record, rules_trace_truncated: true})], [])
+    assert.deepEqual([...lastRuleWriters({...record, truncated: true})], [])
+    assert.deepEqual([...lastRuleWriters(capture([], {rule_traces: [trace('/same'), trace('/same', {omitted_changes: 1})]}))], [])
+    assert.deepEqual([...lastRuleWriters(capture([], {rule_traces: [trace('/parent/child'), trace('/parent')]}))], ['1:0'])
+    assert.deepEqual([...lastRuleWriters(capture([], {rule_traces: [trace('/parent'), trace('/parent/child')]}))], ['1:0'])
+    assert.deepEqual([...lastRuleWriters(capture([], {rule_traces: [trace('/x', {event_id: 'a'}), trace('/x', {event_id: 'b'})]}))], ['1:0', '0:0'])
+})
 console.log(`PASS: ${checked} capture inspection checks`)
+await import('./check-capture-rule-traces.mjs')

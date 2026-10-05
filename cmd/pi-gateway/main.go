@@ -29,6 +29,7 @@ import (
 	"pi-gateway/internal/middleware"
 	"pi-gateway/internal/oauth"
 	"pi-gateway/internal/quota"
+	"pi-gateway/internal/rulesruntime"
 	"pi-gateway/internal/session"
 	"pi-gateway/internal/settings"
 	"pi-gateway/internal/store"
@@ -118,6 +119,16 @@ func run() error {
 
 	if err := seedMiddlewares(rootCtx, st, logger); err != nil {
 		return err
+	}
+	// Publish the legacy middleware configuration exactly once. The data plane
+	// only runs the immutable rule snapshot after this succeeds.
+	if err := rulesruntime.New(st).Ensure(rootCtx); err != nil {
+		if !errors.Is(err, rulesruntime.ErrMigration) {
+			return fmt.Errorf("initialize rules: %w", err)
+		}
+		// Keep the admin repair path and unchanged legacy chain available. Never
+		// turn an unconvertible policy into an empty, permissive new rule set.
+		logger.Error("rule migration requires repair; retaining legacy middleware", "error", err)
 	}
 
 	factory := egress.NewFactory(egress.Options{

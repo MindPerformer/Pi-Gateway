@@ -2,6 +2,8 @@
 // which is why the catalogues live in one small module rather than a loader.
 
 import {uiOptionsEn, uiOptionsZh} from './uiOptionsMessages'
+import {rulesEn, rulesZh} from './rulesMessages'
+import {captureRulesEn, captureRulesZh} from './captureRulesMessages'
 
 export type Locale = 'en' | 'zh-CN'
 
@@ -12,6 +14,8 @@ export const LOCALES: Array<{ value: Locale; label: string }> = [
 
 const en = {
     ...uiOptionsEn,
+    ...rulesEn,
+    ...captureRulesEn,
     'accounts.groups': 'Groups',
     'accounts.allGroups': 'All groups',
     'accounts.ungrouped': 'Ungrouped',
@@ -538,6 +542,8 @@ type Catalogue = Record<keyof typeof en, string>
 
 const zh: Catalogue = {
     ...uiOptionsZh,
+    ...rulesZh,
+    ...captureRulesZh,
     'accounts.groups': '账号分组',
     'accounts.allGroups': '全部分组',
     'accounts.ungrouped': '未分组',

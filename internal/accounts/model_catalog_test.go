@@ -389,6 +389,107 @@ func TestModelCatalogRefreshBoundsCancellationAndRejectsRedirects(t *testing.T) 
 	}
 }
 
+// A canceled network context must not cancel the local snapshot read: otherwise
+// database/sql may retire the only :memory: connection, destroying the schema
+// before the detached save. Starting canceled makes this contract deterministic
+// rather than relying only on the concurrent HTTP-cancellation regression above.
+func TestModelCatalogCanceledSourcesKeepSnapshotsForPersistence(t *testing.T) {
+	for _, mode := range []string{"cancel", "deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			st := newAccountsTestStore(t)
+			base := context.Background()
+			expires := time.Now().Add(time.Hour).UnixMilli()
+			a := &store.Account{Name: mode, AccessToken: "primary-secret", ExpiresAt: expires}
+			if err := st.CreateAccount(base, a); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SaveCodexCredential(base, a.ID, "codex-secret", "codex-refresh", "", expires, "codex-id"); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			a, err = st.GetAccount(base, a.ID)
+			if err != nil || a == nil {
+				t.Fatalf("load linked account: %v", err)
+			}
+			sources := []string{store.ModelSourceChatGPT, store.ModelSourceCodex}
+			seed, err := st.BeginAccountModelCatalogRefresh(base, a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial := make(map[string]store.ModelCatalogSourceResult)
+			for _, source := range sources {
+				initial[source] = store.ModelCatalogSourceResult{
+					CredentialFingerprint: store.ModelCatalogCredentialFingerprint(a, source),
+					Catalog:               store.ModelCatalogSource{FetchedAt: store.NowMS(), Models: []store.CatalogModel{{ID: source + "-kept"}}},
+				}
+			}
+			if _, err := st.SaveAccountModelCatalogRefresh(base, a.ID, seed, initial); err != nil {
+				t.Fatal(err)
+			}
+			before, err := st.GetAccountModelCatalog(base, a.ID)
+			if err != nil || before == nil || len(before.Models) != 2 {
+				t.Fatalf("seed catalog: %+v %v", before, err)
+			}
+			attempt, err := st.BeginAccountModelCatalogRefresh(base, a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			factory := egress.NewFactory(egress.Options{})
+			client, err := factory.HTTPClient("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var networkCalls atomic.Int32
+			client.Transport = catalogRoundTrip(func(*http.Request) (*http.Response, error) {
+				networkCalls.Add(1)
+				return nil, fmt.Errorf("canceled source must not send network requests")
+			})
+			manager := New(st, oauth.NewClient(nil), factory, Options{})
+			ctx, cancel := context.WithCancel(base)
+			cancel()
+			wantError := "model catalog request canceled"
+			if mode == "deadline" {
+				ctx, cancel = context.WithDeadline(base, time.Unix(1, 0))
+				defer cancel()
+				wantError = "model catalog request timed out"
+			}
+			cfg := config.Default()
+			results := make(map[string]store.ModelCatalogSourceResult)
+			for _, source := range sources {
+				result := manager.fetchCatalogSource(ctx, a.ID, source, attempt.AttemptedAt, cfg, "")
+				if result.CredentialFingerprint != initial[source].CredentialFingerprint || result.CredentialFingerprint == "" {
+					t.Fatalf("%s lost its snapshot when the network context ended", source)
+				}
+				if result.Catalog.Error != wantError || result.Catalog.FetchedAt != 0 || result.Catalog.Skipped {
+					t.Fatalf("%s ignored cancellation or misreported the result: %+v", source, result.Catalog)
+				}
+				results[source] = result
+			}
+			if networkCalls.Load() != 0 {
+				t.Fatalf("canceled sources sent %d network requests", networkCalls.Load())
+			}
+			applied, err := st.SaveAccountModelCatalogRefresh(base, a.ID, attempt, results)
+			if err != nil {
+				t.Fatalf("cancellation damaged the store before the detached save: %v", err)
+			}
+			for _, source := range sources {
+				if !applied[source] {
+					t.Fatalf("%s cancellation status was not persisted", source)
+				}
+			}
+			after, err := st.GetAccountModelCatalog(base, a.ID)
+			if err != nil || after == nil || !reflect.DeepEqual(after.Models, before.Models) {
+				t.Fatalf("cancellation destroyed the last good catalogs: before=%+v after=%+v err=%v", before, after, err)
+			}
+			for _, source := range sources {
+				if got := after.SourceCatalogs[source]; got.Error != wantError || got.FetchedAt != before.SourceCatalogs[source].FetchedAt || got.AttemptedAt != attempt.AttemptedAt {
+					t.Fatalf("%s failure status or last-success timestamp changed: %+v", source, got)
+				}
+			}
+		})
+	}
+}
+
 func TestModelCatalogRefreshDecodesCompressedJSON(t *testing.T) {
 	const valid = `{"data":[{"id":"compressed-model","name":"Compressed model"}]}`
 	for _, tc := range []struct {

@@ -156,7 +156,13 @@ func (m *Manager) fetchCatalogSource(ctx context.Context, accountID int64, sourc
 	result := store.ModelCatalogSourceResult{Catalog: store.ModelCatalogSource{
 		Models: []store.CatalogModel{}, AttemptedAt: attemptedAt,
 	}}
-	account, err := m.store.GetAccount(ctx, accountID)
+	// Loading the account snapshot is a local store operation. Do not let a
+	// client cancellation interrupt a concurrent SQLite connection acquisition;
+	// the network fetch below still observes ctx and remains cancellable. The
+	// short independent bound also prevents a broken store from hanging refresh.
+	accountCtx, accountCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer accountCancel()
+	account, err := m.store.GetAccount(accountCtx, accountID)
 	if err != nil || account == nil {
 		result.Catalog.Error = "could not load the current account for model synchronization"
 		if ctx.Err() != nil {

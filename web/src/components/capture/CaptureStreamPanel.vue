@@ -33,11 +33,11 @@ const explanation = computed(() => {
 		</template>
 		<div v-if="snapshot.http.length" class="stream-messages">
 			<h4>{{ direction }} · {{ c(side === 'upstream' ? 'capturedErrors' : 'capturedHttp') }}</h4>
-			<div v-for="frame in snapshot.http.slice(0, 50)" :key="frame.seq"><JsonViewer :value="preview(frameSnapshot(frame).value).text" :label="`${direction} · ${frame.type || c('httpResponse')}`" max-height="28rem" /><p v-if="preview(frameSnapshot(frame).value).limited" class="stream-hint">{{ c('limited') }}</p></div>
+			<div v-for="frame in snapshot.http" :key="frame.seq"><JsonViewer :value="preview(frameSnapshot(frame).value).text" :label="`${direction} · ${frame.type || c('httpResponse')}`" max-height="28rem" /><p v-if="preview(frameSnapshot(frame).value).limited" class="stream-hint">{{ c('limited') }}</p></div>
 		</div>
 		<div v-if="snapshot.socket.length" class="stream-messages">
 			<h4>{{ direction }} · {{ c('capturedWs') }}</h4>
-			<div v-for="frame in snapshot.socket.slice(0, 50)" :key="frame.seq"><JsonViewer :value="preview(frameSnapshot(frame).value).text" :label="`${direction} · ${frame.type || c('wsFrame')}`" max-height="24rem" /><p v-if="preview(frameSnapshot(frame).value).limited" class="stream-hint">{{ c('limited') }}</p></div>
+			<div v-for="frame in snapshot.socket" :key="frame.seq"><JsonViewer :value="preview(frameSnapshot(frame).value).text" :label="`${direction} · ${frame.type || c('wsFrame')}`" max-height="24rem" /><p v-if="preview(frameSnapshot(frame).value).limited" class="stream-hint">{{ c('limited') }}</p></div>
 		</div>
 		<p v-if="snapshot.socket.length > 50 || snapshot.http.length > 50" class="stream-hint">{{ c('limited') }}</p>
 	</section>

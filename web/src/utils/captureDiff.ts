@@ -1,3 +1,5 @@
+import {diffArrays} from 'diff'
+
 export interface DiffLine {
     kind: 'context' | 'added' | 'removed'
     text: string
@@ -13,13 +15,13 @@ export interface DiffResult {
     limited: boolean
 }
 
-// Bounds apply before allocating the LCS table or building the displayed diff.
-const MAX_CHARACTERS = 65_536
-const MAX_LINES = 1_600
-const MAX_LINE_CHARACTERS = 2_000
-const MAX_LCS_CELLS = 300_000
+// Capture size is bounded by the server. Ordinary JSON is displayed in full;
+// unsupported objects and excessive nesting still produce explicit diagnostics.
+const MAX_CHARACTERS = Number.POSITIVE_INFINITY
+const MAX_LINES = Number.POSITIVE_INFINITY
+const MAX_LINE_CHARACTERS = Number.POSITIVE_INFINITY
 const MAX_DEPTH = 64
-const MAX_VALUES = 12_000
+const MAX_VALUES = Number.POSITIVE_INFINITY
 const TRUNCATED = ' … [truncated] … '
 const OMITTED = '… [content omitted]'
 
@@ -61,7 +63,7 @@ function crop(text: string, limit: number): string {
  * Serialize without constructing keyed objects, invoking toJSON/getters, or mutating inputs.
  * Incomplete output is only a preview, never evidence of equality.
  */
-function preparePayload(input: unknown): PreparedPayload {
+function preparePayload(input: unknown, orders?: Map<string, string[]>, canonical = false): PreparedPayload {
     let value = input
     if (typeof value === 'string') {
         if (value.length > MAX_CHARACTERS) {
@@ -113,7 +115,7 @@ function preparePayload(input: unknown): PreparedPayload {
         return descriptor.value
     }
 
-    function visit(current: unknown, depth: number): void {
+    function visit(current: unknown, depth: number, path = ""): void {
         if (++visited > MAX_VALUES || depth > MAX_DEPTH) stop()
         if (current === null) {
             append('null')
@@ -147,7 +149,16 @@ function preparePayload(input: unknown): PreparedPayload {
         const keys = array ? undefined : Object.keys(current)
         const count = array ? ownValue(current, 'length') as number : keys!.length
         if (count > MAX_VALUES - visited) stop()
-        keys?.sort()
+        if (keys) {
+            if (canonical) keys.sort()
+            else if (orders) {
+                const previous = orders.get(path)
+                if (previous) {
+                    const ranks = new Map(previous.map((key, index) => [key, index]))
+                    keys.sort((a, b) => (ranks.get(a) ?? Infinity) - (ranks.get(b) ?? Infinity))
+                } else orders.set(path, [...keys])
+            }
+        }
         append(array ? '[' : '{')
         for (let index = 0; index < count; index++) {
             append(index === 0 ? '\n' : ',\n')
@@ -157,7 +168,7 @@ function preparePayload(input: unknown): PreparedPayload {
                 quoted(key)
                 append(': ')
             }
-            visit(ownValue(current, key), depth + 1)
+            visit(ownValue(current, key), depth + 1, path + "/" + key.replace(/~/g, "~0").replace(/\//g, "~1"))
         }
         if (count > 0) append('\n' + '  '.repeat(depth))
         append(array ? ']' : '}')
@@ -186,7 +197,7 @@ function preparedEqual(before: PreparedPayload, after: PreparedPayload): boolean
 export function equalPayloads(before: unknown, after: unknown): boolean {
     // Full raw string equality is conclusive even when rendering will be truncated.
     if (before === after) return true
-    return preparedEqual(preparePayload(before), preparePayload(after))
+    return preparedEqual(preparePayload(before, undefined, true), preparePayload(after, undefined, true))
 }
 
 function displayLines(payload: PreparedPayload, labelType: boolean): DisplayPayload {
@@ -226,29 +237,24 @@ function result(equal: boolean, lines: DiffLine[], limited: boolean): DiffResult
     }
 }
 
-function abbreviated(lines: DisplayLine[], budget: number): DisplayLine[] {
-    if (lines.length <= budget) return lines
-    const start = Math.ceil((budget - 1) / 2)
-    const end = budget - start - 1
-    return [...lines.slice(0, start), {text: OMITTED}, ...lines.slice(lines.length - end)]
-}
-
 /** Counts describe the returned rows; limited=true makes no claim about omitted edits. */
 function replacement(before: DisplayLine[], after: DisplayLine[]): DiffResult {
-    const left = abbreviated(before, MAX_LINES / 2)
-    const right = abbreviated(after, MAX_LINES / 2)
+    const left = before
+    const right = after
     return result(false, [
         ...left.map((line): DiffLine => ({kind: 'removed', text: line.text, beforeLine: line.number})),
         ...right.map((line): DiffLine => ({kind: 'added', text: line.text, afterLine: line.number})),
     ], true)
 }
 
-/** A unified, line-numbered diff of canonical JSON or literal non-JSON text. */
+/** Keep the before field order and align after fields to it only for comparison.
+ * Arrays retain their order; recorded raw values retain each side's actual order. */
 export function diffPayloads(before: unknown, after: unknown): DiffResult {
     const identical = before === after
-    const first = preparePayload(before)
-    const second = identical ? first : preparePayload(after)
-    const equal = identical || preparedEqual(first, second)
+    const orders = new Map<string, string[]>()
+    const first = preparePayload(before, orders)
+    const second = identical ? first : preparePayload(after, orders)
+    const equal = identical || equalPayloads(before, after)
     // For example, JSON string "null" and JSON null need visibly distinct types.
     const labelType = !equal && first.kind !== second.kind && first.text === second.text
     const left = displayLines(first, labelType)
@@ -269,38 +275,17 @@ export function diffPayloads(before: unknown, after: unknown): DiffResult {
         && a[a.length - suffix - 1]!.text === b[b.length - suffix - 1]!.text
         ) suffix++
 
-    const rows = a.length - prefix - suffix
-    const columns = b.length - prefix - suffix
-    const width = columns + 1
-    const cells = (rows + 1) * width
-    if (cells > MAX_LCS_CELLS) return replacement(a, b)
-    const table = new Uint16Array(cells)
-    for (let row = rows - 1; row >= 0; row--) {
-        for (let column = columns - 1; column >= 0; column--) {
-            table[row * width + column] = a[prefix + row]!.text === b[prefix + column]!.text
-                ? table[(row + 1) * width + column + 1]! + 1
-                : Math.max(table[(row + 1) * width + column]!, table[row * width + column + 1]!)
-        }
-    }
-    if (prefix + suffix + rows + columns - table[0]! > MAX_LINES) return replacement(a, b)
-
     const lines: DiffLine[] = []
     for (let index = 0; index < prefix; index++) lines.push(contextLine(a[index]!, b[index]!))
-    let row = 0
-    let column = 0
-    while (row < rows || column < columns) {
-        const beforeLine = a[prefix + row]
-        const afterLine = b[prefix + column]
-        if (row < rows && column < columns && beforeLine!.text === afterLine!.text) {
-            lines.push(contextLine(beforeLine!, afterLine!))
-            row++
-            column++
-        } else if (row < rows && (column === columns || table[(row + 1) * width + column]! >= table[row * width + column + 1]!)) {
-            lines.push({kind: 'removed', text: beforeLine!.text, beforeLine: beforeLine!.number})
-            row++
-        } else {
-            lines.push({kind: 'added', text: afterLine!.text, afterLine: afterLine!.number})
-            column++
+    let row = prefix, column = prefix
+    const edits = diffArrays(a.slice(prefix, a.length - suffix).map(line => line.text), b.slice(prefix, b.length - suffix).map(line => line.text))
+    for (const edit of edits) {
+        for (const text of edit.value) {
+            if (edit.removed) {
+                lines.push({kind: 'removed', text, beforeLine: a[row++]!.number})
+            } else if (edit.added) {
+                lines.push({kind: 'added', text, afterLine: b[column++]!.number})
+            } else lines.push(contextLine(a[row++]!, b[column++]!))
         }
     }
     for (let index = suffix; index > 0; index--) lines.push(contextLine(a[a.length - index]!, b[b.length - index]!))

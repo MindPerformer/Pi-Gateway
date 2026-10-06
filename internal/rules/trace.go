@@ -152,18 +152,49 @@ func structuralDiff(before, after any) ([]Change, int) {
 		aa, aok := a.([]any)
 		bb, bok := b.([]any)
 		if aok && bok {
-			n := len(aa)
-			if len(bb) < n {
-				n = len(bb)
+			i, j := 0, 0
+			for i < len(aa) && j < len(bb) {
+				if jsonEqual(aa[i], bb[j]) {
+					i++
+					j++
+					continue
+				}
+				// Align surviving messages after deletions/insertions instead of
+				// reporting every following message as a replacement.
+				left, right := -1, -1
+				for k := i + 1; k < len(aa); k++ {
+					if jsonEqual(aa[k], bb[j]) {
+						left = k
+						break
+					}
+				}
+				for k := j + 1; k < len(bb); k++ {
+					if jsonEqual(aa[i], bb[k]) {
+						right = k
+						break
+					}
+				}
+				if left >= 0 && (right < 0 || left-i <= right-j) {
+					for i < left {
+						add(Change{Path: fmt.Sprintf("%s/%d", path, i), Operation: "remove", BeforeExists: true, Before: aa[i]})
+						i++
+					}
+				} else if right >= 0 {
+					for j < right {
+						add(Change{Path: fmt.Sprintf("%s/%d", path, j), Operation: "add", AfterExists: true, After: bb[j]})
+						j++
+					}
+				} else {
+					walk(aa[i], bb[j], fmt.Sprintf("%s/%d", path, j))
+					i++
+					j++
+				}
 			}
-			for i := 0; i < n; i++ {
-				walk(aa[i], bb[i], fmt.Sprintf("%s/%d", path, i))
-			}
-			for i := n; i < len(aa); i++ {
+			for ; i < len(aa); i++ {
 				add(Change{Path: fmt.Sprintf("%s/%d", path, i), Operation: "remove", BeforeExists: true, Before: aa[i]})
 			}
-			for i := n; i < len(bb); i++ {
-				add(Change{Path: fmt.Sprintf("%s/%d", path, i), Operation: "add", AfterExists: true, After: bb[i]})
+			for ; j < len(bb); j++ {
+				add(Change{Path: fmt.Sprintf("%s/%d", path, j), Operation: "add", AfterExists: true, After: bb[j]})
 			}
 			return
 		}

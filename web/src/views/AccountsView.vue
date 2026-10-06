@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText as copyToClipboard } from "../utils/clipboard"
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, api } from '../api/client'
 import type { Account, AccountGroup, OAuthFlow, SavedProxy, Settings } from '../api/types'
@@ -62,6 +63,7 @@ let pollingVersion = 0
 const editing = ref<Account | null>(null)
 const editProxy = ref('')
 const editProxyMode = ref('keep')
+const editCooldown429 = ref(-1)
 const editConcurrency = ref(3)
 const editWeight = ref(1)
 const editName = ref('')
@@ -442,6 +444,7 @@ function openEdit(account: Account) {
 	editProxy.value = ''
 	editProxyMode.value = 'keep'
 	void loadProxies()
+	editCooldown429.value = account.cooldown_429_seconds ?? -1
 	editConcurrency.value = account.concurrency
 	editWeight.value = account.weight
 	editProtocol.value = account.upstream_protocol ?? ''
@@ -461,6 +464,7 @@ async function saveEdit() {
 		await api.updateAccount(editing.value.id, {
 			name: editName.value.trim(),
 			...proxyPatch(editProxyMode.value, editProxy.value),
+			cooldown_429_seconds: editCooldown429.value,
 			concurrency: editConcurrency.value,
 			weight: editWeight.value,
 			upstream_protocol: editProtocol.value,
@@ -479,7 +483,7 @@ async function saveEdit() {
 const copied = ref('')
 async function copyText(value: string, tag: string) {
 	try {
-		await navigator.clipboard.writeText(value)
+		await copyToClipboard(value)
 		copied.value = tag
 		setTimeout(() => (copied.value = ''), 1500)
 	} catch {
@@ -628,6 +632,11 @@ async function copyText(value: string, tag: string) {
 						<label class="label" for="edit-weight">{{ t('accounts.edit.weight') }}</label>
 						<input id="edit-weight" v-model.number="editWeight" type="number" min="1" class="input" />
 					</div>
+				</div>
+				<div>
+					<label class="label" for="edit-cooldown-429">{{ t('retry429.cooldown') }}</label>
+					<input id="edit-cooldown-429" v-model.number="editCooldown429" type="number" min="-1" max="604800" step="1" class="input" />
+					<p class="account-control-hint">{{ t('retry429.accountHint') }}</p>
 				</div>
 				<div>
 					<label class="label" for="edit-protocol">{{ t('accounts.protocol.label') }}</label>

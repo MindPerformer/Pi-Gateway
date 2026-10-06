@@ -13,6 +13,14 @@ export const LOCALES: Array<{ value: Locale; label: string }> = [
 ]
 
 const en = {
+    'retry429.switch': 'Switch account on 429',
+    'retry429.cooldown': '429 cooldown (seconds)',
+    'retry429.accountHint': '-1 inherits the global cooldown; 0 adds no cooldown. Upstream Retry-After remains a minimum.',
+    'retry429.switchHint': 'Retry with another eligible account before any output is sent. Continuations stay on the original account.',
+    'retry429.attempts': 'Maximum attempts (including the first)',
+    'retry429.inherit': 'Inherit global setting',
+    'retry429.groupHint': 'Overrides the global switch for member accounts within the key scope. Disabled wins if applicable groups disagree.',
+
     ...uiOptionsEn,
     ...rulesEn,
     ...captureRulesEn,
@@ -541,6 +549,14 @@ const en = {
 type Catalogue = Record<keyof typeof en, string>
 
 const zh: Catalogue = {
+    'retry429.switch': '遇到 429 自动换号',
+    'retry429.cooldown': '429 冷却时长（秒）',
+    'retry429.accountHint': '-1 继承全局冷却；0 不额外冷却。上游 Retry-After 仍作为最短等待时间。',
+    'retry429.switchHint': '尚未输出内容时，换另一个可用账号重试。续接请求仍使用原账号。',
+    'retry429.attempts': '最大尝试次数（含首次）',
+    'retry429.inherit': '继承全局设置',
+    'retry429.groupHint': '在密钥可用分组范围内，覆盖成员账号的全局换号设置。多个适用分组冲突时，关闭优先。',
+
     ...uiOptionsZh,
     ...rulesZh,
     ...captureRulesZh,

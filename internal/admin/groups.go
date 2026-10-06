@@ -21,6 +21,7 @@ func (s *Server) handleListAccountGroups(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleCreateAccountGroup(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		SwitchOn429    string   `json:"switch_on_429"`
 		Name           string   `json:"name"`
 		Enabled        *bool    `json:"enabled"`
 		Notes          string   `json:"notes"`
@@ -32,7 +33,7 @@ func (s *Server) handleCreateAccountGroup(w http.ResponseWriter, r *http.Request
 		return
 	}
 	g := &store.AccountGroup{Name: body.Name, Enabled: true, Notes: body.Notes,
-		AccountIDs: body.AccountIDs, DisabledModels: body.DisabledModels}
+		AccountIDs: body.AccountIDs, DisabledModels: body.DisabledModels, SwitchOn429: body.SwitchOn429}
 	if body.Enabled != nil {
 		g.Enabled = *body.Enabled
 	}
@@ -52,6 +53,7 @@ func (s *Server) handleUpdateAccountGroup(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body struct {
+		SwitchOn429    *string  `json:"switch_on_429"`
 		Name           *string  `json:"name"`
 		Enabled        *bool    `json:"enabled"`
 		Notes          *string  `json:"notes"`
@@ -63,7 +65,7 @@ func (s *Server) handleUpdateAccountGroup(w http.ResponseWriter, r *http.Request
 		return
 	}
 	patch := store.AccountGroupPatch{Name: body.Name, Enabled: body.Enabled, Notes: body.Notes,
-		AccountIDs: body.AccountIDs, DisabledModels: body.DisabledModels}
+		AccountIDs: body.AccountIDs, DisabledModels: body.DisabledModels, SwitchOn429: body.SwitchOn429}
 	if err := s.store.PatchAccountGroup(r.Context(), id, patch); err != nil {
 		writePolicyError(w, err)
 		return

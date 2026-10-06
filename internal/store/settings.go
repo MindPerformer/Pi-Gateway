@@ -10,6 +10,8 @@ import (
 
 // Settings holds the runtime-adjustable knobs that override config defaults.
 type Settings struct {
+	SwitchOn429 bool `json:"switch_on_429"`
+
 	UpstreamTransport             string            `json:"upstream_transport"`
 	CaptureEnabled                bool              `json:"capture_enabled"`
 	CaptureLimit                  int               `json:"capture_limit"`
@@ -44,6 +46,7 @@ func (s *Store) LoadSettings(ctx context.Context, defaults *Settings) (*Settings
 	if defaults != nil {
 		out = *defaults
 	}
+	out.SwitchOn429 = true
 	// New knobs have store-level defaults so older config callers also get the
 	// frozen behavior. Persisted values (including zero) still override these.
 	if out.RotationStrategy == "" {
@@ -106,6 +109,7 @@ func (s *Store) LoadSettings(ctx context.Context, defaults *Settings) (*Settings
 	if v, ok := getStr("upstream_transport"); ok && v != "" {
 		out.UpstreamTransport = v
 	}
+	getBool("switch_on_429", &out.SwitchOn429)
 	getBool("capture_enabled", &out.CaptureEnabled)
 	getInt("capture_limit", &out.CaptureLimit)
 	if v, ok := getStr("default_model"); ok {
@@ -160,6 +164,7 @@ func (s *Store) SaveSettings(ctx context.Context, in *Settings) error {
 		return fmt.Errorf("store: encode model mappings: %w", err)
 	}
 	pairs := map[string]string{
+		"switch_on_429":                    fmt.Sprintf("%t", in.SwitchOn429),
 		"upstream_transport":               in.UpstreamTransport,
 		"capture_enabled":                  fmt.Sprintf("%t", in.CaptureEnabled),
 		"capture_limit":                    fmt.Sprintf("%d", in.CaptureLimit),

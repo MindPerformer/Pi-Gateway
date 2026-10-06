@@ -159,6 +159,12 @@ func ConvertLegacy(ctx context.Context, rows []*store.MiddlewareRow) ([]*store.R
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMigration, err)
 	}
+	definitions = append(definitions, rules.Rule{
+		SchemaVersion: rules.SchemaVersion, ID: "default-drop-image-generation", Name: "排除图像生成 / Exclude image generation",
+		Enabled: true, Priority: 1000, OrderIndex: int64(len(definitions)), Phase: rules.PhaseRequest,
+		When: rules.Condition{Op: "always"}, OnError: rules.OnErrorAbort,
+		Actions: []rules.Action{{ID: "drop-image-generation", Type: "drop_tools", Params: map[string]any{"types": []any{"image_generation"}}}},
+	})
 	result := make([]*store.RuleRow, 0, len(definitions))
 	for _, definition := range definitions {
 		raw, err := EditableJSON(definition)
@@ -167,7 +173,12 @@ func ConvertLegacy(ctx context.Context, rows []*store.MiddlewareRow) ([]*store.R
 		}
 		result = append(result, &store.RuleRow{
 			ID: definition.ID, Rule: raw, OrderIndex: definition.OrderIndex,
-			LegacyName: definition.LegacyName, Source: "legacy",
+			LegacyName: definition.LegacyName, Source: func() string {
+				if definition.LegacyName == "" {
+					return "default"
+				}
+				return "legacy"
+			}(),
 		})
 	}
 	return result, nil

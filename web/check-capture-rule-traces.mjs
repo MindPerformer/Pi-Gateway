@@ -1,13 +1,16 @@
+import {fileURLToPath, pathToFileURL} from 'node:url'
+import {createRequire} from 'node:module'
 import assert from 'node:assert/strict'
 import {existsSync, readFileSync} from 'node:fs'
-import {fileURLToPath} from 'node:url'
 import {compileScript, parse} from '@vue/compiler-sfc'
 import {createRenderer, nextTick} from 'vue'
 import ts from 'typescript'
 
+const diffDependencyURL = pathToFileURL(createRequire(import.meta.url).resolve('diff')).href
+
 // Mount the real Vue SFCs with a minimal in-memory host. No browser, stubs of the
 // trace component, network calls, generated files or new dependencies are needed.
-const asModule = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+const asModule = source => `data:text/javascript;base64,${Buffer.from(source.replace("from 'diff'", `from '${diffDependencyURL}'`)).toString('base64')}`
 const transpile = source => ts.transpileModule(source, {
     compilerOptions: {
         target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ES2020,

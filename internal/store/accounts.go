@@ -66,6 +66,7 @@ type Account struct {
 
 	// Scheduling state is persisted separately from management/credential edits.
 	ConsecutiveFailures int     `json:"consecutive_failures"`
+	Cooldown429Seconds  int     `json:"cooldown_429_seconds"`
 	CooldownUntil       int64   `json:"cooldown_until"`
 	CooldownKind        string  `json:"cooldown_kind"`
 	LastStartedAt       int64   `json:"last_started_at"`
@@ -98,7 +99,7 @@ const accountColumns = `id, name, email, account_id, plan_type, access_token, re
 	last_used_at, request_count, error_count, quota_json, quota_updated_at, quota_error,
 	proxy_id, oauth_client_id, upstream_protocol,
 	codex_access_token, codex_refresh_token, codex_id_token, codex_expires_at, codex_account_id,
-	consecutive_failures, cooldown_until, cooldown_kind, last_started_at, ewma_first_output_ms, ewma_failure_rate_bp,
+	cooldown_429_seconds, consecutive_failures, cooldown_until, cooldown_kind, last_started_at, ewma_first_output_ms, ewma_failure_rate_bp,
 	created_at, updated_at, disabled_models, supplemental_models,
 	(SELECT COALESCE(json_group_array(group_id), '[]') FROM
 	 (SELECT group_id FROM account_group_accounts WHERE account_id=accounts.id ORDER BY group_id)),
@@ -116,7 +117,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 		&a.QuotaJSON, &a.QuotaUpdatedAt, &a.QuotaError,
 		&a.ProxyID, &a.OAuthClientID, &a.UpstreamProtocol,
 		&a.CodexAccessToken, &a.CodexRefreshToken, &a.CodexIDToken, &a.CodexExpiresAt, &a.CodexAccountID,
-		&a.ConsecutiveFailures, &a.CooldownUntil, &a.CooldownKind, &a.LastStartedAt, &a.EWMAFirstOutputMS, &a.EWMAFailureRateBP,
+		&a.Cooldown429Seconds, &a.ConsecutiveFailures, &a.CooldownUntil, &a.CooldownKind, &a.LastStartedAt, &a.EWMAFirstOutputMS, &a.EWMAFailureRateBP,
 		&a.CreatedAt, &a.UpdatedAt, &modelsJSON, &supplementalJSON, &groupIDsJSON, &inheritedJSON)
 	if err != nil {
 		return nil, err
@@ -172,6 +173,7 @@ func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
 		a.CreatedAt = now
 	}
 	a.UpdatedAt = now
+	a.Cooldown429Seconds = -1
 	if a.Concurrency <= 0 {
 		a.Concurrency = 3
 	}
@@ -260,6 +262,8 @@ type AccountProxyPatch struct {
 // AccountManagementPatch updates only submitted management fields, never tokens
 // or scheduling state. Nil lists preserve policy; empty non-nil lists clear it.
 type AccountManagementPatch struct {
+	Cooldown429Seconds *int
+
 	Name               *string
 	Enabled            *bool
 	Weight             *int
@@ -308,6 +312,13 @@ func (s *Store) PatchAccountManagementFields(ctx context.Context, id int64, patc
 		}
 		sets = append(sets, "weight=?")
 		args = append(args, *patch.Weight)
+	}
+	if patch.Cooldown429Seconds != nil {
+		if *patch.Cooldown429Seconds < -1 || *patch.Cooldown429Seconds > 604800 {
+			return fmt.Errorf("%w: cooldown_429_seconds must be between -1 and 604800", ErrInvalidPolicy)
+		}
+		sets = append(sets, "cooldown_429_seconds=?")
+		args = append(args, *patch.Cooldown429Seconds)
 	}
 	if patch.Concurrency != nil {
 		if *patch.Concurrency < 1 {

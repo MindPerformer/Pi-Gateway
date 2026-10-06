@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from "../../utils/clipboard"
 import {computed, ref, shallowRef, watch, onBeforeUnmount} from 'vue'
 import {api, ApiError} from '../../api/client'
 import type {Rule, RuleAction, RuleCondition, RuleFieldError, RuleSchema} from '../../api/rules'
@@ -146,7 +147,7 @@ function loadExample(example:Rule) {
     for(const key of readonlyRuleFields){const current=(rule.value as unknown as Record<string,unknown>)[key];if(current===undefined)delete(next as unknown as Record<string,unknown>)[key];else(next as unknown as Record<string,unknown>)[key]=current}
     updateRule(next)
 }
-async function copyCode(){try{const next=synchronize();if(next)await navigator.clipboard.writeText(props.modelValue.mode==='code'?props.modelValue.code:stringifyRule(next))}catch{toast.error(t('common.clipboardBlocked'))}}
+async function copyCode(){try{const next=synchronize();if(next)await copyText(props.modelValue.mode==='code'?props.modelValue.code:stringifyRule(next))}catch{toast.error(t('common.clipboardBlocked'))}}
 function focusPath(path:string){const entry=Object.entries(paths.value).filter(([,value])=>path===value||path.startsWith(`${value}/`)).sort((a,b)=>b[1].length-a[1].length)[0];if(entry){canvas.value?.focus(entry[0]);panelOpen.value=true}}
 function debugFocus(focus:RuleDebugFocus){const action=graph.value.nodes.find(n=>n.kind==='action'&&(n.data as RuleAction).id===focus.actionId);if(action){canvas.value?.focus(action.id);panelOpen.value=true}else if(focus.path)focusPath(focus.path)}
 const shownErrors=computed(()=>[...props.modelValue.errors,...(props.modelValue.mode==='visual'?graphProblems.value.filter(error=>error.code?.startsWith('graph.')):[])].filter((error,index,all)=>all.findIndex(e=>e.path===error.path&&e.message===error.message)===index))

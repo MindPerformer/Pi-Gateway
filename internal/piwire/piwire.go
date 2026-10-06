@@ -4,8 +4,7 @@
 // websocket transport, which Pi implements on its codex provider.
 //
 // Every outbound request to the upstream is built from scratch here. Client
-// headers are never forwarded, so a client that is not Pi cannot leak its own
-// fingerprint into the upstream request.
+// headers are rebuilt; recognized Pi clients can supply allowlisted SDK headers.
 package piwire
 
 import (
@@ -110,8 +109,10 @@ type Platform struct {
 
 // HeaderOptions carries everything needed to build the upstream header set.
 type HeaderOptions struct {
-	AccessToken string
-	AccountID   string
+	// ClientHeaders contributes only Pi's SDK fingerprint, never credentials or Codex metadata.
+	ClientHeaders http.Header
+	AccessToken   string
+	AccountID     string
 	// SessionID is the wire session id; empty means no session headers are sent.
 	SessionID  string
 	Originator string
@@ -156,6 +157,14 @@ func BuildSSEHeaders(o HeaderOptions) http.Header {
 	}
 	// undici (Node's fetch, which Pi uses) advertises gzip+deflate by default.
 	h.Set("accept-encoding", "gzip, deflate")
+	if strings.HasPrefix(o.ClientHeaders.Get("User-Agent"), "pi (") {
+		for _, name := range []string{"User-Agent", "Accept-Language", "X-Stainless-Lang", "X-Stainless-Package-Version", "X-Stainless-OS", "X-Stainless-Arch", "X-Stainless-Runtime", "X-Stainless-Runtime-Version", "X-Stainless-Timeout"} {
+			value := o.ClientHeaders.Get(name)
+			if value != "" && len(value) <= 512 && !strings.ContainsAny(value, "\r\n") {
+				h.Set(name, value)
+			}
+		}
+	}
 	return h
 }
 

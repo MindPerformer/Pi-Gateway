@@ -146,7 +146,7 @@ capture:
   # Keep the most recent N exchanges per account; older ones are trimmed.
   per_account_limit: 50
   # Bound the stored payload per record (headers and frames included).
-  max_bytes_per_record: 8388608
+  max_bytes_per_record: 67108864
   include_headers: true
   # Persist to the selected database so the analysis view survives restarts.
   persist: true

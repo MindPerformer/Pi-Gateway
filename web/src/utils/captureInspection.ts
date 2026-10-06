@@ -78,7 +78,7 @@ export function frameSnapshot(frame?: CaptureFrame): CaptureSnapshot {
     return missing()
 }
 
-export function payloadPreview(value: unknown, limit = 100_000) {
+export function payloadPreview(value: unknown, limit = Number.POSITIVE_INFINITY) {
     try {
         const text = (typeof value === 'string' ? value : JSON.stringify(value, null, 2)) ?? ''
         return {text: text.slice(0, limit), limited: text.length > limit}
@@ -208,7 +208,7 @@ export function hopProtocol(capture: Capture, side: 'upstream' | 'client'): HopP
     return 'unknownProtocol'
 }
 
-const streamPreviewLimit = 200_000
+const streamPreviewLimit = Number.POSITIVE_INFINITY
 
 export function streamSnapshot(capture: Capture, side: 'upstream' | 'client') {
     const frames = (capture.response_frames ?? []).filter(frame => frame.dir === (side === 'upstream' ? 'in' : 'client_out'))

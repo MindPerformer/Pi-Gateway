@@ -274,6 +274,7 @@ export const api = {
         notes?: string;
         enabled?: boolean;
         account_ids?: number[];
+        switch_on_429?: string;
         disabled_models?: string[]
     }) {
         return request<{ group: AccountGroup }>('/api/account-groups', {method: 'POST', body: JSON.stringify(payload)})

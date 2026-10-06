@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from "../utils/clipboard"
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api/client'
 import type { AccountGroup, ApiKey, SettingsResponse } from '../api/types'
@@ -164,7 +165,7 @@ async function remove(key: ApiKey) {
 
 async function copyKey(value: string, id: number) {
 	try {
-		await navigator.clipboard.writeText(value)
+		await copyText(value)
 		copied.value = id
 		setTimeout(() => (copied.value = null), 1500)
 	} catch {

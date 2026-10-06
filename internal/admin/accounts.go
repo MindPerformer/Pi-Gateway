@@ -369,6 +369,7 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		Enabled            *bool           `json:"enabled"`
 		ProxyURL           *string         `json:"proxy_url"`
 		ProxyID            json.RawMessage `json:"proxy_id"`
+		Cooldown429Seconds *int            `json:"cooldown_429_seconds"`
 		Concurrency        *int            `json:"concurrency"`
 		Weight             *int            `json:"weight"`
 		UpstreamProtocol   *string         `json:"upstream_protocol"`
@@ -444,7 +445,7 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	patch := store.AccountManagementPatch{
-		Name: body.Name, Enabled: body.Enabled, Weight: body.Weight, Concurrency: body.Concurrency,
+		Name: body.Name, Enabled: body.Enabled, Weight: body.Weight, Concurrency: body.Concurrency, Cooldown429Seconds: body.Cooldown429Seconds,
 		GroupIDs: body.GroupIDs, DisabledModels: body.DisabledModels, SupplementalModels: body.SupplementalModels,
 	}
 	if body.UpstreamProtocol != nil {

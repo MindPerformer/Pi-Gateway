@@ -113,7 +113,9 @@ type prepared struct {
 	Key                *store.APIKey
 	Account            *store.Account
 	Release            func()
+	AccountRelease     func()
 	ClientBody         map[string]any
+	ClientHeaders      http.Header
 	Built              *piwire.BuiltRequest
 	SessionID          string // Internal session, always set for upstream connection pooling.
 	WireSessionID      string // Only the client's explicit session hints reach the wire.
@@ -163,7 +165,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		return nil, &apiError{Status: http.StatusBadRequest, Message: err.Error(), Type: "invalid_request_error"}
 	}
 	p := &prepared{
-		Key: key, ClientBody: clientBody, Built: built, SessionID: sessionID,
+		Key: key, ClientBody: clientBody, ClientHeaders: r.Header.Clone(), Built: built, SessionID: sessionID,
 		WireSessionID: promptCacheKey, PoolSessionID: poolSessionID(ctx, sessionID),
 		WantsStream: wantsStream(clientBody), RawRequestBody: rawBody,
 		RuleContext: map[string]any{"original_model": built.Model, "model": built.Model,
@@ -236,6 +238,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		}
 		return p, &apiError{Status: http.StatusServiceUnavailable, Message: err.Error(), Type: "server_error"}
 	}
+	p.AccountRelease = release
 	release = composeRelease(keyRelease, release)
 	transport := s.resolveTransport(rt, key, account, clientTransport)
 	if continuation != nil && transport != "websocket-cached" && transport != "auto" {

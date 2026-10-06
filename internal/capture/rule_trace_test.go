@@ -57,7 +57,7 @@ func TestRuleTraceBoundedWithoutStarvingWire(t *testing.T) {
 		for i := 0; i < 3000; i++ {
 			rec.OnRuleTrace(9, traceFixture())
 		}
-		if rec.traceBytes > int(min(maxBytes/8, maxRuleTraceBytes)) || rec.seenBytes > maxBytes {
+		if rec.traceBytes > int(min(maxBytes/2, maxRuleTraceBytes)) || rec.seenBytes > maxBytes {
 			t.Fatalf("trace exceeded reservation for %d: trace=%d seen=%d", maxBytes, rec.traceBytes, rec.seenBytes)
 		}
 		if len(rec.cap.RuleTraces)+rec.cap.RulesTraceOmitted != 3000 {
@@ -82,7 +82,7 @@ func TestRuleTraceBoundedWithoutStarvingWire(t *testing.T) {
 	}
 }
 
-func TestRuleTraceClipsValuesAndRedactsSecrets(t *testing.T) {
+func TestRuleTracePreservesLargeValuesAndRedactsSecrets(t *testing.T) {
 	const secret = "secret-never-store-this-credential"
 	rec := New(nil, Options{})
 	trace := traceFixture()
@@ -97,8 +97,8 @@ func TestRuleTraceClipsValuesAndRedactsSecrets(t *testing.T) {
 	if strings.Contains(string(encoded), secret) {
 		t.Fatal("trace leaked a credential")
 	}
-	if len(encoded) > 32<<10 || !got.RulesTraceTruncated || got.Truncated {
-		t.Fatal("large trace snapshot was not independently clipped")
+	if len(encoded) < 8<<20 || got.RulesTraceTruncated || got.Truncated {
+		t.Fatal("large trace snapshot lost content")
 	}
 	if len(got.RuleTraces) != 1 || decodeTrace(t, got.RuleTraces[0])["rule_id"] != "rule-1" {
 		t.Fatal("oversized snapshot displaced lightweight rule metadata")
@@ -226,7 +226,7 @@ func TestRuleTraceOmissionsAndJSONNumbers(t *testing.T) {
 func TestRuleEventAssociationBudget(t *testing.T) {
 	rec := New(nil, Options{MaxBytesPerRecord: 128})
 	rec.OnFrame("in", store.KindWSFrame, "", []byte("x"), nil)
-	rec.SetRuleEvent(strings.Repeat("e", 17)) // More than the trace allowance.
+	rec.SetRuleEvent(strings.Repeat("e", 65)) // More than the trace allowance.
 	if rec.cap.ResponseFrames[0].RuleEventID != "" || !rec.cap.RulesTraceTruncated {
 		t.Fatal("association exceeded trace budget")
 	}

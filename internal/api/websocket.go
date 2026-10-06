@@ -239,7 +239,7 @@ func (s *Server) serveWSExchange(ctx context.Context, writer *wsFrameWriter, r *
 
 	first := true
 	upstreamErrorForwarded := false
-	_, err = s.upstream.Stream(exchangeCtx, req, func(event *upstream.Event) error {
+	_, err = s.streamWith429Retry(exchangeCtx, p, req, func(event *upstream.Event) error {
 		if first {
 			first = false
 			if p.Recorder != nil {

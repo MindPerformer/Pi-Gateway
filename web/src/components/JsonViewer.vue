@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { copyText } from "../utils/clipboard"
 import { computed, ref } from 'vue'
 import { Check, Copy } from 'lucide-vue-next'
 import { useI18n } from '../i18n'
@@ -37,7 +38,7 @@ const text = computed(() => {
 
 async function copy() {
 	try {
-		await navigator.clipboard.writeText(text.value)
+		await copyText(text.value)
 		copied.value = true
 		setTimeout(() => (copied.value = false), 1500)
 	} catch {

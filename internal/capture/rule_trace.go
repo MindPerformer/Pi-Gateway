@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	maxRuleTraceBytes  = 512 << 10
+	maxRuleTraceBytes  = 64 << 20
 	maxRuleTraces      = 2048
-	maxTraceValueBytes = 2048
+	maxTraceValueBytes = 64 << 20
 	traceOmittedValue  = "[omitted]"
 )
 
@@ -67,7 +67,7 @@ func (r *Recorder) SetRuleEvent(eventID string) {
 }
 
 // TraceBudget is the currently available byte budget, not an execution limit.
-// At most one eighth of a record (and at most 512 KiB) can be consumed by traces.
+// Reserve half the record for wire payloads; trace values use the remaining budget.
 func (r *Recorder) TraceBudget() int {
 	if r == nil {
 		return 0
@@ -88,7 +88,7 @@ func (r *Recorder) traceCountLimitLocked() int {
 }
 
 func (r *Recorder) traceLimitLocked() int {
-	return int(min(int64(maxRuleTraceBytes), r.maxBytes/8))
+	return int(min(int64(maxRuleTraceBytes), r.maxBytes/2))
 }
 
 func (r *Recorder) traceRemainingLocked() int {
@@ -123,7 +123,7 @@ func (r *Recorder) OnRuleTrace(version int64, trace any) {
 		omit()
 		return
 	}
-	budget := traceValueBudget{nodes: 1024, bytes: 16 << 10}
+	budget := traceValueBudget{nodes: max(1024, r.traceRemainingLocked()), bytes: r.traceRemainingLocked()}
 	value := budget.copy(reflect.ValueOf(trace), 0)
 	object, ok := value.(map[string]any)
 	if !ok || budget.invalid {
@@ -230,7 +230,7 @@ func (b *traceValueBudget) copy(v reflect.Value, depth int) any {
 	if !v.IsValid() {
 		return nil
 	}
-	if b.nodes <= 0 || b.bytes <= 0 || depth > 16 {
+	if b.nodes <= 0 || b.bytes <= 0 || depth > 256 {
 		b.truncated = true
 		return traceOmittedValue
 	}

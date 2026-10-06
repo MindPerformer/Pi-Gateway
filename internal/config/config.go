@@ -229,7 +229,7 @@ func Default() *Config {
 		Capture: CaptureConfig{
 			Enabled:           true,
 			PerAccountLimit:   50,
-			MaxBytesPerRecord: 8 << 20,
+			MaxBytesPerRecord: 64 << 20,
 			IncludeHeaders:    true,
 			Persist:           true,
 		},
@@ -447,7 +447,7 @@ func (c *Config) normalize() {
 		c.Capture.PerAccountLimit = 50
 	}
 	if c.Capture.MaxBytesPerRecord <= 0 {
-		c.Capture.MaxBytesPerRecord = 8 << 20
+		c.Capture.MaxBytesPerRecord = 64 << 20
 	}
 	if c.Models.Mappings == nil {
 		c.Models.Mappings = map[string]string{}

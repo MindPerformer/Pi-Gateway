@@ -14,13 +14,14 @@ func TestRuntimePoolSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RotationStrategy != "smart" || got.RequestIntervalMS != 0 || got.MaxWaitingPerKey != 0 || got.MaxWaitingPerAccount != 0 || got.ConcurrencyWaitTimeoutSeconds != 30 || got.AccountCooldownSeconds != 60 || got.MaxAttempts != 2 || got.UsageRetentionDays != 31 || got.SmartSchedulingJSON != "{}" || got.PricingOverridesJSON != "{}" {
+	if !got.SwitchOn429 || got.RotationStrategy != "smart" || got.RequestIntervalMS != 0 || got.MaxWaitingPerKey != 0 || got.MaxWaitingPerAccount != 0 || got.ConcurrencyWaitTimeoutSeconds != 30 || got.AccountCooldownSeconds != 60 || got.MaxAttempts != 2 || got.UsageRetentionDays != 31 || got.SmartSchedulingJSON != "{}" || got.PricingOverridesJSON != "{}" {
 		t.Fatalf("defaults=%+v", got)
 	}
 	if defaults.RotationStrategy != "" || got.DefaultModel != "original" || got.DefaultStrategy != "sticky" {
 		t.Fatalf("caller defaults mutated: %+v %+v", defaults, got)
 	}
 	want := *got
+	want.SwitchOn429 = false
 	want.RotationStrategy = "round_robin"
 	want.RequestIntervalMS = 125
 	want.MaxWaitingPerKey = 5

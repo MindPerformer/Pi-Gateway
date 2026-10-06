@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Pencil, Plus, Search, Trash2, Users } from 'lucide-vue-next'
+import { useI18n } from '../../i18n'
 import { ApiError, api } from '../../api/client'
 import type { Account, AccountGroup } from '../../api/types'
 import { useToastStore } from '../../stores/ui'
@@ -13,6 +14,8 @@ import { useAccountControls } from './accountControlsLocale'
 const props = defineProps<{ open: boolean; accounts: Account[]; groups: AccountGroup[]; loaded: boolean; error: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const { c } = useAccountControls()
+const { t } = useI18n()
+const switchOn429 = ref('inherit')
 const toast = useToastStore()
 const localGroups = ref<AccountGroup[]>([])
 const editing = ref(false)
@@ -44,7 +47,8 @@ function startEdit(group?: AccountGroup) {
 	editingId.value = group?.id ?? null
 	name.value = group?.name ?? ''
 	notes.value = group?.notes ?? ''
-	enabled.value = group?.enabled ?? true
+	switchOn429.value = group?.switch_on_429 ?? 'inherit'
+ enabled.value = group?.enabled ?? true
 	members.value = [...(group?.account_ids ?? [])]
 	disabledModels.value = [...(group?.disabled_models ?? [])]
 	search.value = ''
@@ -63,7 +67,7 @@ async function save() {
 	saving.value = true
 	error.value = ''
 	try {
-		const payload = { name: trimmed, notes: notes.value.trim(), enabled: enabled.value, account_ids: [...members.value], disabled_models: [...disabledModels.value] }
+		const payload = { switch_on_429: switchOn429.value, name: trimmed, notes: notes.value.trim(), enabled: enabled.value, account_ids: [...members.value], disabled_models: [...disabledModels.value] }
 		const { group } = editingId.value === null ? await api.createAccountGroup(payload) : await api.updateAccountGroup(editingId.value, payload)
 		localGroups.value = [...localGroups.value.filter(item => item.id !== group.id), group]
 		editing.value = false
@@ -108,7 +112,8 @@ function close() { if (!saving.value && !deleteBusy.value) emit('close') }
 			<form v-else class="group-editor" @submit.prevent="save">
 				<div><label class="label" for="group-name">{{ c('groupName') }}</label><input id="group-name" v-model="name" class="input" maxlength="200" :disabled="saving" required /></div>
 				<div><label class="label" for="group-notes">{{ c('groupNotes') }}</label><textarea id="group-notes" v-model="notes" class="input" rows="2" maxlength="2000" :disabled="saving" /></div>
-				<Toggle v-model="enabled" :label="c('enabled')" :disabled="saving" />
+				<div><label class="label" for="group-switch-429">{{ t('retry429.switch') }}</label><select id="group-switch-429" v-model="switchOn429" class="input" :disabled="saving"><option value="inherit">{{ t('retry429.inherit') }}</option><option value="enabled">{{ c('enabled') }}</option><option value="disabled">{{ c('disabled') }}</option></select><p class="group-hint">{{ t('retry429.groupHint') }}</p></div>
+ <Toggle v-model="enabled" :label="c('enabled')" :disabled="saving" />
 				<fieldset class="members-field" :disabled="saving"><legend><Users :size="15" />{{ c('members') }} · {{ members.length }}</legend><label class="search-field"><Search :size="16" aria-hidden="true" /><input v-model="search" class="input" :placeholder="c('memberSearch')" :aria-label="c('memberSearch')" /></label><div class="members-list"><label v-for="account in visibleAccounts" :key="account.id" class="member-choice"><input type="checkbox" :checked="members.includes(account.id)" @change="setMember(account.id, ($event.target as HTMLInputElement).checked)" /><span><strong>{{ accountName(account) }}</strong><small v-if="account.email && account.email !== account.name">{{ account.email }}</small><small v-if="!account.enabled">{{ c('disabled') }}</small></span></label><p v-if="!visibleAccounts.length" class="group-hint">{{ c('noMatches') }}</p></div><p v-if="!members.length" class="group-hint">{{ c('noMembers') }}</p></fieldset>
 				<ModelRestrictionSelector :key="editingId ?? 'new'" v-model="disabledModels" :sources="sources" group-mode :disabled="saving" />
 				<p class="group-hint">{{ c('saveFirst') }}</p>

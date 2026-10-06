@@ -1,6 +1,10 @@
+import {pathToFileURL} from 'node:url'
+import {createRequire} from 'node:module'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import ts from 'typescript'
+
+const diffDependencyURL = pathToFileURL(createRequire(import.meta.url).resolve('diff')).href
 
 function compile(name) {
     return ts.transpileModule(readFileSync(new URL(`./src/utils/${name}.ts`, import.meta.url), 'utf8'), {
@@ -8,7 +12,7 @@ function compile(name) {
     }).outputText
 }
 
-const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source.replace("from 'diff'", `from '${diffDependencyURL}'`)).toString('base64')}`
 const diffURL = moduleURL(compile('captureDiff'))
 const {
     frameSnapshot,
@@ -165,22 +169,22 @@ check('stream:false is HTTP even without a saved response', () => {
     assert.equal(hopProtocol(record, 'client'), 'http')
     assert.equal(streamSnapshot(record, 'client').text, '')
 })
-check('large SSE previews are bounded and explicitly marked', () => {
+check('large SSE payloads retain their full recorded text', () => {
     const text = 'data: ' + 'x'.repeat(250_000)
     const client = streamSnapshot(capture([], {response_text: text}), 'client')
-    assert.equal(client.text.length, 200_000)
-    assert.equal(client.limited, true)
+    assert.equal(client.text, text)
+    assert.equal(client.limited, false)
     const upstream = streamSnapshot(capture([frame(0, 'in', 'sse_event', {text})]), 'upstream')
-    assert.equal(upstream.text.length, 200_000)
-    assert.equal(upstream.limited, true)
+    assert.ok(upstream.text.includes(text))
+    assert.equal(upstream.limited, false)
 })
 check('unknown future records remain visible and preserve order', () => {
     const record = capture([frame(3, 'in', '__proto__', 'unknown'), frame(4, 'in', 'future_event', 'visible')])
     assert.deepEqual(captureRows(record, true).map(row => row.frame.seq), [3, 4])
 })
-check('individual payload previews signal truncation without changing small JSON', () => {
+check('individual payload previews preserve large and small JSON', () => {
     assert.deepEqual(payloadPreview({ok: true}), {text: '{\n  "ok": true\n}', limited: false})
-    assert.deepEqual(payloadPreview('x'.repeat(100_001)), {text: 'x'.repeat(100_000), limited: true})
+    assert.deepEqual(payloadPreview('x'.repeat(100_001)), {text: 'x'.repeat(100_001), limited: false})
     assert.deepEqual(payloadPreview(''), {text: '', limited: false})
 })
 check('binary WebSocket frames still identify the protocol', () => {

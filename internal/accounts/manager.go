@@ -152,6 +152,11 @@ func (m *Manager) Acquire(ctx context.Context, key *store.APIKey, requestedModel
 // scope is an internal connection/session fingerprint, never an upstream field.
 // Cached IDs can only reorder freshly authorized candidates, not grant access.
 func (m *Manager) AcquireWithAffinity(ctx context.Context, key *store.APIKey, requestedModel, scope string) (*store.Account, func(), error) {
+	return m.AcquireExcluding(ctx, key, requestedModel, scope, nil)
+}
+
+// AcquireExcluding skips accounts already attempted by this request.
+func (m *Manager) AcquireExcluding(ctx context.Context, key *store.APIKey, requestedModel, scope string, excluded map[int64]bool) (*store.Account, func(), error) {
 	var hint requestAffinity
 	m.mu.Lock()
 	waitTimeout := m.waitTimeout
@@ -177,6 +182,13 @@ func (m *Manager) AcquireWithAffinity(ctx context.Context, key *store.APIKey, re
 		if err != nil {
 			return nil, nil, err
 		}
+		filtered := candidates[:0]
+		for _, a := range candidates {
+			if !excluded[a.ID] {
+				filtered = append(filtered, a)
+			}
+		}
+		candidates = filtered
 		if len(candidates) == 0 {
 			return nil, nil, ErrNoAccounts
 		}

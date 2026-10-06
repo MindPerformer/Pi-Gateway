@@ -166,7 +166,7 @@ func TestRuntimeMigrationRepairConcurrentEnsureAndDeletedRules(t *testing.T) {
 	}
 	wg.Wait()
 	snapshot, err = first.LoadRuleSet(ctx)
-	if err != nil || snapshot.Version != 1 || !snapshot.LegacyMigrated || len(snapshot.Rules) != 8 {
+	if err != nil || snapshot.Version != 1 || !snapshot.LegacyMigrated || len(snapshot.Rules) != 9 {
 		t.Fatalf("migration did not initialize exactly once: %+v err=%v", snapshot, err)
 	}
 	deletions := make([]store.RuleChange, len(snapshot.Rules))

@@ -1,6 +1,10 @@
+import {pathToFileURL} from 'node:url'
+import {createRequire} from 'node:module'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import ts from 'typescript'
+
+const diffDependencyURL = pathToFileURL(createRequire(import.meta.url).resolve('diff')).href
 
 const source = readFileSync(new URL('./src/utils/captureDiff.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, {
@@ -15,7 +19,7 @@ assert.equal(errors.length, 0, ts.formatDiagnosticsWithColorAndContext(errors, {
     getNewLine: () => '\n',
 }))
 const {normalizeHeaders, equalPayloads, diffPayloads} = await import(
-    `data:text/javascript;base64,${Buffer.from(compiled.outputText).toString('base64')}`
+    `data:text/javascript;base64,${Buffer.from(compiled.outputText.replace("from 'diff'", `from '${diffDependencyURL}'`)).toString('base64')}`
     )
 
 let checked = 0
@@ -32,14 +36,12 @@ function check(name, run) {
 function validate(diff) {
     assert.equal(typeof diff.equal, 'boolean')
     assert.equal(typeof diff.limited, 'boolean')
-    assert.ok(diff.lines.length > 0 && diff.lines.length <= 1600)
+    assert.ok(diff.lines.length > 0 && Number.isFinite(diff.lines.length))
     assert.equal(diff.added, diff.lines.filter((line) => line.kind === 'added').length)
     assert.equal(diff.removed, diff.lines.filter((line) => line.kind === 'removed').length)
-    assert.ok(diff.lines.reduce((sum, line) => sum + line.text.length, 0) <= 2 * 65_536 + 100)
     for (const line of diff.lines) {
         assert.ok(['context', 'added', 'removed'].includes(line.kind))
         assert.equal(typeof line.text, 'string')
-        assert.ok(line.text.length <= 2000)
         if (line.beforeLine !== undefined) assert.ok(Number.isInteger(line.beforeLine) && line.beforeLine > 0)
         if (line.afterLine !== undefined) assert.ok(Number.isInteger(line.afterLine) && line.afterLine > 0)
         if (line.kind === 'added') assert.equal(line.beforeLine, undefined)
@@ -74,7 +76,7 @@ check('object keys and JSON whitespace do not count as changes', () => {
     const before = {z: 1, a: {y: 2, x: [3, {b: false, a: null}]}}
     const after = '{ "a": {"x":[3,{"a":null,"b":false}],"y":2},"z":1 }'
     const diff = same(before, after)
-    assert.equal(diff.lines[1].text, '  "a": {')
+    assert.equal(diff.lines[1].text, '  "z": 1,')
     assert.ok(diff.lines.every((line, index) => line.beforeLine === index + 1 && line.afterLine === index + 1))
 })
 
@@ -202,66 +204,22 @@ check('frozen inputs and shared references are not mutated', () => {
     assert.deepEqual(Object.keys(first), ['z', 'a'])
 })
 
-check('long equal prefixes never establish false equality', () => {
+check('large payloads retain every character and precisely isolate edits', () => {
     for (const length of [3000, 100_000, 1_000_000]) {
         const prefix = 'x'.repeat(length)
-        const diff = changed(prefix + 'BEFORE', prefix + 'AFTER', true)
-        assert.match(textOf(diff, 'removed'), /BEFORE$/)
-        assert.match(textOf(diff, 'added'), /AFTER$/)
-        same(prefix, prefix, true)
+        const diff = changed(prefix + 'BEFORE', prefix + 'AFTER')
+        assert.equal(textOf(diff, 'removed'), prefix + 'BEFORE')
+        assert.equal(textOf(diff, 'added'), prefix + 'AFTER')
+        same(prefix, prefix)
     }
-    changed({input: 'x'.repeat(100_000) + 'a'}, {input: 'x'.repeat(100_000) + 'b'}, true)
-    changed(JSON.stringify({input: 'x'.repeat(100_000) + 'a'}), JSON.stringify({input: 'x'.repeat(100_000) + 'b'}), true)
-})
-
-check('large raw JSON equality is conclusive while insufficient budgets stay limited', () => {
-    const firstObject = {input: 'x'.repeat(100_000), store: false}
-    const secondObject = {store: false, input: firstObject.input}
-    const raw = JSON.stringify(firstObject)
-    const separatelyCreatedRaw = JSON.stringify({...firstObject})
-    assert.equal(raw === separatelyCreatedRaw, true)
-    same(raw, separatelyCreatedRaw, true)
-    // These objects are semantically equal, but a bounded preview cannot prove it.
-    for (const [before, after] of [[firstObject, secondObject], [raw, JSON.stringify(secondObject)]]) {
-        assert.equal(equalPayloads(before, after), false)
-        const preview = validate(diffPayloads(before, after))
-        assert.equal(preview.equal, false)
-        assert.equal(preview.limited, true)
-    }
-})
-
-check('display line clipping is separate from full equality', () => {
-    const prefix = 'x'.repeat(5000)
-    same({input: prefix}, {input: prefix}, true)
-    changed({input: prefix + 'a'}, {input: prefix + 'b'}, true)
-    const hiddenFirst = 'a'.repeat(2000) + 'first' + 'b'.repeat(2000)
-    const hiddenSecond = 'a'.repeat(2000) + 'other' + 'b'.repeat(2000)
-    const diff = changed(hiddenFirst, hiddenSecond, true)
-    assert.ok(diff.added > 0 && diff.removed > 0)
-})
-
-check('total display lines are bounded even with many short lines', () => {
-    const before = Array.from({length: 4000}, (_, index) => `line ${index}`).join('\n')
-    const after = before + '\nlast'
-    changed(before, after, true)
-    same(before, before, true)
-    changed('\n'.repeat(100_000) + 'before', '\n'.repeat(100_000) + 'after', true)
-})
-
-check('LCS work is bounded and oversized output uses replacement', () => {
-    const before = Array.from({length: 600}, (_, index) => `old ${index}`).join('\n')
-    const after = Array.from({length: 600}, (_, index) => `new ${index}`).join('\n')
-    const diff = changed(before, after, true)
-    assert.equal(diff.removed, 600)
-    assert.equal(diff.added, 600)
-    assert.ok(diff.lines.every((line) => line.kind !== 'context'))
-    const nearLimit = Array.from({length: 1000}, (_, index) => `same ${index}`).join('\n')
-    const oneChange = changed(nearLimit, nearLimit.replace('same 500', 'changed 500'))
-    assert.equal(oneChange.added, 1)
-    assert.equal(oneChange.removed, 1)
-    const manyBefore = Array.from({length: 1000}, (_, index) => `line ${index}`).join('\n')
-    const manyAfter = Array.from({length: 1000}, (_, index) => `different ${index}`).join('\n')
-    assert.equal(changed(manyBefore, manyAfter, true).lines.length, 1600)
+    const lines = Array.from({length: 20_000}, (_, i) => `line ${i}`).join('\n')
+    const diff = changed(lines, lines.replace('line 12345', 'changed 12345'))
+    assert.equal(diff.added, 1)
+    assert.equal(diff.removed, 1)
+    assert.equal(diff.lines.filter(row => row.kind !== 'added').map(row => row.text).join('\n'), lines)
+    same({input: 'x'.repeat(100_000), store: false}, {store: false, input: 'x'.repeat(100_000)})
+    const allChanged = changed(Array.from({length: 1000}, (_, i) => `old ${i}`).join('\n'), Array.from({length: 1000}, (_, i) => `new ${i}`).join('\n'))
+    assert.equal(allChanged.lines.length, 2000)
 })
 
 check('deep, wide, cyclic, getter and proxy inputs do not crash or compare truncated prefixes', () => {
@@ -275,7 +233,7 @@ check('deep, wide, cyclic, getter and proxy inputs do not crash or compare trunc
     const wideA = Array.from({length: 20_000}, () => 0)
     const wideB = [...wideA]
     wideB[wideB.length - 1] = 1
-    changed(wideA, wideB, true)
+    changed(wideA, wideB)
     const cyclicA = {}
     const cyclicB = {}
     cyclicA.self = cyclicA
@@ -352,3 +310,14 @@ check('small repeated-line diffs reconstruct both sides with minimal edits', () 
 })
 
 console.log(`Capture diff: ${checked} checks passed (including 250 randomized reconstruction cases).`)
+
+for (const path of process.argv.slice(2)) {
+    const capture = JSON.parse(readFileSync(path, 'utf8'))
+    const before = capture.response_frames.find(frame => frame.dir === 'client_in' && frame.kind === 'request_body')?.data
+    assert.ok(before)
+    const after = JSON.parse(capture.request_body)
+    const diff = diffPayloads(before, after)
+    assert.equal(diff.limited, false)
+    assert.ok(diff.lines.some(line => line.kind === 'context'))
+    console.log(`${path}: ${diff.lines.length} rows, +${diff.added}/-${diff.removed}, full diff`)
+}

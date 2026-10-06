@@ -299,8 +299,8 @@ func boundedRuleValue(value any) (any, bool) {
 	if err != nil {
 		return nil, true
 	}
-	if len(raw) <= 1024 {
+	if len(raw) <= rules.MaxPayloadBytes {
 		return value, false
 	}
-	return map[string]any{"preview": strings.ToValidUTF8(string(raw[:1024]), "\uFFFD"), "bytes": len(raw)}, true
+	return map[string]any{"preview": strings.ToValidUTF8(string(raw[:rules.MaxPayloadBytes]), "\uFFFD"), "bytes": len(raw)}, true
 }

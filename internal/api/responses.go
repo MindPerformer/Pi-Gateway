@@ -69,11 +69,12 @@ func (s *Server) newUpstreamRequest(ctx context.Context, p *prepared) (*upstream
 
 	rt := s.settings.Get()
 	headerOpts := piwire.HeaderOptions{
-		AccessToken: accessToken,
-		AccountID:   accountID,
-		SessionID:   p.WireSessionID,
-		Originator:  s.cfg.Upstream.Originator,
-		UserAgent:   firstNonEmpty(rt.UserAgent, s.cfg.Upstream.UserAgent),
+		ClientHeaders: p.ClientHeaders,
+		AccessToken:   accessToken,
+		AccountID:     accountID,
+		SessionID:     p.WireSessionID,
+		Originator:    s.cfg.Upstream.Originator,
+		UserAgent:     firstNonEmpty(rt.UserAgent, s.cfg.Upstream.UserAgent),
 		Platform: piwire.Platform{
 			OS:             s.cfg.Upstream.StainlessOS,
 			Arch:           s.cfg.Upstream.StainlessArch,
@@ -140,7 +141,7 @@ func (s *Server) serveSSE(w http.ResponseWriter, ctx context.Context, p *prepare
 
 	first := true
 	upstreamErrorForwarded := false
-	_, err := s.upstream.Stream(ctx, req, func(event *upstream.Event) error {
+	_, err := s.streamWith429Retry(ctx, p, req, func(event *upstream.Event) error {
 		if first {
 			first = false
 			if p.Recorder != nil {
@@ -236,7 +237,7 @@ func (s *Server) serveAggregated(w http.ResponseWriter, ctx context.Context, p *
 	var terminal map[string]any
 	var lastEvent *upstream.Event
 
-	_, err := s.upstream.Stream(ctx, req, func(event *upstream.Event) error {
+	_, err := s.streamWith429Retry(ctx, p, req, func(event *upstream.Event) error {
 		transformed, transformErr := p.transformResponseEvent(ctx, event)
 		if transformErr != nil {
 			return transformErr

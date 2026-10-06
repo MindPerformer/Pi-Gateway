@@ -11,7 +11,7 @@ const (
 	MaxPayloadBytes          = 64 << 20
 	MaxRuleBytes             = 1 << 20
 	MaxTraceChanges          = 128
-	MaxTraceValueBytes       = 1024
+	MaxTraceValueBytes       = MaxPayloadBytes
 	MaxSafeInteger     int64 = 9007199254740991
 )
 
@@ -55,7 +55,7 @@ func actionCapabilities() []Capability {
 		{ID: "rewrite_model", Label: "修改模型 / Rewrite model", Description: "同时修改载荷 model 和最终路由模型。", Phases: req, Fields: []FieldSpec{requiredString("model", "目标模型 / Model", "非空模型名称，不跳过外层模型权限校验。")}},
 		{ID: "drop_environment_context", Label: "清理环境内容 / Strip environment", Description: "复用旧中间件 XML 与元数据清理算法。", Phases: req, Fields: []FieldSpec{field("content_item_kind", "string", "内容标识 / Content kind", "空字符串使用默认 Codex 环境类型。", "environments.environment_context", false), field("also_strip_from_instructions", "boolean", "清理指令 / Strip instructions", "同时清除 instructions 的 environment_context XML。", true, false)}},
 		{ID: "drop_input_items", Label: "删除输入项 / Drop input items", Description: "类型或模式任一匹配就删除整项；空 types 和 pattern 不操作。", Phases: req, Fields: append([]FieldSpec{field("types", "string_array", "输入类型 / Types", "精确匹配输入对象的 type。", []any{}, false), field("pattern", "string", "模式 / Pattern", "Go RE2 正则；空字符串不按模式过滤。", "", false), field("target", "string", "匹配范围 / Target", "json：对象紧凑 JSON、字符串原文（兼容旧行为）；text：字符串或 content/text 的可见文本。", "json", false, "json", "text")}, regexFields()...)},
-		{ID: "drop_tools", Label: "删除工具 / Drop tools", Description: "删除最后一个工具后移除 tools 字段；空条件不操作。", Phases: req, Fields: []FieldSpec{field("names", "string_array", "工具名 / Names", "精确匹配顶层工具 name。", []any{}, false), field("drop_all", "boolean", "全部删除 / Drop all", "优先于 names，删除整个 tools 字段。", false, false)}},
+		{ID: "drop_tools", Label: "删除工具 / Drop tools", Description: "删除最后一个工具后移除 tools 字段；空条件不操作。", Phases: req, Fields: []FieldSpec{field("types", "string_array", "工具类型 / Types", "按 type 排除内置工具，递归处理 namespace，并清理对应 tool_choice。", []any{}, false), field("names", "string_array", "工具名 / Names", "精确匹配工具 name。", []any{}, false), field("drop_all", "boolean", "全部删除 / Drop all", "优先于 names，删除整个 tools 字段。", false, false)}},
 		{ID: "passthrough_fields", Label: "透传客户端字段 / Passthrough fields", Description: "仅补入当前缺失且客户端非 null 的顶层字段；外层规范化仍可能剔除字段。", Phases: req, Fields: []FieldSpec{field("fields", "string_array", "字段 / Fields", "顶层字段名称，不是 JSON Pointer；空名称跳过。", []any{}, false)}},
 		{ID: "set_reasoning", Label: "推理参数 / Set reasoning", Description: "字符串不硬编码模型枚举，空值不覆盖已有值。", Phases: req, Fields: []FieldSpec{field("effort", "string", "推理强度 / Effort", "例如 low、medium、high；由上游模型决定合法取值。", "", false), field("summary", "string", "推理摘要 / Summary", "例如 auto、concise；空值不覆盖。", "", false)}},
 		{ID: "json_set", Label: "设置 JSON / Set JSON", Description: "根节点可替换；数组只能替换现有下标或在长度位置追加，不允许稀疏数组。", Phases: all, Fields: []FieldSpec{ptr("path", true), value, parents, field("if_exists", "string", "已存在 / If exists", "overwrite 替换；keep 保持原值（包括 null）。", "overwrite", false, "overwrite", "keep")}},

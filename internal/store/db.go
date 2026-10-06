@@ -464,8 +464,9 @@ func additiveColumns() map[string]map[string]string {
 			"rules_trace_omitted":   "INTEGER NOT NULL DEFAULT 0",
 		},
 		"account_model_catalog": {"source_catalogs_json": "TEXT NOT NULL DEFAULT '{}'"},
-		"account_groups":        {"disabled_models": "TEXT NOT NULL DEFAULT '[]'"},
+		"account_groups":        {"disabled_models": "TEXT NOT NULL DEFAULT '[]'", "switch_on_429": "TEXT NOT NULL DEFAULT 'inherit'"},
 		"accounts": {
+			"cooldown_429_seconds": "INTEGER NOT NULL DEFAULT -1",
 			"disabled_models":      "TEXT NOT NULL DEFAULT '[]'",
 			"supplemental_models":  "TEXT NOT NULL DEFAULT '[]'",
 			"proxy_id":             "INTEGER REFERENCES proxies(id) ON DELETE RESTRICT",

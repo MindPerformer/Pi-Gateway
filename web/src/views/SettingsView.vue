@@ -28,7 +28,7 @@ async function load() {
 	try {
 		const result = await api.getSettings()
 		data.value = result
-		form.value = { ...result.current }
+		form.value = { ...result.current, switch_on_429: result.current.switch_on_429 ?? true, account_cooldown_seconds: result.current.account_cooldown_seconds ?? 60, max_attempts: result.current.max_attempts ?? 2 }
 		mappingText.value = JSON.stringify(result.current.model_mappings ?? {}, null, 2)
 	} catch (err) {
 		toast.error(err instanceof Error ? err.message : 'failed to load settings')
@@ -126,6 +126,12 @@ const builtinUserAgent = computed(() => data.value?.current.user_agent || 'pi (l
 							<p id="s-strategy-hint" class="setting-option-hint">{{ strategyDescription(form.default_strategy) }}</p>
 							<p class="setting-option-hint">{{ t('ui.options.strategyPriority') }}</p>
 						</div>
+						<div>
+							<Toggle :model-value="form.switch_on_429 ?? true" @update:model-value="form.switch_on_429 = $event" :label="t('retry429.switch')" />
+							<p class="setting-option-hint">{{ t('retry429.switchHint') }}</p>
+						</div>
+						<div><label class="label" for="s-cooldown-429">{{ t('retry429.cooldown') }}</label><input id="s-cooldown-429" v-model.number="form.account_cooldown_seconds" type="number" min="0" max="604800" class="input" /></div>
+						<div><label class="label" for="s-attempts-429">{{ t('retry429.attempts') }}</label><input id="s-attempts-429" v-model.number="form.max_attempts" type="number" min="1" max="20" class="input" /></div>
 						<div>
 							<label class="label" for="s-conc">{{ t('settings.maxConcurrent') }}</label>
 							<input id="s-conc" v-model.number="form.max_concurrent_per_account" type="number" min="1" class="input" />

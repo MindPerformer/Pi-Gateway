@@ -46,7 +46,7 @@ type Options struct {
 // already filled in by the caller).
 func New(scaffold *store.Capture, opts Options) *Recorder {
 	if opts.MaxBytesPerRecord <= 0 {
-		opts.MaxBytesPerRecord = 8 << 20
+		opts.MaxBytesPerRecord = 64 << 20
 	}
 	c := scaffold
 	if c == nil {

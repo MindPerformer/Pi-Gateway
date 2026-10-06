@@ -440,7 +440,8 @@ func (m *DropTools) Apply(_ context.Context, req *Request, cfg map[string]any) (
 		dropAll = v
 	}
 	names := stringSlice(cfg["names"])
-	if !dropAll && len(names) == 0 {
+	types := stringSlice(cfg["types"])
+	if !dropAll && len(names) == 0 && len(types) == 0 {
 		return res, nil
 	}
 
@@ -458,18 +459,37 @@ func (m *DropTools) Apply(_ context.Context, req *Request, cfg map[string]any) (
 		return res, nil
 	}
 
-	kept := make([]any, 0, len(arr))
 	removed := 0
-	for _, t := range arr {
-		obj, isObj := t.(map[string]any)
-		if isObj {
-			if name, _ := obj["name"].(string); containsString(names, name) {
-				removed++
-				continue
+	var filter func([]any) []any
+	filter = func(items []any) []any {
+		kept := make([]any, 0, len(items))
+		for _, tool := range items {
+			obj, ok := tool.(map[string]any)
+			if ok {
+				name, _ := obj["name"].(string)
+				kind, _ := obj["type"].(string)
+				if containsString(names, name) || containsString(types, kind) {
+					removed++
+					continue
+				}
+				if children, ok := obj["tools"].([]any); ok && kind == "namespace" {
+					copy := make(map[string]any, len(obj))
+					for key, value := range obj {
+						copy[key] = value
+					}
+					copy["tools"] = filter(children)
+					if len(copy["tools"].([]any)) == 0 {
+						removed++
+						continue
+					}
+					tool = copy
+				}
 			}
+			kept = append(kept, tool)
 		}
-		kept = append(kept, t)
+		return kept
 	}
+	kept := filter(arr)
 	if removed > 0 {
 		if len(kept) == 0 {
 			req.Body.Delete("tools")
@@ -477,6 +497,21 @@ func (m *DropTools) Apply(_ context.Context, req *Request, cfg map[string]any) (
 			req.Body.Set("tools", kept)
 		}
 		res.Changes = append(res.Changes, fmt.Sprintf("dropped %d tool(s)", removed))
+	}
+	if choice, ok := req.Body.Get("tool_choice"); ok {
+		obj, isObject := choice.(map[string]any)
+		matched := false
+		if isObject {
+			kind, _ := obj["type"].(string)
+			name, _ := obj["name"].(string)
+			matched = containsString(types, kind) || containsString(names, name)
+		} else if value, ok := choice.(string); ok {
+			matched = containsString(types, value) || (value == "required" && removed > 0 && len(kept) == 0)
+		}
+		if matched {
+			req.Body.Delete("tool_choice")
+			res.Changes = append(res.Changes, "dropped excluded tool_choice")
+		}
 	}
 	return res, nil
 }

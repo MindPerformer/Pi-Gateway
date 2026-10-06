@@ -205,6 +205,13 @@ func (m *Manager) RecordResult(ctx context.Context, id int64, r Result, now time
 		m.mu.Lock()
 		cooldown := m.accountCooldown
 		m.mu.Unlock()
+		a, err := m.store.GetAccount(ctx, id)
+		if err != nil {
+			return err
+		}
+		if a != nil && a.Cooldown429Seconds >= 0 {
+			cooldown = time.Duration(a.Cooldown429Seconds) * time.Second
+		}
 		until = now.Add(max(cooldown, r.RetryAfter)).UnixMilli()
 	}
 	status := ""

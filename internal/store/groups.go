@@ -13,6 +13,8 @@ import (
 )
 
 type AccountGroup struct {
+	SwitchOn429 string `json:"switch_on_429"`
+
 	ID             int64    `json:"id"`
 	Name           string   `json:"name"`
 	Enabled        bool     `json:"enabled"`
@@ -27,7 +29,7 @@ func scanAccountGroup(row interface{ Scan(...any) error }) (*AccountGroup, error
 	var g AccountGroup
 	var enabled int
 	var modelsJSON string
-	if err := row.Scan(&g.ID, &g.Name, &enabled, &g.Notes, &g.CreatedAt, &g.UpdatedAt, &modelsJSON); err != nil {
+	if err := row.Scan(&g.ID, &g.Name, &enabled, &g.Notes, &g.CreatedAt, &g.UpdatedAt, &modelsJSON, &g.SwitchOn429); err != nil {
 		return nil, err
 	}
 	models, err := decodeDisabledModels(modelsJSON)
@@ -41,7 +43,7 @@ func scanAccountGroup(row interface{ Scan(...any) error }) (*AccountGroup, error
 }
 
 func (s *Store) ListAccountGroups(ctx context.Context) ([]AccountGroup, error) {
-	rows, err := s.QueryContext(ctx, `SELECT id,name,enabled,notes,created_at,updated_at,disabled_models FROM account_groups ORDER BY id`)
+	rows, err := s.QueryContext(ctx, `SELECT id,name,enabled,notes,created_at,updated_at,disabled_models,switch_on_429 FROM account_groups ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +71,7 @@ func (s *Store) ListAccountGroups(ctx context.Context) ([]AccountGroup, error) {
 }
 
 func (s *Store) GetAccountGroup(ctx context.Context, id int64) (*AccountGroup, error) {
-	g, err := scanAccountGroup(s.QueryRowContext(ctx, `SELECT id,name,enabled,notes,created_at,updated_at,disabled_models FROM account_groups WHERE id=?`, id))
+	g, err := scanAccountGroup(s.QueryRowContext(ctx, `SELECT id,name,enabled,notes,created_at,updated_at,disabled_models,switch_on_429 FROM account_groups WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -87,6 +89,12 @@ func (s *Store) accountGroupIDs(ctx context.Context, id int64) ([]int64, error) 
 func (s *Store) CreateAccountGroup(ctx context.Context, g *AccountGroup) error {
 	if g == nil {
 		return errors.New("store: nil account group")
+	}
+	if g.SwitchOn429 == "" {
+		g.SwitchOn429 = "inherit"
+	}
+	if err := validateSwitchOn429(g.SwitchOn429); err != nil {
+		return err
 	}
 	g.Name = strings.TrimSpace(g.Name)
 	g.Notes = strings.TrimSpace(g.Notes)
@@ -112,7 +120,7 @@ func (s *Store) CreateAccountGroup(ctx context.Context, g *AccountGroup) error {
 		g.CreatedAt = NowMS()
 	}
 	g.UpdatedAt = NowMS()
-	id, err := s.insertID(ctx, tx, `INSERT INTO account_groups(name,enabled,notes,created_at,updated_at,disabled_models) VALUES (?,?,?,?,?,?)`, g.Name, boolToInt(g.Enabled), g.Notes, g.CreatedAt, g.UpdatedAt, string(modelsJSON))
+	id, err := s.insertID(ctx, tx, `INSERT INTO account_groups(name,enabled,notes,created_at,updated_at,disabled_models,switch_on_429) VALUES (?,?,?,?,?,?,?)`, g.Name, boolToInt(g.Enabled), g.Notes, g.CreatedAt, g.UpdatedAt, string(modelsJSON), g.SwitchOn429)
 	if err != nil {
 		return groupWriteError(err)
 	}
@@ -131,13 +139,15 @@ func (s *Store) UpdateAccountGroup(ctx context.Context, g *AccountGroup) error {
 		return errors.New("store: nil account group")
 	}
 	return s.PatchAccountGroup(ctx, g.ID, AccountGroupPatch{
-		Name: &g.Name, Enabled: &g.Enabled, Notes: &g.Notes,
+		Name: &g.Name, Enabled: &g.Enabled, Notes: &g.Notes, SwitchOn429: &g.SwitchOn429,
 		AccountIDs: g.AccountIDs, DisabledModels: g.DisabledModels,
 	})
 }
 
 // AccountGroupPatch preserves omitted fields; non-nil empty slices clear lists.
 type AccountGroupPatch struct {
+	SwitchOn429 *string
+
 	Name           *string
 	Enabled        *bool
 	Notes          *string
@@ -148,6 +158,13 @@ type AccountGroupPatch struct {
 func (s *Store) PatchAccountGroup(ctx context.Context, id int64, patch AccountGroupPatch) error {
 	sets := []string{"updated_at=?"}
 	args := []any{NowMS()}
+	if patch.SwitchOn429 != nil {
+		if err := validateSwitchOn429(*patch.SwitchOn429); err != nil {
+			return err
+		}
+		sets = append(sets, "switch_on_429=?")
+		args = append(args, *patch.SwitchOn429)
+	}
 	if patch.Name != nil {
 		name := strings.TrimSpace(*patch.Name)
 		if name == "" {
@@ -577,4 +594,12 @@ func queryIDs(ctx context.Context, db *Store, query string, id int64) ([]int64, 
 		out = append(out, value)
 	}
 	return out, rows.Err()
+}
+
+func validateSwitchOn429(v string) error {
+	switch v {
+	case "inherit", "enabled", "disabled":
+		return nil
+	}
+	return fmt.Errorf("%w: switch_on_429 must be inherit, enabled or disabled", ErrInvalidPolicy)
 }

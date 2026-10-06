@@ -9,6 +9,7 @@ export interface Account {
     expires_at: number
     enabled: boolean
     weight: number
+    cooldown_429_seconds?: number
     concurrency: number
     proxy_url: string
     proxy_id: number | null
@@ -62,6 +63,7 @@ export interface ApiKey {
 }
 
 export interface AccountGroup {
+    switch_on_429?: string
     id: number
     name: string
     enabled: boolean
@@ -299,6 +301,9 @@ export interface Capture {
 }
 
 export interface Settings {
+    switch_on_429?: boolean
+    account_cooldown_seconds?: number
+    max_attempts?: number
     upstream_transport: string
     capture_enabled: boolean
     capture_limit: number

@@ -59,7 +59,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
-	var body store.Settings
+	body := *s.settings.Get()
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -82,6 +82,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RefreshMarginSecs < 60 {
 		writeErr(w, http.StatusBadRequest, "refresh_margin_seconds must be at least 60")
+		return
+	}
+	if body.AccountCooldownSeconds < 0 || body.AccountCooldownSeconds > 604800 || body.MaxAttempts < 1 || body.MaxAttempts > 20 {
+		writeErr(w, 400, "account_cooldown_seconds must be 0..604800 and max_attempts must be 1..20")
 		return
 	}
 	if body.ModelMappings == nil {

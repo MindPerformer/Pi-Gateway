@@ -118,3 +118,55 @@ func TestSummaryCompactionEmptyOrFailedOutput(t *testing.T) {
 		})
 	}
 }
+
+func TestSummaryCompactionStreamedOutput(t *testing.T) {
+	const item = `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"用户的目标与后续工作。"}]}`
+	for _, tc := range []struct {
+		name     string
+		terminal string
+		want     string
+	}{
+		{"empty terminal output", `{"status":"completed","output":[]}`, "用户的目标与后续工作。"},
+		{"missing terminal output", `{"status":"completed"}`, "用户的目标与后续工作。"},
+		{"terminal output takes precedence", `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Canonical summary."}]}]}`, "Canonical summary."},
+		{"incomplete terminal rejects streamed text", `{"status":"incomplete","output":[]}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, `data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"用户的目标与后续工作。"}`+"\n\n")
+				io.WriteString(w, `data: {"type":"response.output_text.done","output_index":0,"content_index":0,"text":"用户的目标与后续工作。"}`+"\n\n")
+				io.WriteString(w, `data: {"type":"response.output_item.done","output_index":0,"item":`+item+"}\n\n")
+				io.WriteString(w, `data: {"type":"response.completed","response":`+tc.terminal+"}\n\n")
+			}))
+			defer server.Close()
+			c := testClient(t, server.URL+"/responses")
+			var terminal map[string]any
+			events := 0
+			result, err := c.Stream(context.Background(), &Request{Compact: true, CompactDirect: true, CompactionMode: "on", ClientKeyID: 7, Body: []byte(`{"model":"test","input":[]}`)}, func(e *Event) error {
+				events++
+				if e.Type == "response.output_text.delta" || e.Type == "response.output_text.done" {
+					t.Error("summary leaked as answer")
+				}
+				if e.Type == EventResponseCompleted {
+					terminal = e.Data["response"].(map[string]any)
+				}
+				return nil
+			})
+			if tc.want == "" {
+				if err == nil || events != 0 {
+					t.Fatalf("incomplete summary succeeded: events=%d err=%v", events, err)
+				}
+				return
+			}
+			if err != nil || terminal == nil {
+				t.Fatalf("result=%+v terminal=%+v err=%v", result, terminal, err)
+			}
+			output := terminal["output"].([]any)
+			encrypted := output[0].(map[string]any)["encrypted_content"].(string)
+			got, err := c.compactCodec.open(encrypted, 7)
+			if err != nil || got != tc.want {
+				t.Fatalf("summary=%q want=%q err=%v", got, tc.want, err)
+			}
+		})
+	}
+}

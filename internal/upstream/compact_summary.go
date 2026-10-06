@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -147,7 +148,19 @@ func (c *Client) streamSummaryCompact(ctx context.Context, req *Request, onEvent
 		req.Sink.OnFrame("out", "transport", eventType, raw, meta)
 	}
 	var terminal map[string]any
+	streamedText := make(map[int]string)
+	streamedBytes := 0
 	result, err := c.streamSSE(ctx, &summaryReq, func(event *Event) error {
+		if event.Type == "response.output_item.done" {
+			item, _ := event.Data["item"].(map[string]any)
+			index := intValue(event.Data["output_index"])
+			text := summaryMessageText(item)
+			streamedBytes += len(text) - len(streamedText[index])
+			if streamedBytes > 1<<20 {
+				return fmt.Errorf("upstream: summary compaction exceeds byte limit")
+			}
+			streamedText[index] = text
+		}
 		if IsTerminal(event.Type) {
 			terminal, _ = event.Data["response"].(map[string]any)
 		}
@@ -163,20 +176,22 @@ func (c *Client) streamSummaryCompact(ctx context.Context, req *Request, onEvent
 	output, _ := terminal["output"].([]any)
 	for _, raw := range output {
 		item, _ := raw.(map[string]any)
-		if item["type"] != "message" || item["role"] != "assistant" {
-			continue
-		}
-		content, _ := item["content"].([]any)
-		for _, rawPart := range content {
-			part, _ := rawPart.(map[string]any)
-			if part["type"] == "output_text" {
-				value, _ := part["text"].(string)
-				summary.WriteString(value)
-				summary.WriteByte('\n')
-			}
-		}
+		summary.WriteString(summaryMessageText(item))
 	}
 	value := strings.TrimSpace(summary.String())
+	if value == "" {
+		// Some upstreams omit output from the completed response even though
+		// completed message items were delivered earlier in the SSE stream.
+		indices := make([]int, 0, len(streamedText))
+		for index := range streamedText {
+			indices = append(indices, index)
+		}
+		sort.Ints(indices)
+		for _, index := range indices {
+			summary.WriteString(streamedText[index])
+		}
+		value = strings.TrimSpace(summary.String())
+	}
 	if value == "" {
 		return result, fmt.Errorf("upstream: summary compaction returned no text")
 	}
@@ -192,4 +207,21 @@ func (c *Client) streamSummaryCompact(ctx context.Context, req *Request, onEvent
 	emitReq := *req
 	emitReq.Body = body
 	return emitCompaction(&emitReq, result, payload, onEvent)
+}
+
+func summaryMessageText(item map[string]any) string {
+	if item["type"] != "message" || item["role"] != "assistant" {
+		return ""
+	}
+	var text strings.Builder
+	content, _ := item["content"].([]any)
+	for _, raw := range content {
+		part, _ := raw.(map[string]any)
+		if part["type"] == "output_text" {
+			value, _ := part["text"].(string)
+			text.WriteString(value)
+			text.WriteByte('\n')
+		}
+	}
+	return text.String()
 }

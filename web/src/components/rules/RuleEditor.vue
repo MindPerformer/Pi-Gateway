@@ -67,6 +67,7 @@ function updateGraph(next:RuleGraph, history=true) {
 }
 function updateRule(next:Rule) {updateGraph(ruleToGraph(next,graph.value))}
 function updateField(name:string,value:unknown) {
+ if(props.modelValue.mode==='steps'){const next={...rule.value} as unknown as Record<string,unknown>;if(value===undefined)delete next[name];else next[name]=value;updateRule(next as unknown as Rule);return}
     const root = graph.value.nodes.find(n=>n.kind==='rule')!
     const data = {...root.data} as unknown as Record<string,unknown>
     if(value===undefined) delete data[name]; else data[name]=value
@@ -121,13 +122,13 @@ function reportErrors(error:unknown) {
 function synchronize():Rule|undefined {
     try {
         if(form.value && !form.value.reportValidity()) return
-        const next=props.modelValue.mode==='code'?parseRule(props.modelValue.code,props.schema):graphToRule(graph.value,props.schema)
+        const next=props.modelValue.mode==='code'?parseRule(props.modelValue.code,props.schema):props.modelValue.mode==='steps'?rule.value:graphToRule(graph.value,props.schema)
         const errors=validateRule(next,props.schema)
         if(errors.length) {patch({errors});return}
         patch({rule:next,errors:[]});return next
     } catch(error) {reportErrors(error)}
 }
-function switchMode(mode:'visual'|'code') {
+function switchMode(mode:'steps'|'visual'|'code') {
     if(mode===props.modelValue.mode) return
     const next=synchronize();if(!next) return
     patch({rule:next,code:stringifyRule(next),graph:mode==='visual'?ruleToGraph(next,graph.value):graph.value,mode,errors:[]})
@@ -159,9 +160,15 @@ const shownErrors=computed(()=>[...props.modelValue.errors,...(props.modelValue.
       <div class="flex flex-wrap gap-2"><button type="button" class="btn" @click="emit('close')">{{ t('rules.cancel') }}</button><button class="btn btn-primary" :disabled="busy" type="submit">{{ t('rules.save') }}</button></div>
     </div>
     <div v-if="conflict" class="notice space-y-2" role="alert"><p>{{ t('rules.conflict') }}</p><details><summary>{{ t('rules.serverVersion') }}</summary><pre class="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{{ JSON.stringify(conflict,null,2) }}</pre></details><div class="flex flex-wrap gap-2"><button type="button" class="btn" @click="emit('reload')">{{ t('rules.useServer') }}</button><button type="button" class="btn" @click="emit('rebase')">{{ t('rules.rebase') }}</button></div></div>
-    <div class="flex flex-wrap gap-2"><button type="button" class="btn" :aria-pressed="modelValue.mode==='visual'" @click="switchMode('visual')">{{ t('rules.graphical') }}</button><button type="button" class="btn" :aria-pressed="modelValue.mode==='code'" @click="switchMode('code')">{{ t('rules.code') }}</button><button type="button" class="btn" :disabled="validating||busy" @click="validate">{{ t('rules.validate') }}</button></div>
+    <div class="flex flex-wrap gap-2"><button type="button" class="btn" :aria-pressed="modelValue.mode==='steps'" @click="switchMode('steps')">{{ locale==='zh-CN'?'步骤':'Steps' }}</button><button type="button" class="btn" :aria-pressed="modelValue.mode==='visual'" @click="switchMode('visual')">{{ t('rules.graphical') }}</button><button type="button" class="btn" :aria-pressed="modelValue.mode==='code'" @click="switchMode('code')">{{ t('rules.code') }}</button><button type="button" class="btn" :disabled="validating||busy" @click="validate">{{ t('rules.validate') }}</button></div>
     <div v-if="shownErrors.length" class="rounded border border-red-500 p-3 text-xs text-red-500" role="alert"><h3 class="font-medium">{{ t('rules.errors') }}</h3><div v-for="(error,index) in shownErrors" :key="index" class="mt-1 break-words"><button type="button" class="text-left underline" @click="focusPath(error.path)">{{ error.code?.startsWith('graph.') ? t(`rules.${error.code}`) : t('rules.canvas.error') }}</button><details><summary>{{ t('rules.canvas.details') }}</summary><code>{{ error.path||'/' }}</code>: {{ error.message }}</details></div></div>
-    <template v-if="modelValue.mode==='visual'">
+    <template v-if="modelValue.mode==='steps'">
+      <p class="notice text-xs">{{ locale==='zh-CN'?'客户端输入 → 请求构建 → 路由前规则 → 协议字段 → 账号选择 → 请求头 → 发送；响应事件 → 流式输出或正文聚合。':'Client input → request construction → request rules → protocol fields → account selection → headers → send; response events → stream or aggregate.' }}</p>
+      <div class="grid gap-3 sm:grid-cols-2"><RuleField v-for="field in schema.rule_fields.filter(f=>!f.readonly && !['when','actions','schema_version'].includes(f.name))" :key="field.name" :field="field" :model-value="(rule as unknown as Record<string,unknown>)[field.name]" :schema="schema" :path="`/${field.name}`" :errors="modelValue.errors" @update:model-value="updateField(field.name,$event)" /></div>
+      <ConditionEditor :model-value="rule.when" :schema="schema" path="/when" :errors="modelValue.errors" :sample="sample" @update:model-value="updateField('when',$event)" />
+      <ActionEditor :model-value="rule.actions" :schema="schema" :phase="rule.phase" :errors="modelValue.errors" :sample="sample" @update:model-value="updateField('actions',$event)" />
+    </template>
+    <template v-else-if="modelValue.mode==='visual'">
       <div class="grid items-start gap-3 sm:grid-cols-[minmax(12rem,1fr)_minmax(8rem,.6fr)_auto]"><RuleField v-for="field in topFields" :key="field.name" :field="field" :model-value="(rule as unknown as Record<string,unknown>)[field.name]" :schema="schema" :path="`/${field.name}`" :errors="modelValue.errors" @update:model-value="updateField(field.name,$event)" /></div>
       <div class="canvas-editor-layout" :class="{'has-parameters':panelOpen}">
         <RuleCanvas ref="canvas" :model-value="graph" :schema="schema" :diagnostics="diagnosticLabels" :errors="[...modelValue.errors,...graphProblems]" :sample="sample" :can-undo="!!modelValue.graphUndo?.length" :can-redo="!!modelValue.graphRedo?.length" @update:model-value="updateGraph" @edit="updateNodeById" @advanced="openAdvanced" @edit-start="beginNodeEdit" @edit-end="endNodeEdit" @undo="undo()" @redo="undo(true)" />

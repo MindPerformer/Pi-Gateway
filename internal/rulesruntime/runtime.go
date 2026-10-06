@@ -37,15 +37,21 @@ func (s *Service) Ensure(ctx context.Context) error {
 		return err
 	}
 	if version > 0 {
-		return nil
+		return s.upgrade(ctx)
 	}
 	_, err = s.store.InitializeRules(ctx, ConvertLegacy, ValidateSnapshot)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.upgrade(ctx)
 }
 
 // Load checks the shared version on every new request, but never per response
 // frame. A storage error is reported rather than silently using a revoked rule.
 func (s *Service) Load(ctx context.Context) (*rules.Engine, int64, error) {
+	if err := s.Ensure(ctx); err != nil {
+		return nil, 0, err
+	}
 	version, err := s.store.RuleSetVersion(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -126,6 +132,10 @@ func formatTimestamp(ms int64) string {
 
 // EditableJSON omits read-only metadata from a rule's persisted/editor AST.
 func EditableJSON(definition rules.Rule) (json.RawMessage, error) {
+	definition, err := rules.ExpandRule(definition)
+	if err != nil {
+		return nil, err
+	}
 	raw, err := json.Marshal(definition)
 	if err != nil {
 		return nil, err
@@ -165,8 +175,14 @@ func ConvertLegacy(ctx context.Context, rows []*store.MiddlewareRow) ([]*store.R
 		When: rules.Condition{Op: "always"}, OnError: rules.OnErrorAbort,
 		Actions: []rules.Action{{ID: "drop-image-generation", Type: "drop_tools", Params: map[string]any{"types": []any{"image_generation"}}}},
 	})
+	definitions = append(definitions, rules.DefaultProfile()...)
+	definitions = append(definitions, rules.Rule{SchemaVersion: rules.SchemaVersion, ID: "language-v2-installed", Name: "规则 V2 已安装 / Rules V2 installed", Enabled: false, Phase: rules.PhaseRequest, When: rules.Condition{Op: "always"}, Actions: []rules.Action{}, OnError: rules.OnErrorAbort, Source: "system"})
 	result := make([]*store.RuleRow, 0, len(definitions))
 	for _, definition := range definitions {
+		definition, err = rules.ExpandRule(definition)
+		if err != nil {
+			return nil, err
+		}
 		raw, err := EditableJSON(definition)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrMigration, err)
@@ -174,6 +190,9 @@ func ConvertLegacy(ctx context.Context, rows []*store.MiddlewareRow) ([]*store.R
 		result = append(result, &store.RuleRow{
 			ID: definition.ID, Rule: raw, OrderIndex: definition.OrderIndex,
 			LegacyName: definition.LegacyName, Source: func() string {
+				if definition.Source != "" {
+					return definition.Source
+				}
 				if definition.LegacyName == "" {
 					return "default"
 				}
@@ -182,4 +201,78 @@ func ConvertLegacy(ctx context.Context, rows []*store.MiddlewareRow) ([]*store.R
 		})
 	}
 	return result, nil
+}
+
+// upgrade publishes expansion and protocol defaults atomically under the existing
+// ruleset revision lock. A persisted marker prevents deleted defaults reappearing.
+func (s *Service) upgrade(ctx context.Context) error {
+	installed, err := s.store.RulesV2Installed(ctx)
+	if err != nil {
+		return err
+	}
+	if installed {
+		return nil
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		snapshot, err := s.store.LoadRuleSet(ctx)
+		if err != nil {
+			return err
+		}
+		marker := false
+		for _, row := range snapshot.Rules {
+			if row.ID == "language-v2-installed" {
+				marker = true
+				break
+			}
+		}
+		if marker {
+			return nil
+		}
+		changes := []store.RuleChange{}
+		for _, row := range snapshot.Rules {
+			definition, err := rules.ParseRule(row.Rule)
+			if err != nil {
+				return err
+			}
+			expanded, err := rules.ExpandRule(definition)
+			if err != nil {
+				return err
+			}
+			raw, err := EditableJSON(expanded)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, store.RuleChange{Kind: "update", ID: row.ID, ExpectedRevision: row.Revision, Rule: raw})
+		}
+		for _, definition := range rules.DefaultProfile() {
+			if snapshotHas(snapshot, definition.ID) {
+				continue
+			}
+			raw, err := EditableJSON(definition)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, store.RuleChange{Kind: "create", ID: definition.ID, Rule: raw, Source: "protocol"})
+		}
+		markerRule := rules.Rule{SchemaVersion: rules.SchemaVersion, ID: "language-v2-installed", Name: "规则 V2 已安装 / Rules V2 installed", Enabled: false, Phase: rules.PhaseRequest, When: rules.Condition{Op: "always"}, Actions: []rules.Action{}, OnError: rules.OnErrorAbort}
+		raw, err := EditableJSON(markerRule)
+		if err != nil {
+			return err
+		}
+		changes = append(changes, store.RuleChange{Kind: "create", ID: markerRule.ID, Rule: raw, Source: "system"})
+		_, err = s.store.PublishRules(ctx, &snapshot.Version, changes, ValidateSnapshot)
+		if errors.Is(err, store.ErrRuleConflict) {
+			continue
+		}
+		return err
+	}
+	return store.ErrRuleConflict
+}
+func snapshotHas(s *store.RuleSetSnapshot, id string) bool {
+	for _, r := range s.Rules {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
 }

@@ -103,7 +103,7 @@ func TestRuntimePublicationInvalidationAndPinnedSnapshots(t *testing.T) {
 		if err != nil || version != snapshot.Version || modelFromEngine(t, engine) != "second-published" {
 			t.Fatalf("second instance update: version=%d err=%v", version, err)
 		}
-		invalid := json.RawMessage(strings.Replace(string(rewriteDefinition(t, "invalid")), `"rewrite_model"`, `"unknown_action"`, 1))
+		invalid := json.RawMessage(strings.Replace(string(rewriteDefinition(t, "invalid")), `"sequence"`, `"unknown_action"`, 1))
 		if _, err := first.PublishRules(ctx, nil, []store.RuleChange{{Kind: "create", ID: "invalid", Rule: invalid}}, ValidateSnapshot); err == nil {
 			t.Fatal("invalid candidate was published")
 		}
@@ -166,7 +166,7 @@ func TestRuntimeMigrationRepairConcurrentEnsureAndDeletedRules(t *testing.T) {
 	}
 	wg.Wait()
 	snapshot, err = first.LoadRuleSet(ctx)
-	if err != nil || snapshot.Version != 1 || !snapshot.LegacyMigrated || len(snapshot.Rules) != 9 {
+	if err != nil || snapshot.Version != 1 || !snapshot.LegacyMigrated || len(snapshot.Rules) != 13 {
 		t.Fatalf("migration did not initialize exactly once: %+v err=%v", snapshot, err)
 	}
 	deletions := make([]store.RuleChange, len(snapshot.Rules))

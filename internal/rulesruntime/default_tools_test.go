@@ -24,7 +24,7 @@ func TestDefaultImageExclusionIsAnEditableRule(t *testing.T) {
 			filter = definition
 		}
 	}
-	if !filter.Enabled || len(filter.Actions) != 1 || filter.Actions[0].Type != "drop_tools" {
+	if !filter.Enabled || len(filter.Actions) != 1 || filter.Actions[0].Type != "sequence" {
 		t.Fatalf("missing default rule: %+v", filter)
 	}
 	image := map[string]any{"type": "image_generation"}

@@ -115,7 +115,7 @@ type RulePage struct {
 }
 
 const ruleColumns = `id,rule_json,revision,name,description,phase,enabled,priority,order_index,created_at,updated_at,legacy_name,source`
-const ruleOrder = `CASE phase WHEN 'request' THEN 0 WHEN 'response_event' THEN 1 WHEN 'response_body' THEN 2 ELSE 3 END,priority,order_index,id`
+const ruleOrder = `CASE phase WHEN 'client_request' THEN 0 WHEN 'request_normalize' THEN 1 WHEN 'request' THEN 2 WHEN 'request_finalize' THEN 3 WHEN 'upstream_headers' THEN 4 WHEN 'response_event' THEN 5 WHEN 'response_body' THEN 6 ELSE 7 END,priority,order_index,id`
 
 type ruleScanner interface{ Scan(...any) error }
 
@@ -154,6 +154,11 @@ func (s *Store) LoadRuleSet(ctx context.Context) (*RuleSetSnapshot, error) {
 	snapshot, err := loadRuleSetTx(ctx, tx)
 	if err != nil {
 		return nil, err
+	}
+	if hasV2Marker(snapshot) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -339,6 +344,11 @@ func (s *Store) PublishRules(ctx context.Context, expectedVersion *int64, change
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=?,updated_at=? WHERE singleton=1`, snapshot.Version, snapshot.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if hasV2Marker(snapshot) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -565,7 +575,7 @@ func indexRule(row *RuleRow) error {
 	if strings.TrimSpace(header.Name) == "" {
 		return fmt.Errorf("%w: name is required", ErrRuleInvalid)
 	}
-	if header.Phase != "request" && header.Phase != "response_event" && header.Phase != "response_body" {
+	if header.Phase != "request" && header.Phase != "response_event" && header.Phase != "response_body" && header.Phase != "client_request" && header.Phase != "request_normalize" && header.Phase != "request_finalize" && header.Phase != "upstream_headers" {
 		return fmt.Errorf("%w: invalid phase", ErrRuleInvalid)
 	}
 	row.Name, row.Description, row.Phase = header.Name, header.Description, header.Phase
@@ -574,7 +584,7 @@ func indexRule(row *RuleRow) error {
 }
 
 func sortRules(rows []*RuleRow) {
-	phases := map[string]int{"request": 0, "response_event": 1, "response_body": 2}
+	phases := map[string]int{"client_request": 0, "request_normalize": 1, "request": 2, "request_finalize": 3, "upstream_headers": 4, "response_event": 5, "response_body": 6}
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
 		if a.Phase != b.Phase {
@@ -713,8 +723,27 @@ func (s *Store) InitializeRules(ctx context.Context, convert LegacyRuleConverter
 	if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=?,legacy_migrated=1,legacy_source=?,updated_at=? WHERE singleton=1`, snapshot.Version, string(original), snapshot.UpdatedAt); err != nil {
 		return nil, err
 	}
+	if hasV2Marker(snapshot) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return snapshot, nil
+}
+
+func hasV2Marker(snapshot *RuleSetSnapshot) bool {
+	for _, r := range snapshot.Rules {
+		if r.ID == "language-v2-installed" {
+			return true
+		}
+	}
+	return false
+}
+func (s *Store) RulesV2Installed(ctx context.Context) (bool, error) {
+	var n int
+	err := s.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key='rules.language.v2'`).Scan(&n)
+	return n > 0, err
 }

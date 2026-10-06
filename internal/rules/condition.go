@@ -23,6 +23,13 @@ type evaluation struct {
 	rulePath      string
 	conditions    *conditionCollector
 	unavailable   []string
+	original      any
+	vars          map[string]any
+	steps         *int
+	nestedTraces  *traceCollector
+	traceRule     *compiledRule
+	itemPath      string
+	functions     map[string][]compiledAction
 }
 
 func (s *evaluation) source(source string) any {
@@ -31,6 +38,10 @@ func (s *evaluation) source(source string) any {
 		return s.body
 	case "client":
 		return s.client
+	case "original":
+		return s.original
+	case "vars":
+		return s.vars
 	case "context":
 		facts := make(map[string]any, len(s.facts)+5)
 		for k, v := range s.facts {
@@ -38,9 +49,9 @@ func (s *evaluation) source(source string) any {
 		}
 		facts["model"] = s.model
 		facts["original_model"] = s.originalModel
-		if s.phase != PhaseRequest {
+		if s.phase == PhaseResponseEvent || s.phase == PhaseResponseBody {
 			facts["event_type"] = s.eventType
-		} else {
+		} else if s.phase != PhaseUpstreamHeaders {
 			delete(facts, "account_id")
 			delete(facts, "upstream_protocol")
 			delete(facts, "event_type")
@@ -97,6 +108,9 @@ func (s *evaluation) expression(v any) (any, bool, error) {
 			r := x.(map[string]any)
 			return s.selectValue(stringParam(r, "source"), stringParam(r, "path"), stringParam(r, "encoding"))
 		}
+		if x, exists := m["$expr"]; exists {
+			return s.compute(x.(map[string]any))
+		}
 	}
 	return v, true, nil
 }
@@ -132,6 +146,16 @@ func (c *compiledCondition) evaluate(s *evaluation) (bool, error) {
 		return false, e
 	}
 	switch c.raw.Op {
+	case "test":
+		v, exists, err := s.expression(c.raw.Value)
+		if err != nil || !exists {
+			return false, err
+		}
+		b, ok := v.(bool)
+		if !ok {
+			return false, fmt.Errorf("test expression must produce boolean")
+		}
+		return b, nil
 	case "always":
 		return true, nil
 	case "all":

@@ -2,7 +2,7 @@ package rules
 
 import "encoding/json"
 
-var phases = []string{PhaseRequest, PhaseResponseEvent, PhaseResponseBody}
+var phases = []string{PhaseClientRequest, PhaseRequestNormalize, PhaseRequest, PhaseRequestFinalize, PhaseUpstreamHeaders, PhaseResponseEvent, PhaseResponseBody}
 
 const (
 	MaxDepth                 = 64
@@ -20,7 +20,15 @@ func field(name, typ, label, desc string, def any, required bool, enums ...strin
 	if len(enums) > 0 {
 		control = "select"
 	}
-	return FieldSpec{Name: name, Type: typ, Label: label, Description: desc, Default: def, Required: required, Enum: enums, Control: control}
+	f := FieldSpec{Name: name, Type: typ, Label: label, Description: desc, Default: def, Required: required, Enum: enums, Control: control, Help: map[string]string{"zh-CN": desc, "en": desc}}
+	f.Examples = fieldExamples(f)
+	if len(enums) > 0 {
+		f.EnumHelp = map[string]string{}
+		for _, option := range enums {
+			f.EnumHelp[option] = optionHelp(option)
+		}
+	}
+	return f
 }
 func requiredString(name, label, desc string) FieldSpec {
 	f := field(name, "string", label, desc, nil, true)
@@ -40,13 +48,13 @@ func regexFields() []FieldSpec {
 }
 func selectorFields() []FieldSpec {
 	return []FieldSpec{
-		field("source", "string", "来源 / Source", "current 当前载荷；client 只读原始请求；context 上下文；item 仅数组谓词可用。", "current", false, "current", "client", "context", "item"),
+		field("source", "string", "来源 / Source", "current 当前载荷；original 阶段原始输入；client 原始请求；context 只读事实；vars 局部变量；item 当前遍历元素。", "current", false, "current", "original", "client", "context", "vars", "item"),
 		ptr("path", false),
 		field("encoding", "string", "取值方式 / Encoding", "value 保留原 JSON 类型；json 显式序列化为紧凑 JSON 字符串（字符串含引号）。", "value", false, "value", "json"),
 	}
 }
 func actionCapabilities() []Capability {
-	req := []string{PhaseRequest}
+	req := []string{PhaseClientRequest, PhaseRequestNormalize, PhaseRequest, PhaseRequestFinalize}
 	all := phases
 	missing := field("on_missing", "string", "缺失路径 / Missing path", "ignore 不操作；error 使整条规则回滚。", "ignore", false, "ignore", "error")
 	parents := field("create_parents", "boolean", "创建父对象 / Create parents", "缺失父节点创建为对象，不猜测数组；已有标量父节点始终报错。", false, false)
@@ -75,10 +83,15 @@ func actionCapabilities() []Capability {
 			}
 		}
 	}
-	return caps
+	for i := range caps {
+		if isLegacyAction(caps[i].ID) {
+			caps[i].Deprecated = true
+		}
+	}
+	return append(caps, flowCapabilities()...)
 }
 func conditionCapabilities() []Capability {
-	out := []Capability{{ID: "always", Label: "始终 / Always", Description: "显式无条件匹配；不能附加任何字段。", Phases: phases, Fields: []FieldSpec{}}}
+	out := []Capability{{ID: "test", Label: "计算条件 / Expression test", Description: "表达式结果必须为布尔值；支持动态下标和变量。", Phases: phases, Fields: []FieldSpec{field("value", "value", "表达式 / Expression", "例如 {$expr:{op:eq,args:[1,1]}}；结果为 true 才成立。", nil, true)}}, {ID: "always", Label: "始终 / Always", Description: "显式无条件匹配；不能附加任何字段。", Phases: phases, Fields: []FieldSpec{}}}
 	for _, op := range []string{"all", "any", "not"} {
 		out = append(out, Capability{ID: op, Label: map[string]string{"all": "全部 / All", "any": "任一 / Any", "not": "取反 / Not"}[op], Description: "all/any 必须非空；not 必须恰好一个子条件。", Phases: phases, Fields: []FieldSpec{field("conditions", "condition_array", "子条件 / Conditions", "递归条件列表，最多 64 层、每条规则最多 1024 条件节点。", nil, true)}})
 	}
@@ -106,7 +119,7 @@ func conditionCapabilities() []Capability {
 // Catalog returns a detached schema. The same capability constructors drive validation.
 func Catalog() CatalogSpec {
 	fields := []FieldSpec{
-		bounded(field("schema_version", "integer", "版本 / Version", "固定为 1。", 1, true), 1, 1), field("id", "string", "规则 ID / ID", "服务端生成稳定 ID，草稿允许为空。", "", false), field("name", "string", "名称 / Name", "名称可重复，非空。", nil, true), field("description", "string", "说明 / Description", "可选说明。", "", false), field("enabled", "boolean", "启用 / Enabled", "关闭的规则仍需通过校验。", true, false), bounded(field("priority", "integer", "优先级 / Priority", "越小越先执行。", 100, false), -2147483648, 2147483647), bounded(field("order_index", "integer", "同优先级顺序 / Order", "服务端管理的稳定顺序；再按 ID 排序。", 0, false), -MaxSafeInteger, MaxSafeInteger), field("phase", "string", "阶段 / Phase", "响应 delta 与最终快照分别执行，不自动同步。", PhaseRequest, true, phases...), field("when", "condition", "条件 / When", "显式使用 always 表示无条件。", nil, true), field("actions", "action_array", "动作 / Actions", "按顺序执行；空数组明确不操作。", []any{}, true), field("stop_after_match", "boolean", "命中后停止 / Stop", "成功执行（包括无变化）后停止当前阶段。", false, false), field("on_error", "string", "错误策略 / On error", "abort 返回错误；skip_rule 原子回滚整条规则后继续。", OnErrorAbort, false, OnErrorAbort, OnErrorSkipRule), bounded(field("revision", "integer", "修订号 / Revision", "服务端乐观并发版本。", 0, false), 0, MaxSafeInteger), field("created_at", "string", "创建时间 / Created", "服务端 RFC3339。", "", false), field("updated_at", "string", "更新时间 / Updated", "服务端 RFC3339。", "", false), field("legacy_name", "string", "迁移来源 / Legacy name", "旧中间件名称，仅用于兼容关联。", "", false), field("source", "string", "来源 / Source", "服务端管理的来源元数据，不参与执行。", "", false),
+		bounded(field("schema_version", "integer", "版本 / Version", "新规则使用 2；旧版本 1 自动展开兼容动作。", 2, true), 1, 2), field("id", "string", "规则 ID / ID", "服务端生成稳定 ID，草稿允许为空。", "", false), field("name", "string", "名称 / Name", "名称可重复，非空。", nil, true), field("description", "string", "说明 / Description", "可选说明。", "", false), field("enabled", "boolean", "启用 / Enabled", "关闭的规则仍需通过校验。", true, false), bounded(field("priority", "integer", "优先级 / Priority", "越小越先执行。", 100, false), -2147483648, 2147483647), bounded(field("order_index", "integer", "同优先级顺序 / Order", "服务端管理的稳定顺序；再按 ID 排序。", 0, false), -MaxSafeInteger, MaxSafeInteger), field("phase", "string", "阶段 / Phase", "响应 delta 与最终快照分别执行，不自动同步。", PhaseRequest, true, phases...), field("when", "condition", "条件 / When", "显式使用 always 表示无条件。", nil, true), field("actions", "action_array", "动作 / Actions", "按顺序执行；空数组明确不操作。", []any{}, true), field("stop_after_match", "boolean", "命中后停止 / Stop", "成功执行（包括无变化）后停止当前阶段。", false, false), field("on_error", "string", "错误策略 / On error", "abort 返回错误；skip_rule 原子回滚整条规则后继续。", OnErrorAbort, false, OnErrorAbort, OnErrorSkipRule), bounded(field("revision", "integer", "修订号 / Revision", "服务端乐观并发版本。", 0, false), 0, MaxSafeInteger), field("created_at", "string", "创建时间 / Created", "服务端 RFC3339。", "", false), field("updated_at", "string", "更新时间 / Updated", "服务端 RFC3339。", "", false), field("legacy_name", "string", "迁移来源 / Legacy name", "旧中间件名称，仅用于兼容关联。", "", false), field("source", "string", "来源 / Source", "服务端管理的来源元数据，不参与执行。", "", false),
 	}
 	ctx := []FieldSpec{}
 	for _, x := range []struct{ name, typ, desc string }{{"original_model", "string", "规则执行前模型，只读。"}, {"model", "string", "当前模型。"}, {"request_path", "string", "请求路径；由 API 提供。"}, {"request_method", "string", "HTTP 方法；由 API 提供。"}, {"api_key_id", "integer", "鉴权后 API Key ID。"}, {"client_protocol", "string", "客户端协议。"}, {"account_id", "integer", "仅响应阶段可用，request 禁止引用。"}, {"upstream_protocol", "string", "仅响应阶段可用。"}, {"event_type", "string", "仅响应阶段可用。"}, {"item_index", "integer", "仅数组谓词可用，原始下标。"}} {
@@ -117,6 +130,8 @@ func Catalog() CatalogSpec {
 		{ID: "reference", Label: "引用 / Reference", Description: "序列化为 {$ref:{source,path,encoding}}；不存在的引用在动作中报错回滚，在条件中不匹配。", Phases: phases, Fields: selectorFields()},
 		{ID: "literal_escape", Label: "显式字面量 / Literal escape", Description: "序列化为 {$literal:值}，值内部永不求值。", Phases: phases, Fields: []FieldSpec{field("value", "value", "值 / Value", "完整保留含表达式保留键的对象。", nil, true)}},
 	}, ContextFields: ctx, Examples: catalogExamples(), Limits: map[string]int{"max_depth": MaxDepth, "max_condition_nodes_per_rule": MaxConditionNodes, "max_actions_per_rule": MaxActionsPerRule, "max_payload_bytes": MaxPayloadBytes, "max_rule_bytes": MaxRuleBytes, "max_trace_changes_per_action": MaxTraceChanges, "max_trace_value_bytes": MaxTraceValueBytes}}
+	spec.Examples = append(spec.Examples, DefaultProfile()...)
+	spec.ValueExpressions = append(spec.ValueExpressions, computedCapabilities()...)
 	// Also detach nested enum/default/phase slices from the immutable validator schema.
 	raw, err := json.Marshal(spec)
 	if err != nil {
@@ -133,13 +148,13 @@ func catalogExamples() []Rule {
 		return Rule{SchemaVersion: 1, ID: id, Name: id, Enabled: true, Priority: 100, Phase: phase, When: when, Actions: actions, OnError: OnErrorAbort}
 	}
 	return []Rule{
-		base("example-model", PhaseRequest, Condition{Op: "eq", Source: "context", Path: "/model", Value: "old-model"}, Action{ID: "rewrite", Type: "rewrite_model", Params: map[string]any{"model": "new-model"}}),
+		base("example-model", PhaseRequest, Condition{Op: "eq", Source: "context", Path: "/model", Value: "old-model"}, Action{ID: "rewrite", Type: "json_set", Params: map[string]any{"path": "/model", "value": "new-model"}}),
 		base("example-block", PhaseRequest, Condition{Op: "regex", Source: "current", Encoding: "json", Value: "secret", CaseInsensitive: true}, Action{ID: "reject", Type: "reject_request", Params: map[string]any{"status": 403, "message": "request blocked by rule policy"}}),
 		base("example-event", PhaseResponseEvent, Condition{Op: "eq", Source: "context", Path: "/event_type", Value: "response.output_text.delta"}, Action{ID: "replace", Type: "text_replace", Params: map[string]any{"path": "/delta", "match": "regex", "pattern": "(hello)", "replacement": "${1}!"}}),
 		base("example-filter", PhaseRequest, Condition{Op: "always"}, Action{ID: "filter", Type: "array_filter", Params: map[string]any{"path": "/input", "predicate": map[string]any{"op": "eq", "source": "item", "path": "/type", "value": "reasoning"}}}),
 		base("example-copy", PhaseRequest, Condition{Op: "exists", Source: "client", Path: "/metadata"}, Action{ID: "copy", Type: "json_set", Params: map[string]any{"path": "/metadata", "value": map[string]any{"$ref": map[string]any{"source": "client", "path": "/metadata"}}}}),
-		base("example-tools", PhaseRequest, Condition{Op: "always"}, Action{ID: "drop", Type: "drop_tools", Params: map[string]any{"names": []any{"dangerous"}}}),
-		base("example-multi", PhaseRequest, Condition{Op: "eq", Source: "context", Path: "/api_key_id", Value: 7}, Action{ID: "set", Type: "json_set", Params: map[string]any{"path": "/metadata/policy", "value": "safe", "create_parents": true}}, Action{ID: "reasoning", Type: "set_reasoning", Params: map[string]any{"effort": "low"}}),
+		base("example-tools", PhaseRequest, Condition{Op: "always"}, Action{ID: "drop", Type: "array_filter", Params: map[string]any{"path": "/tools", "predicate": map[string]any{"op": "eq", "source": "item", "path": "/name", "value": "dangerous"}}}),
+		base("example-multi", PhaseRequest, Condition{Op: "eq", Source: "context", Path: "/api_key_id", Value: 7}, Action{ID: "set", Type: "json_set", Params: map[string]any{"path": "/metadata/policy", "value": "safe", "create_parents": true}}, Action{ID: "reasoning", Type: "json_set", Params: map[string]any{"path": "/reasoning/effort", "value": "low", "create_parents": true}}),
 		base("example-terminal", PhaseRequest, Condition{Op: "always"}, Action{ID: "reject", Type: "reject_request", Params: map[string]any{"status": 403, "message": "policy denied"}}),
 		base("example-body", PhaseResponseBody, Condition{Op: "always"}, Action{ID: "replace", Type: "text_replace", Params: map[string]any{"path": "/output_text", "match": "literal", "pattern": "secret", "replacement": "redacted"}}),
 	}

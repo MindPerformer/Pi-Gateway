@@ -160,15 +160,16 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	headerHints := []string{r.Header.Get("x-client-request-id"), r.Header.Get("session-id"), r.Header.Get("session_id"), r.Header.Get("x-session-id")}
 	sessionID := piwire.DeriveSessionID(clientBody, headerHints, func() string { return internalSessionID(ctx) })
 	promptCacheKey := piwire.DeriveSessionID(clientBody, headerHints, nil)
-	built, err := rulescapture.NormalizeRequest(clientBody, rt, promptCacheKey)
-	if err != nil {
-		return nil, &apiError{Status: http.StatusBadRequest, Message: err.Error(), Type: "invalid_request_error"}
+	engine, version, err := s.ruleService.Load(ctx)
+	if err != nil && !errors.Is(err, rulesruntime.ErrMigration) {
+		return nil, ruleAPIError("could not load rules")
 	}
+	built := &piwire.BuiltRequest{}
 	p := &prepared{
-		Key: key, ClientBody: clientBody, ClientHeaders: r.Header.Clone(), Built: built, SessionID: sessionID,
+		RuleEngine: engine, RuleVersion: version, Key: key, ClientBody: clientBody, ClientHeaders: r.Header.Clone(), Built: built, SessionID: sessionID,
 		WireSessionID: promptCacheKey, PoolSessionID: poolSessionID(ctx, sessionID),
 		WantsStream: wantsStream(clientBody), RawRequestBody: rawBody,
-		RuleContext: map[string]any{"original_model": built.Model, "model": built.Model,
+		RuleContext: map[string]any{"original_model": clientBody["model"], "model": clientBody["model"], "settings": s.ruleSettings(rt), "wire_session_id": promptCacheKey, "client_headers": rules.RedactedHeaders(r.Header),
 			"api_key_id": key.ID, "client_protocol": clientTransport,
 			"request_path": r.URL.Path, "request_method": r.Method},
 	}
@@ -176,21 +177,50 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		p.Recorder = s.newRecorder(key, nil, clientTransport, "", built)
 		p.Recorder.OnClientRequest(r.Header, rawBody)
 	}
+	if engine != nil {
+		initial, err := p.applyPipeline(ctx, rules.PhaseClientRequest, clientBody)
+		if err != nil {
+			return p, pipelineAPIError(err)
+		}
+		normalized, err := p.applyPipeline(ctx, rules.PhaseRequestNormalize, initial.Body)
+		if err != nil {
+			return p, pipelineAPIError(err)
+		}
+		built.Body, err = ruleOrderedBody(normalized.Body, nil)
+		if err != nil {
+			return p, ruleAPIError(err.Error())
+		}
+		m, _ := built.Body.Get("model")
+		built.Model, _ = m.(string)
+		if strings.TrimSpace(built.Model) == "" {
+			return p, &apiError{Status: 400, Message: "no model specified and no default model configured", Type: "invalid_request_error"}
+		}
+		built.JSON, err = json.Marshal(built.Body)
+		if err != nil {
+			return p, ruleAPIError(err.Error())
+		}
+		p.RuleContext["model"] = built.Model
+	} else {
+		built, err = rulescapture.NormalizeRequest(clientBody, rt, promptCacheKey)
+		if err != nil {
+			return p, ruleAPIError(err.Error())
+		}
+		p.Built = built
+	}
 	if apiErr := s.applyRequestRules(ctx, p); apiErr != nil {
 		return p, apiErr
 	}
 
-	// Enforce transport invariants independently of user rules, with a distinct
-	// provenance record so a later repair is not blamed on the last user rule.
-	beforeShape, _ := json.Marshal(built.Body)
-	shapeChanges := piwire.EnforcePiShape(built.Body)
-	built.JSON, err = json.Marshal(built.Body)
-	if err != nil {
-		return p, &apiError{Status: http.StatusInternalServerError, Message: "could not encode rule-transformed request", Type: "server_error", Code: "rule_error"}
-	}
-	if len(shapeChanges) > 0 {
-		p.MW.Changes = append(p.MW.Changes, shapeChanges...)
-		p.recordGatewayDifference("pi_shape", "Pi protocol invariants", beforeShape, built.JSON)
+	if engine != nil {
+		if err := p.finalizeRules(ctx); err != nil {
+			return p, pipelineAPIError(err)
+		}
+	} else {
+		piwire.EnforcePiShape(built.Body)
+		built.JSON, err = json.Marshal(built.Body)
+		if err != nil {
+			return p, ruleAPIError(err.Error())
+		}
 	}
 	built.SessionID = sessionID
 	rawPrevious, _ := built.Body.Get("previous_response_id")

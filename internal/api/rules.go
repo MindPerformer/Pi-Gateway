@@ -20,7 +20,11 @@ import (
 )
 
 func (s *Server) applyRequestRules(ctx context.Context, p *prepared) *apiError {
-	engine, version, err := s.ruleService.Load(ctx)
+	engine, version := p.RuleEngine, p.RuleVersion
+	var err error
+	if engine == nil {
+		engine, version, err = s.ruleService.Load(ctx)
+	}
 	if err != nil {
 		if errors.Is(err, rulesruntime.ErrMigration) {
 			// A failed conversion must not disable the legacy policy. Keep it live
@@ -211,6 +215,13 @@ func ruleOrderedBody(body any, previous *piwire.OrderedMap) (*piwire.OrderedMap,
 		return nil, fmt.Errorf("expected a JSON object")
 	}
 	ordered := piwire.NewOrderedMap()
+	if previous == nil {
+		for _, key := range piwire.PreferredKeyOrder {
+			if value, exists := object[key]; exists {
+				ordered.Set(key, value)
+			}
+		}
+	}
 	if previous != nil {
 		for _, key := range previous.Keys() {
 			if value, exists := object[key]; exists {

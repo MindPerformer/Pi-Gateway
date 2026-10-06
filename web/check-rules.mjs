@@ -51,14 +51,14 @@ for (const value of [null, false, true, 0, 0.125, Number.MAX_SAFE_INTEGER, 'two\
         constructor: null
     }
 }, JSON.parse('{"__proto__":{"safe":true},"":[]}')]) assert.deepEqual(modules.safeParseJSON(JSON.stringify(value)), value)
-assert.throws(() => modules.adaptSchema({...backend, schema_version: 2}))
+assert.throws(() => modules.adaptSchema({...backend, schema_version: 3}))
 assert.throws(() => modules.adaptSchema({
     ...backend,
     actions: [...backend.actions, {id: 'future_unknown_action', fields: []}]
 }))
 assert.throws(() => modules.adaptSchema({
     ...backend,
-    actions: backend.actions.map((cap, i) => i ? cap : {
+    actions: backend.actions.map((cap) => cap.id!=='json_set' ? cap : {
         ...cap,
         fields: [...cap.fields, {name: 'future_unknown_parameter', type: 'string'}]
     })
@@ -80,8 +80,8 @@ for (const capability of [...backend.conditions, ...backend.actions, ...backend.
 for (const field of backend.context_fields) checkField(field, 'context_fields')
 assert.equal(new Set(backend.actions.map(x => x.id)).size, backend.actions.length, 'duplicate backend action IDs')
 assert.equal(new Set(backend.conditions.map(x => x.id)).size, backend.conditions.length, 'duplicate backend condition IDs')
-assert.equal(backend.actions.length, 15, 'backend action coverage changed; update UI intentionally')
-assert.equal(backend.conditions.length, 21, 'backend condition coverage changed; update UI intentionally')
+assert.equal(backend.actions.length, 22, 'backend action coverage changed; update UI intentionally')
+assert.equal(backend.conditions.length, 22, 'backend condition coverage changed; update UI intentionally')
 const examples = (backend.examples ?? []).map(example => {
     const normalized = {...example};
     delete normalized.id;
@@ -113,9 +113,9 @@ if (missing.length) {
             assert.ok(rendered.description.en.trim() && rendered.description['zh-CN'].trim())
         }
     }
-    for (const section of ['actions', 'conditions', 'value_expressions']) for (const raw of backend[section]) {
+    for (const section of ['actions', 'conditions', 'value_expressions']) for (const raw of backend[section].filter(c=>!c.deprecated)) {
         const rendered = schema[section].find(c => c.id === raw.id);
-        assert.ok(rendered);
+        assert.ok(rendered,raw.id);
         assert.deepEqual(rendered.fields.map(f => f.name), raw.fields.map(f => f.name));
         assert.deepEqual(rendered.phases, raw.phases)
         for (const f of raw.fields) {

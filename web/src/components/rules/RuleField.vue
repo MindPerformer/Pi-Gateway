@@ -7,9 +7,11 @@ import { moveItem } from '../../utils/ruleEditor'
 import { ruleLabel, ruleOptionLabel } from '../../utils/ruleLabels'
 import { samplePathOptions } from '../../utils/samplePaths'
 import ValueEditor from './ValueEditor.vue'
+import ParameterHelp from './ParameterHelp.vue'
+import ActionEditor from './ActionEditor.vue'
 import ConditionEditor from './ConditionEditor.vue'
 
-const props = defineProps<{ field: RuleField; modelValue: unknown; path: string; schema: RuleSchema; errors?: RuleFieldError[]; sample?: unknown; compact?: boolean; idPrefix?: string }>()
+const props = defineProps<{ field: RuleField; modelValue: unknown; path: string; schema: RuleSchema; errors?: RuleFieldError[]; sample?: unknown; phase?: string; compact?: boolean; idPrefix?: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>()
 const { t, locale } = useI18n()
 const set = (value: unknown) => emit('update:modelValue', value)
@@ -44,7 +46,7 @@ function numberInput(event: Event) {
 <template>
   <div class="space-y-1.5" :class="{'rule-field-compact': compact}" :data-rule-path="path" :data-renderer="field.type">
     <div class="flex flex-wrap items-center gap-2">
-      <label :id="`${controlId}-label`" :for="controlId" class="text-[12px] font-medium" :title="compact ? localHelp(field.description, locale) : undefined">{{ ruleLabel('field', field.name, locale) }}</label>
+      <label :id="`${controlId}-label`" :for="controlId" class="text-[12px] font-medium" :title="compact ? localHelp(field.description, locale) : undefined">{{ field.label?.split(' / ')[locale==='zh-CN'?0:1] ?? ruleLabel('field', field.name, locale) }}</label><ParameterHelp :field="field" />
       <span v-if="!compact" class="text-[10px] text-[color:var(--color-ink-faint)]">{{ field.required ? t('rules.required') : t('rules.optional') }} · {{ ruleOptionLabel(field.type, locale) }}</span>
       <span v-else-if="field.required" class="text-[10px] text-[color:var(--color-ink-faint)]">{{ t('rules.required') }}</span>
       <button v-if="!field.required && !field.readonly" class="btn btn-ghost !px-1.5 !py-0.5 text-[10px]" type="button" @click="set(modelValue === undefined ? defaultForField(field) : undefined)">{{ modelValue === undefined ? t('rules.include') : t('rules.unset') }}</button>
@@ -88,6 +90,7 @@ function numberInput(event: Event) {
         <button type="button" class="btn btn-ghost" @click="set([...items, field.type === 'strings' ? '' : null])">{{ t('rules.addItem') }}</button>
       </div>
     </template>
+    <ActionEditor v-if="field.type === 'action_array'" :model-value="(modelValue ?? []) as import('../../api/rules').RuleAction[]" :schema="schema" :phase="phase ?? 'request'" :base-path="path" :errors="errors" :sample="sample" @update:model-value="set" />
     <p v-for="error in fieldErrors" :key="error.path + error.message" class="text-xs text-red-500" role="alert">{{ error.path }}: {{ error.message }}</p>
   </div>
 </template>

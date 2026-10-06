@@ -22,7 +22,7 @@ func TestExportCatalog(t *testing.T) {
 
 func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {
 	c := Catalog()
-	if len(c.Actions) != 15 || len(c.Conditions) != 21 {
+	if len(c.Actions) != 22 || len(c.Conditions) != 22 {
 		t.Fatalf("capability count %d/%d", len(c.Actions), len(c.Conditions))
 	}
 	seen := map[string]bool{}
@@ -40,7 +40,7 @@ func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {
 				t.Fatalf("incomplete field %s/%s", a.ID, f.Name)
 			}
 			fields[f.Name] = true
-			if !contains([]string{"string", "pointer", "boolean", "integer", "string_array", "pointer_array", "value", "value_array", "condition", "condition_array"}, f.Type) {
+			if !contains([]string{"string", "pointer", "boolean", "integer", "string_array", "pointer_array", "value", "value_array", "condition", "condition_array", "action_array"}, f.Type) {
 				t.Fatalf("unrenderable field %s", f.Type)
 			}
 		}
@@ -55,10 +55,16 @@ func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {
 			}
 		}
 	}
-	if len(c.ValueExpressions) != 3 || len(c.ContextFields) == 0 {
+	if len(c.ValueExpressions) != 4 || len(c.ContextFields) == 0 {
 		t.Fatal("missing expression or context schema")
 	}
 	for _, r := range c.Examples {
+		if r.Source == "protocol" {
+			if _, err := Compile([]Rule{r}); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
 		t.Run(r.ID, func(t *testing.T) {
 			raw, e := json.Marshal(r)
 			if e != nil {

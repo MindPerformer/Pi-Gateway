@@ -10,6 +10,7 @@ import (
 
 	"pi-gateway/internal/capture"
 	"pi-gateway/internal/piwire"
+	"pi-gateway/internal/rulescapture"
 	"pi-gateway/internal/store"
 	"pi-gateway/internal/upstream"
 )
@@ -265,10 +266,7 @@ func (s *Server) serveAggregated(w http.ResponseWriter, ctx context.Context, p *
 	}
 
 	// The terminal event wraps the response object; the OpenAI shape is the inner one.
-	payload := terminal
-	if resp, ok := terminal["response"].(map[string]any); ok {
-		payload = resp
-	}
+	payload := rulescapture.AggregatePayload(terminal)
 	var transformErr error
 	payload, transformErr = p.transformResponseBody(ctx, payload)
 	if transformErr != nil {

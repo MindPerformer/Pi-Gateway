@@ -23,6 +23,7 @@ import (
 	"pi-gateway/internal/middleware"
 	"pi-gateway/internal/piwire"
 	"pi-gateway/internal/rules"
+	"pi-gateway/internal/rulescapture"
 	"pi-gateway/internal/rulesruntime"
 	"pi-gateway/internal/session"
 	"pi-gateway/internal/settings"
@@ -157,11 +158,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	headerHints := []string{r.Header.Get("x-client-request-id"), r.Header.Get("session-id"), r.Header.Get("session_id"), r.Header.Get("x-session-id")}
 	sessionID := piwire.DeriveSessionID(clientBody, headerHints, func() string { return internalSessionID(ctx) })
 	promptCacheKey := piwire.DeriveSessionID(clientBody, headerHints, nil)
-	built, err := piwire.BuildRequest(clientBody, piwire.BuildOptions{
-		DefaultModel: rt.DefaultModel, ModelMappings: rt.ModelMappings,
-		DefaultReasoningEffort: rt.ReasoningEffort, DefaultReasoningSummary: rt.ReasoningSummary,
-		SessionID: promptCacheKey, ExtraFields: extraFieldsFrom(rt),
-	})
+	built, err := rulescapture.NormalizeRequest(clientBody, rt, promptCacheKey)
 	if err != nil {
 		return nil, &apiError{Status: http.StatusBadRequest, Message: err.Error(), Type: "invalid_request_error"}
 	}

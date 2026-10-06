@@ -29,6 +29,12 @@ export async function checkRuleComponents(schema) {
         plugins: [{
             name: 'sfc', setup(plugin) {
                 plugin.onLoad({filter: /\.vue$/}, async ({path}) => {
+                    // Vue Flow and capture loading require real browser DOM/router; tested in Playwright.
+                    // This renderer still exercises the real RuleEditor and every schema form control.
+                    if (/[/\\](RuleCanvas|CaptureRuleDebugger)\.vue$/.test(path)) return {
+                        contents: 'export default {render(){return null}}',
+                        loader: 'js'
+                    }
                     const {descriptor} = parse(await readFile(path, 'utf8'), {filename: path})
                     const compiled = compileScript(descriptor, {
                         id: path,
@@ -284,6 +290,8 @@ export async function checkRuleComponents(schema) {
         assert.equal(editor.state.value.mode, 'visual', JSON.stringify(editor.state.value.errors))
         assert.deepEqual(normalized(editor.state.value.rule), normalized(fixture))
         const changedDescription = `graph edit ${roundtrips}\nmultiline`
+        assert.ok(!walk(editor.host).some(n => n.props.id === 'rule-field-/description'), 'advanced parameters start closed')
+        await clickLabel(editor.host, 'Node parameters')
         await fire(control(editor.host, n => n.type === 'textarea' && n.props.id === 'rule-field-/description'), 'onInput', changedDescription)
         await clickLabel(editor.host, 'JSON code')
         assert.deepEqual(components.safeParseJSON(editor.state.value.code), normalized({

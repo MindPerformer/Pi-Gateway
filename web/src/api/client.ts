@@ -32,6 +32,7 @@ import type {
 } from './types'
 import {translateNow} from '../i18n'
 import type {BackendRuleSchema} from '../utils/ruleSchemaAdapter'
+import type {CaptureSimulationRequest, CaptureSimulationResponse} from './ruleSimulation'
 
 const TOKEN_KEY = 'pi-gateway-token'
 
@@ -441,6 +442,11 @@ export const api = {
             errors?: Array<{ path: string; message: string }>;
             error?: string
         }>('/api/rules/simulate', {method: 'POST', body: JSON.stringify(payload)})
+    },
+    async simulateCapture(payload: CaptureSimulationRequest, signal?: AbortSignal) {
+        return request<CaptureSimulationResponse>('/api/rules/simulate-capture', {
+            method: 'POST', body: JSON.stringify(payload), signal,
+        })
     },
     async listMiddlewares() {
         return request<{ middlewares: Middleware[] }>('/api/middlewares')

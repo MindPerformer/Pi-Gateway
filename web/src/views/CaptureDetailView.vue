@@ -13,12 +13,16 @@ import CaptureDiff from '../components/capture/CaptureDiff.vue'
 import CaptureStreamPanel from '../components/capture/CaptureStreamPanel.vue'
 import RuleTracePanel from '../components/capture/RuleTracePanel.vue'
 import { useCaptureLocale, type CaptureTextKey } from '../components/capture/captureLocale'
+import { useRuleDebugLocale } from '../components/rules/ruleDebugLocale'
+import { ruleLabel } from '../utils/ruleLabels'
+import { traceRuleName } from '../utils/ruleTracePresentation'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToastStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { c } = useCaptureLocale()
+const { d } = useRuleDebugLocale()
 const capture = ref<Capture | null>(null)
 const loading = ref(true)
 const tab = ref<'timeline' | 'request' | 'response' | 'raw'>('timeline')
@@ -49,11 +53,13 @@ const tabs = computed(() => [
 	{ key: 'response', label: c('headers') }, { key: 'raw', label: c('streams') },
 ])
 function direction(frame: CaptureFrame) {
-	if (frame.kind === 'note') return c('internal')
+	if (frame.kind === 'note' || frame.dir === 'internal') return c('internal')
 	const names: Record<string, CaptureTextKey> = { client_in: 'clientIn', out: 'upstreamOut', in: 'upstreamIn', client_out: 'clientOut' }
 	return c(Object.prototype.hasOwnProperty.call(names, frame.dir) ? names[frame.dir]! : 'unknownDirection')
 }
 function frameLabel(frame: CaptureFrame) {
+	if (frame.kind === 'rule_input') return d('internalInput')
+	if (frame.kind === 'rule_context') return ruleLabel('source', 'context', locale.value)
 	const names: Record<string, CaptureTextKey> = { note: 'note', sse_event: 'sseEvent', ws_frame: 'wsFrame', ws_binary: 'wsFrame', ws_close: 'wsClose', ws_error: 'wsError', http_error_body: 'httpError', http_response: 'httpResponse', request_body: 'requestBody', handshake_request: 'requestHead', handshake_response: 'responseHead' }
 	return Object.prototype.hasOwnProperty.call(names, frame.kind) ? c(names[frame.kind]!) : frame.kind || c('frame')
 }
@@ -76,11 +82,9 @@ function preview(frame: CaptureFrame) {
 	return payloadPreview(frameSnapshot(frame).value)
 }
 function sourceLabel(trace: CaptureRuleTrace) {
-	const name = trace.source_kind === 'gateway' ? `${t('capture.rules.gateway')}: ${trace.rule_name || trace.rule_id}` : trace.rule_name || trace.rule_id || c('unrecorded')
-	const action = trace.action_type ? ` · ${trace.action_type} #${(trace.action_index ?? 0) + 1}` : ''
+	const action = trace.action_type ? ` · ${ruleLabel('action', trace.action_type, locale.value)} #${(trace.action_index ?? 0) + 1}` : ''
 	const priority = trace.priority === undefined ? '' : ` · ${t('capture.rules.priority', { value: trace.priority })}`
-	const identity = trace.rule_id ? ` [${trace.rule_id}]` : ''
-	return `${name}${identity}${action}${priority} · ${t('capture.rules.version', { version: trace.rules_version ?? capture.value?.rules_version ?? 0 })}`
+	return `${traceRuleName(trace, locale.value)}${action}${priority} · ${t('capture.rules.version', { version: trace.rules_version ?? capture.value?.rules_version ?? 0 })}`
 }
 function sourceLabels(phase?: string, eventID?: string) {
 	if (!capture.value) return []
@@ -115,7 +119,7 @@ function downloadJson() {
 				<h1 class="page-title">{{ t('capture.exchange') }} #{{ capture?.id ?? '—' }} <Badge v-if="capture" :tone="outcomeTone(capture.outcome)">{{ outcomeLabel(capture.outcome) }}</Badge></h1>
 				<p class="page-description">{{ capture?.account_id === 0 ? t('capture.unassigned') : capture?.account_name || '—' }} · {{ capture?.model || '—' }} · {{ capture ? formatTime(capture.created_at) : '' }}</p>
 			</div>
-			<div class="capture-actions"><button class="btn" :disabled="!capture" @click="downloadJson"><Download :size="14" />{{ t('capture.download') }}</button><button class="btn" :disabled="loading" @click="load">{{ t('common.refresh') }}</button></div>
+			<div class="capture-actions"><button class="btn" data-testid="debug-capture-rules" :disabled="!capture" @click="capture && router.push({name: 'rules', query: {capture: capture.id}})">{{ c('debugRules') }}</button><button class="btn" :disabled="!capture" @click="downloadJson"><Download :size="14" />{{ t('capture.download') }}</button><button class="btn" :disabled="loading" @click="load">{{ t('common.refresh') }}</button></div>
 		</header>
 
 		<div v-if="capture && request && responseHeaders" :key="capture.id" class="page-content capture-content" :aria-busy="loading">
@@ -145,12 +149,12 @@ function downloadJson() {
 				<div v-if="compact" class="flow-stage-heading response-stage"><h2>{{ c('responseStage') }}</h2><span>{{ c('responseRoute') }}</span></div>
 				<div v-for="(row, index) in visibleRows" :key="`${compact}:${row.key}`" class="flow-row" :data-paired="Boolean(row.before && row.after)">
 					<template v-if="row.before && row.after">
-						<div class="flow-event-meta"><span>{{ c('protocolChange', { before: frameProtocol(row.before), after: frameProtocol(row.after) }) }}</span><span>+{{ row.before.at_ms }} → +{{ row.after.at_ms }} ms</span></div>
+						<div class="flow-event-meta"><span>{{ c('protocolChange', { before: frameProtocol(row.before), after: frameProtocol(row.after) }) }}</span><span>+{{ row.before.at_ms }} → +{{ row.after.at_ms }} ms</span><button v-if="row.before.dir === 'in' && ['sse_event', 'ws_frame'].includes(row.before.kind)" type="button" class="btn" @click="router.push({name:'rules', query:{capture:capture.id, frame:row.before.seq}})">{{ c('debugRules') }}</button></div>
 						<CaptureDiff :title="row.before.type === row.after.type ? row.before.type || c('responsePayload') : `${row.before.type || frameLabel(row.before)} → ${row.after.type || frameLabel(row.after)}`" :before="frameSnapshot(row.before)" :after="frameSnapshot(row.after)" :before-label="c('upstreamIn')" :after-label="c('clientOut')" :partial="capture.truncated" :sources="rowSources(row.before, row.after)" :source-note="sourceNote()" :initial-open="index < 2" />
 					</template>
 					<details v-else-if="row.frame" class="card individual-frame" :open="index < 2" :data-direction="row.frame.dir" :data-kind="row.frame.kind">
 						<summary><component :is="row.frame.kind === 'note' ? Info : row.frame.dir === 'out' || row.frame.dir === 'client_out' ? ArrowUpRight : ArrowDownLeft" :size="15" /><strong class="frame-direction">{{ direction(row.frame) }}</strong><Badge :tone="frameTone(row.frame)">{{ frameLabel(row.frame) }}</Badge><code>{{ row.frame.type || '' }}</code><span class="frame-meta">+{{ row.frame.at_ms }} ms · {{ formatBytes(row.frame.bytes) }}</span></summary>
-						<div class="frame-content"><JsonViewer v-if="frameSnapshot(row.frame).available" :value="preview(row.frame).text" :label="direction(row.frame)" max-height="28rem" /><p v-else class="capture-hint">{{ c('noPayload') }}</p><p v-if="preview(row.frame).limited" class="capture-hint">{{ c('limited') }}</p></div>
+						<div class="frame-content"><button v-if="row.frame.dir === 'in' && ['sse_event', 'ws_frame'].includes(row.frame.kind)" type="button" class="btn" @click="router.push({name:'rules', query:{capture:capture.id, frame:row.frame.seq}})">{{ c('debugRules') }}</button><JsonViewer v-if="frameSnapshot(row.frame).available" :value="preview(row.frame).text" :label="direction(row.frame)" max-height="28rem" /><p v-else class="capture-hint">{{ c('noPayload') }}</p><p v-if="preview(row.frame).limited" class="capture-hint">{{ c('limited') }}</p></div>
 					</details>
 				</div>
 				<button v-if="rows.length > rowLimit" type="button" class="btn" @click="rowLimit += 100">{{ c('showMore', { count: rows.length - rowLimit }) }}</button>

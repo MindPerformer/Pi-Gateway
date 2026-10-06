@@ -71,19 +71,42 @@ type Input struct {
 	// TraceMaxBytes and MaxTraces bound in-process diagnostic collection. Zero uses defaults.
 	TraceMaxBytes int `json:"trace_max_bytes,omitempty"`
 	MaxTraces     int `json:"max_traces,omitempty"`
+	// ConditionTrace is opt-in, independent of the production action trace switch.
+	ConditionTrace bool `json:"condition_trace,omitempty"`
+	// Unavailable contains source JSON pointers missing from a historical sample.
+	// It is internal-only and checked lazily, preserving condition short-circuiting.
+	Unavailable []string `json:"-"`
 }
 
 type Result struct {
-	Body         any     `json:"body"`
-	Model        string  `json:"model"`
-	Changed      bool    `json:"changed"`
-	Blocked      bool    `json:"blocked"`
-	Status       int     `json:"status,omitempty"`
-	Reason       string  `json:"reason,omitempty"`
-	Dropped      bool    `json:"dropped"`
-	Traces       []Trace `json:"traces,omitempty"`
-	TraceOmitted int     `json:"trace_omitted,omitempty"`
+	Body                  any              `json:"body"`
+	Model                 string           `json:"model"`
+	Changed               bool             `json:"changed"`
+	Blocked               bool             `json:"blocked"`
+	Status                int              `json:"status,omitempty"`
+	Reason                string           `json:"reason,omitempty"`
+	Dropped               bool             `json:"dropped"`
+	Traces                []Trace          `json:"traces,omitempty"`
+	TraceOmitted          int              `json:"trace_omitted,omitempty"`
+	ConditionTraces       []ConditionTrace `json:"condition_traces,omitempty"`
+	ConditionTraceOmitted int              `json:"condition_trace_omitted,omitempty"`
 }
+
+// ConditionTrace paths are relative to the individual rule, not the ruleset.
+// Matched is absent for skipped/error nodes; ItemIndex is the pre-filter index.
+type ConditionTrace struct {
+	RuleID    string `json:"rule_id"`
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Matched   *bool  `json:"matched,omitempty"`
+	Error     string `json:"error,omitempty"`
+	ItemIndex *int   `json:"item_index,omitempty"`
+}
+
+// MissingInputError is not a rule failure: a historical sample lacks needed facts.
+type MissingInputError struct{ Path string }
+
+func (e *MissingInputError) Error() string { return "sample lacks required input: " + e.Path }
 
 // Change records actual structural changes; missing and explicit null remain distinct.
 // Values are bounded/redacted for trace storage, never used to execute rules.

@@ -1,5 +1,6 @@
 import type {JsonValue, Rule, RuleCondition, RuleField, RuleFieldError, ValueExpr} from '../api/rules'
 import {defaultForField, ruleSchema} from './ruleSchema'
+import {graphSignature, restoreGraphLayout, type RuleGraph, ruleToGraph} from './ruleGraph'
 
 export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
@@ -10,16 +11,33 @@ export interface RuleDraft {
     base: string;
     revision?: number;
     errors: RuleFieldError[];
-    isNew?: boolean
+    isNew?: boolean;
+    graph?: RuleGraph;
+    graphBase?: string;
+    graphUndo?: RuleGraph[];
+    graphRedo?: RuleGraph[]
 }
 
 export function createDraft(rule: Rule, isNew = false): RuleDraft {
     const code = stringifyRule(rule);
-    return {rule: clone(rule), code, mode: 'visual', base: code, revision: rule.revision, errors: [], isNew}
+    const graph = restoreGraphLayout(ruleToGraph(rule))
+    return {
+        rule: clone(rule),
+        code,
+        mode: 'visual',
+        base: code,
+        revision: rule.revision,
+        errors: [],
+        isNew,
+        graph,
+        graphBase: graphSignature(graph),
+        graphUndo: [],
+        graphRedo: []
+    }
 }
 
 export function draftDirty(draft: RuleDraft): boolean {
-    return !!draft.isNew || (draft.mode === 'code' ? draft.code : stringifyRule(draft.rule)) !== draft.base
+    return !!draft.isNew || (draft.mode === 'code' ? draft.code : stringifyRule(draft.rule)) !== draft.base || !!(draft.graph && draft.graphBase && graphSignature(draft.graph) !== draft.graphBase)
 }
 
 export const pointerPart = (key: string | number) => String(key).replaceAll('~', '~0').replaceAll('/', '~1')

@@ -32,6 +32,21 @@ jobs:
       - run: npm run check:capture
       - run: npm run check:rules
       - run: npm run build
+      - name: Install Chromium for real-browser regression
+        run: npx playwright install --with-deps chromium
+      - name: Run rules canvas and capture debugger browser tests
+        run: npm run test:e2e
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rules-browser-failure
+          path: |
+            web/node_modules/.cache/playwright/test-results
+            web/node_modules/.cache/playwright/report
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: web-dist

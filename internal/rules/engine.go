@@ -3,6 +3,7 @@ package rules
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -115,7 +116,7 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 		}
 		facts = c.(map[string]any)
 	}
-	s := evaluation{ctx: ctx, body: body, client: client, facts: facts, model: in.Model, originalModel: in.Model, eventType: in.EventType, phase: phase}
+	s := evaluation{ctx: ctx, body: body, client: client, facts: facts, model: in.Model, originalModel: in.Model, eventType: in.EventType, phase: phase, conditions: newConditionCollector(in), unavailable: in.Unavailable}
 	if phase == PhaseRequest {
 		if _, ok := object(body); !ok {
 			return Result{}, invalid("/body", "request body must be an object")
@@ -160,6 +161,10 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 		res.Changed = !jsonEqual(in.Body, s.body) || in.Model != s.model
 		res.Traces = collector.traces
 		res.TraceOmitted = collector.omitted
+		if s.conditions != nil {
+			res.ConditionTraces = s.conditions.traces
+			res.ConditionTraceOmitted = s.conditions.omitted
+		}
 		return res, err
 	}
 	if e == nil {
@@ -172,6 +177,7 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 		if !r.raw.Enabled {
 			continue
 		}
+		s.ruleID, s.rulePath = r.raw.ID, r.path
 		start := time.Now()
 		matched, matchErr := r.when.matches(&s)
 		if matchErr != nil {
@@ -180,6 +186,10 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 			t.Error = matchErr.Error()
 			t.DurationNS = time.Since(start).Nanoseconds()
 			collector.add(t)
+			var missing *MissingInputError
+			if errors.As(matchErr, &missing) {
+				return finish(matchErr)
+			}
 			if ctx.Err() != nil || r.raw.OnError != OnErrorSkipRule {
 				return finish(prefixError(r.path+"/when", matchErr))
 			}
@@ -286,6 +296,10 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 			collector.merge(pending)
 			if ctx.Err() != nil {
 				return finish(ctx.Err())
+			}
+			var missing *MissingInputError
+			if errors.As(actionErr, &missing) {
+				return finish(actionErr)
 			}
 			if r.raw.OnError == OnErrorSkipRule {
 				continue

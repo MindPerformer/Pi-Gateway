@@ -254,7 +254,7 @@ export interface CaptureRuleTrace {
 
 export interface CaptureFrame {
     seq: number
-    dir: 'out' | 'in' | 'client_in' | 'client_out'
+    dir: 'out' | 'in' | 'client_in' | 'client_out' | 'internal'
     kind: string
     type?: string
     at_ms: number

@@ -31,7 +31,7 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 		return terminal{}, a.dropInput(s)
 	case "json_set":
 		if p["if_exists"] == "keep" {
-			if _, exists, e := pointerGet(s.body, path); e != nil {
+			if _, exists, e := s.selectValue("current", path, ""); e != nil {
 				return terminal{}, e
 			} else if exists {
 				return terminal{}, nil
@@ -45,6 +45,9 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 		return terminal{}, e
 	case "json_remove":
 		for _, raw := range p["paths"].([]any) {
+			if err := s.requireAvailable("current", raw.(string)); err != nil {
+				return terminal{}, err
+			}
 			var e error
 			s.body, e = pointerRemove(s.body, raw.(string), p["on_missing"] == "error")
 			if e != nil {
@@ -60,7 +63,7 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 		if _, ok := object(incoming); !ok {
 			return terminal{}, fmt.Errorf("merge value must be an object")
 		}
-		target, exists, e := pointerGet(s.body, path)
+		target, exists, e := s.selectValue("current", path, "")
 		if e != nil {
 			return terminal{}, e
 		}
@@ -79,7 +82,7 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 	case "json_transfer":
 		return terminal{}, a.transfer(s)
 	case "array_insert":
-		v, exists, e := pointerGet(s.body, path)
+		v, exists, e := s.selectValue("current", path, "")
 		if e != nil {
 			return terminal{}, e
 		}
@@ -119,7 +122,7 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 		s.body, e = pointerSet(s.body, path, out, boolParam(p, "create_if_missing"), false)
 		return terminal{}, e
 	case "array_filter":
-		v, exists, e := pointerGet(s.body, path)
+		v, exists, e := s.selectValue("current", path, "")
 		if e != nil {
 			return terminal{}, e
 		}
@@ -147,7 +150,7 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 		s.body, e = pointerSet(s.body, path, kept, false, false)
 		return terminal{}, e
 	case "text_replace":
-		v, exists, e := pointerGet(s.body, path)
+		v, exists, e := s.selectValue("current", path, "")
 		if e != nil {
 			return terminal{}, e
 		}
@@ -346,7 +349,7 @@ func (a compiledAction) transfer(s *evaluation) error {
 	if source == "current" && sp == tp {
 		return nil
 	}
-	if _, found, e := pointerGet(s.body, tp); e != nil {
+	if _, found, e := s.selectValue("current", tp, ""); e != nil {
 		return e
 	} else if found && !boolParam(p, "overwrite") {
 		return fmt.Errorf("target already exists")

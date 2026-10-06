@@ -11,6 +11,7 @@ import (
 
 type compiledCondition struct {
 	raw      Condition
+	path     string
 	children []*compiledCondition
 	re       *regexp.Regexp
 }
@@ -406,7 +407,7 @@ func compileCondition(c Condition, path, phase string, item bool, depth int, nod
 	if e := validateSource(c.Source, c.Path, path, phase, item); e != nil {
 		return nil, e
 	}
-	out := &compiledCondition{raw: c}
+	out := &compiledCondition{raw: c, path: path}
 	if c.Op == "all" || c.Op == "any" || c.Op == "not" {
 		if len(c.Conditions) == 0 {
 			return nil, invalid(path+"/conditions", "empty groups are forbidden; use always")

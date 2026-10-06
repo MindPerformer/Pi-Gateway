@@ -1,4 +1,7 @@
+import {canvasEn, canvasZh} from './ruleCanvasMessages'
+
 export const rulesEn = {
+    ...canvasEn,
     'rules.title': 'Rules',
     'rules.legacyRepair': 'Repair legacy configuration',
     'rules.legacyNote': 'If migration fails, repair the original middleware JSON here, then retry loading rules. Migrated multi-action rules cannot be overwritten through this compatibility editor.',
@@ -101,6 +104,7 @@ export const rulesEn = {
 } as const
 
 export const rulesZh: Record<keyof typeof rulesEn, string> = {
+    ...canvasZh,
     'rules.title': '规则',
     'rules.legacyRepair': '修复旧中间件配置',
     'rules.legacyNote': '迁移失败时可在此修复原始中间件 JSON，再重试加载规则。已被改为多动作的迁移规则不能通过此兼容编辑器覆盖。',

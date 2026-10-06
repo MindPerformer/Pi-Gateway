@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"pi-gateway/internal/capture"
+	"pi-gateway/internal/rulescapture"
 	"pi-gateway/internal/store"
 	"pi-gateway/internal/upstream"
 )
@@ -188,17 +188,7 @@ func wsConnectionLimitPayload() map[string]any {
 // Any "type" field is removed so the remaining object is a plain Responses API
 // body; frames that are already a plain body pass through unchanged.
 func requestBodyFromWSFrame(payload []byte) (map[string]any, error) {
-	var decoded map[string]any
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		return nil, fmt.Errorf("frame is not valid JSON: %w", err)
-	}
-	if t, ok := decoded["type"].(string); ok {
-		if t != "response.create" && t != "" {
-			return nil, fmt.Errorf("unsupported frame type %q (expected response.create)", t)
-		}
-		delete(decoded, "type")
-	}
-	return decoded, nil
+	return rulescapture.UnwrapWS(payload)
 }
 
 // serveWSExchange runs one request/response exchange over the client socket.

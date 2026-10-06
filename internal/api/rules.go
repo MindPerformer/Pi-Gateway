@@ -33,6 +33,9 @@ func (s *Server) applyRequestRules(ctx context.Context, p *prepared) *apiError {
 	p.RuleEngine, p.RuleVersion = engine, version
 	p.recordGatewayDifference("normalize", "Request normalization", p.RawRequestBody, p.Built.JSON)
 	input := p.ruleInput(p.Built.Body, "")
+	if p.Recorder != nil {
+		p.Recorder.OnRuleInput(rules.PhaseRequest, input, false)
+	}
 	result, err := engine.Apply(ctx, rules.PhaseRequest, input)
 	p.recordRuleResult(result, "", "", nil)
 	if err != nil {
@@ -141,6 +144,9 @@ func (p *prepared) transformResponseEvent(ctx context.Context, event *upstream.E
 	if p.RuleEngine == nil {
 		return event, nil
 	}
+	if p.RuleEventSeq == 1 && p.Recorder != nil {
+		p.Recorder.OnRuleInput(rules.PhaseResponseEvent, p.ruleInput(nil, ""), true)
+	}
 	result, err := p.RuleEngine.Apply(ctx, rules.PhaseResponseEvent, p.ruleInput(event.Data, event.Type))
 	p.recordRuleResult(result, eventID, event.Type, event.Data["sequence_number"])
 	if err != nil {
@@ -165,7 +171,11 @@ func (p *prepared) transformResponseBody(ctx context.Context, body map[string]an
 	if p.RuleEngine == nil {
 		return body, nil
 	}
-	result, err := p.RuleEngine.Apply(ctx, rules.PhaseResponseBody, p.ruleInput(body, ""))
+	input := p.ruleInput(body, "")
+	if p.Recorder != nil {
+		p.Recorder.OnRuleInput(rules.PhaseResponseBody, input, false)
+	}
+	result, err := p.RuleEngine.Apply(ctx, rules.PhaseResponseBody, input)
 	p.recordRuleResult(result, strconv.FormatInt(p.RuleEventSeq, 10), "response", nil)
 	if err != nil {
 		return nil, ruleAPIError("response body rule evaluation failed")

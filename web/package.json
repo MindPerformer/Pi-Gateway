@@ -9,9 +9,12 @@
     "typecheck": "vue-tsc --noEmit",
     "check:i18n": "node check-i18n.mjs",
     "check:capture": "node check-capture-diff.mjs && node check-capture-inspection.mjs",
-    "check:rules": "node check-rules.mjs"
+    "check:rules": "node check-rules.mjs",
+    "check:simulation": "node check-rule-simulation.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@vue-flow/core": "^1.48.2",
     "echarts": "^6.1.0",
     "lucide-vue-next": "^0.469.0",
     "pinia": "^2.3.0",
@@ -19,7 +22,9 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^24.19.1",
     "@vitejs/plugin-vue": "^5.2.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2",

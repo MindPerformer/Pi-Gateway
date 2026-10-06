@@ -79,6 +79,7 @@ const zh = {
     previewLimited: '内容较大 · 有界差异预览',
     participantNote: '网关是我们的服务；OpenAI 是后端。',
     headersNote: '这里记录应用层头部；可能不包含网络库随后补充的 Host、Date、Content-Length 等字段。未记录的头部不会补造。',
+    debugRules: '用此记录调试规则',
 } as const
 
 const en: Record<keyof typeof zh, string> = {
@@ -160,6 +161,7 @@ const en: Record<keyof typeof zh, string> = {
     previewLimited: 'Large content · bounded diff preview',
     participantNote: 'Gateway is our service; OpenAI is the backend.',
     headersNote: 'These are application-level header snapshots. Host, Date, Content-Length and other fields added later by the network library may be absent. Unrecorded headers are never invented.',
+    debugRules: 'Debug rules with this capture',
 }
 export type CaptureTextKey = keyof typeof zh
 

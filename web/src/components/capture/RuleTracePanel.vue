@@ -6,9 +6,11 @@ import { isRuleChange, lastRuleWriters, ruleChangeSnapshot, ruleTraces } from '.
 import { useCaptureLocale } from './captureLocale'
 import CaptureDiff from './CaptureDiff.vue'
 import Badge from '../Badge.vue'
+import { ruleLabel } from '../../utils/ruleLabels'
+import { traceRuleName } from '../../utils/ruleTracePresentation'
 
 const props = defineProps<{ capture: Capture }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { c } = useCaptureLocale()
 const limit = ref(50)
 const expanded = ref(new Set<number>())
@@ -30,6 +32,7 @@ const statusKeys: Record<string, string> = {
     not_matched: 'statusNotMatched', no_change: 'statusNoChange', changed: 'statusChanged',
     skipped: 'statusSkipped', error: 'statusError', blocked: 'statusBlocked', dropped: 'statusDropped', rolled_back: 'statusRolledBack',
 }
+function actionLabel(action?: string) { return action ? ruleLabel('action', action, locale.value) : '' }
 function phaseLabel(phase?: string) {
     const key = phase === 'request' ? 'phaseRequest' : phase === 'response_event' ? 'phaseResponseEvent' : phase === 'response_body' ? 'phaseResponseBody' : ''
     return key ? t(`capture.rules.${key}`) : phase || c('unrecorded')
@@ -57,9 +60,9 @@ function toggle(index: number, event: Event) {
         <p v-else class="trace-hint">{{ t('capture.rules.imprecise') }}</p>
         <details v-for="(trace, index) in visible" :key="index" class="card trace-step" :data-rule-status="trace.status" @toggle="toggle(index, $event)">
             <summary>
-                <span class="trace-order">{{ index + 1 }}.</span><strong>{{ trace.source_kind === 'gateway' ? `${t('capture.rules.gateway')}: ${trace.rule_name || trace.rule_id}` : trace.rule_name || trace.rule_id || c('unrecorded') }}</strong>
+                <span class="trace-order">{{ index + 1 }}.</span><strong>{{ traceRuleName(trace, locale) }}</strong>
                 <Badge :tone="tone(trace)">{{ statusLabel(trace) }}</Badge>
-                <span>{{ phaseLabel(trace.phase) }}</span><code>{{ trace.action_type || '' }}</code>
+                <span>{{ phaseLabel(trace.phase) }}</span><code>{{ actionLabel(trace.action_type) }}</code>
             </summary>
             <div v-if="expanded.has(index)" class="trace-body">
                 <div class="trace-meta">

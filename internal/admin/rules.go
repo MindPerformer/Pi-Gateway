@@ -495,6 +495,7 @@ func (s *Server) handleSimulateRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Input.Trace = true
+	body.Input.ConditionTrace = true
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	result, err := compiled.Apply(ctx, body.Phase, body.Input)

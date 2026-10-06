@@ -19,6 +19,10 @@ type evaluation struct {
 	index         int
 	hasItem       bool
 	phase         string
+	ruleID        string
+	rulePath      string
+	conditions    *conditionCollector
+	unavailable   []string
 }
 
 func (s *evaluation) source(source string) any {
@@ -54,7 +58,26 @@ func (s *evaluation) source(source string) any {
 	}
 	return nil
 }
+func (s *evaluation) requireAvailable(source, path string) error {
+	if len(s.unavailable) == 0 {
+		return nil
+	}
+	if source == "" {
+		source = "current"
+	}
+	selected := "/" + source + path
+	for _, missing := range s.unavailable {
+		if selected == missing || strings.HasPrefix(selected, missing+"/") || strings.HasPrefix(missing, selected+"/") {
+			return &MissingInputError{Path: missing}
+		}
+	}
+	return nil
+}
+
 func (s *evaluation) selectValue(source, path, encoding string) (any, bool, error) {
+	if err := s.requireAvailable(source, path); err != nil {
+		return nil, false, err
+	}
 	v, ok, e := pointerGet(s.source(source), path)
 	if e != nil || !ok {
 		return v, ok, e
@@ -87,7 +110,24 @@ func (s *evaluation) requiredExpression(v any) (any, error) {
 	}
 	return cloneJSON(x)
 }
-func (c *compiledCondition) matches(s *evaluation) (bool, error) {
+func (c *compiledCondition) matches(s *evaluation) (matched bool, err error) {
+	if s.conditions != nil {
+		defer func() { s.conditions.record(c, s, matched, err, false) }()
+	}
+	return c.evaluate(s)
+}
+
+func (c *compiledCondition) skip(s *evaluation) {
+	if s.conditions == nil {
+		return
+	}
+	s.conditions.record(c, s, false, nil, true)
+	for _, child := range c.children {
+		child.skip(s)
+	}
+}
+
+func (c *compiledCondition) evaluate(s *evaluation) (bool, error) {
 	if e := s.ctx.Err(); e != nil {
 		return false, e
 	}
@@ -95,17 +135,23 @@ func (c *compiledCondition) matches(s *evaluation) (bool, error) {
 	case "always":
 		return true, nil
 	case "all":
-		for _, x := range c.children {
+		for i, x := range c.children {
 			ok, e := x.matches(s)
 			if e != nil || !ok {
+				for _, skipped := range c.children[i+1:] {
+					skipped.skip(s)
+				}
 				return ok, e
 			}
 		}
 		return true, nil
 	case "any":
-		for _, x := range c.children {
+		for i, x := range c.children {
 			ok, e := x.matches(s)
 			if e != nil || ok {
+				for _, skipped := range c.children[i+1:] {
+					skipped.skip(s)
+				}
 				return ok, e
 			}
 		}

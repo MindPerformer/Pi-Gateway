@@ -5,6 +5,9 @@ import {fileURLToPath} from 'node:url'
 import {dirname, join} from 'node:path'
 import {checkRuleComponents} from './check-rule-components.mjs'
 import {checkRuleApi} from './check-rule-api.mjs'
+import {checkRuleGraph} from './check-rule-graph.mjs'
+
+await import('./check-editor-id.mjs')
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const exported = spawnSync('go', ['test', './internal/rules', '-run', 'TestExportCatalog', '-v'], {
@@ -122,6 +125,8 @@ if (missing.length) {
         }
     }
     console.log(`PASS: backend Catalog ${backend.conditions.length} conditions, ${backend.actions.length} actions, ${backend.rule_fields.length} rule fields; renderer/help coverage and ${examples.length} AST roundtrips`)
+    await checkRuleGraph(schema, backend)
     await checkRuleComponents(schema)
     await checkRuleApi()
+    await import('./check-rule-simulation.mjs')
 }

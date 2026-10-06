@@ -1,3 +1,4 @@
+import {editorId} from './editorId'
 import type {LocalizedHelp, Rule, RuleCapability, RuleField, RulePhase, RuleRenderer, RuleSchema} from '../api/rules'
 
 export const help = (en: string, zh: string): LocalizedHelp => ({en, 'zh-CN': zh})
@@ -183,7 +184,7 @@ export function newRule(): Rule {
 export function newAction(type: string, schema = ruleSchema) {
     const cap = schema.actions.find(c => c.id === type);
     return {
-        id: globalThis.crypto?.randomUUID?.() ?? `action-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        id: editorId(),
         type,
         params: Object.fromEntries((cap?.fields ?? []).filter(f => f.required || f.default !== undefined).map(f => [f.name, defaultForField(f)]))
     }

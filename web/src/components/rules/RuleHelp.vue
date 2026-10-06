@@ -3,10 +3,16 @@ import { computed, ref } from 'vue'
 import type { Rule, RuleSchema } from '../../api/rules'
 import { useI18n } from '../../i18n'
 import { localHelp } from '../../utils/ruleSchema'
+import {ruleLabel, ruleLabels} from '../../utils/ruleLabels'
 const props = defineProps<{ schema: RuleSchema }>()
 const emit = defineEmits<{ example: [rule: Rule] }>()
 const { t, locale } = useI18n()
 const search = ref('')
+function capabilityLabel(id: string) {
+  if (id === 'rule') return t('rules.canvas.rule')
+  if (id === 'context') return t('rules.context')
+  return ruleLabel(['condition', 'action', 'expression'].find(group => ruleLabels[group]?.[id]) ?? 'action', id, locale.value)
+}
 const entries = computed(() => [
   { id: 'rule', description: {en: 'Rule metadata, policy and execution order.', 'zh-CN': '规则元数据、策略与执行顺序。'}, fields: props.schema.rule_fields },
   ...props.schema.conditions, ...props.schema.actions, ...(props.schema.value_expressions ?? []),
@@ -25,7 +31,7 @@ const entries = computed(() => [
       <input v-model="search" class="input" :placeholder="t('rules.helpSearch')" :aria-label="t('rules.helpSearch')" />
       <div class="max-h-[32rem] space-y-2 overflow-auto">
         <details v-for="cap in entries" :key="cap.id" class="rounded border border-[color:var(--color-line)] p-2">
-          <summary class="cursor-pointer font-mono text-sm">{{ cap.id }}</summary>
+          <summary class="cursor-pointer text-sm"><span class="font-medium">{{ capabilityLabel(cap.id) }}</span><code class="ml-1 text-xs">{{ cap.id }}</code></summary>
           <p class="my-2 text-xs">{{ localHelp(cap.description, locale) }}</p>
           <p v-if="'phases' in cap" class="text-xs">{{ t('rules.phases') }}: {{ cap.phases?.join(' / ') }}</p>
           <dl class="space-y-3 py-2">

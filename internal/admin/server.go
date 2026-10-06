@@ -222,6 +222,7 @@ func (s *Server) Routes(mux *http.ServeMux, spa http.Handler) {
 	mux.HandleFunc("GET /api/rules/schema", s.requireAuth(s.handleRulesSchema))
 	mux.HandleFunc("POST /api/rules/validate", s.requireAuth(s.handleValidateRules))
 	mux.HandleFunc("POST /api/rules/simulate", s.requireAuth(s.handleSimulateRules))
+	mux.HandleFunc("POST /api/rules/simulate-capture", s.requireAuth(s.handleSimulateCapture))
 	mux.HandleFunc("POST /api/rules/reorder", s.requireAuth(s.handleReorderRules))
 	mux.HandleFunc("POST /api/rules/batch", s.requireAuth(s.handleBatchRules))
 	mux.HandleFunc("GET /api/rules/{id}", s.requireAuth(s.handleGetRule))

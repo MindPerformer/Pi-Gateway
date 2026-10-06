@@ -137,6 +137,10 @@ func (c *Client) Close() { c.pool.closeAll() }
 
 // Request describes one upstream call.
 type Request struct {
+	// Compact invokes the native HTTP compaction endpoint. CompactDirect keeps
+	// its JSON response shape; otherwise it is adapted into Responses events.
+	Compact       bool
+	CompactDirect bool
 	// ProxyURL is the account's egress proxy ("" = direct).
 	ProxyURL string
 	// Headers are the fully built Pi headers (both SSE and WS variants are derived
@@ -179,6 +183,9 @@ type StreamResult struct {
 //   - auto:             websocket-cached, falling back to SSE only for allowed
 //     setup failures known to precede sending response.create
 func (c *Client) Stream(ctx context.Context, req *Request, onEvent func(*Event) error) (*StreamResult, error) {
+	if req.Compact {
+		return c.streamCompact(ctx, req, onEvent)
+	}
 	previous, err := requestPreviousID(req)
 	if err != nil {
 		return nil, err

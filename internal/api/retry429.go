@@ -120,6 +120,9 @@ func (s *Server) streamWith429Retry(ctx context.Context, p *prepared, req *upstr
 			clientTransport = p.Usage.clientTransport
 		}
 		p.Transport = s.resolveTransport(s.settings.Get(), p.Key, next, clientTransport)
+		if p.Compact {
+			p.Transport = "sse"
+		}
 		p.ResponseHeaders = nil
 		p.RuleContext["account_id"], p.RuleContext["upstream_protocol"] = next.ID, p.Transport
 		if p.Recorder != nil {

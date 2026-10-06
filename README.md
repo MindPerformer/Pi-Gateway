@@ -30,6 +30,19 @@
 `image_generation`（包括 namespace 中的工具）及对应工具选择；同名自定义 function 保留。
 管理界面的复制按钮同时支持 Clipboard API 和局域网 HTTP 的浏览器复制回退。
 
+Codex 在普通 Responses 请求末尾发送 `compaction_trigger` 时，网关会将该操作转为
+同一上游 Responses 地址下的 `POST /responses/compact`：移除触发项，发送完整历史，
+并将真实的压缩结果适配回 JSON、SSE 或 WebSocket Responses 响应。
+同时支持 `/v1/responses/compact`、`/backend-api/codex/responses/compact`、
+`/codex/responses/compact` 和 `/responses/compact`，这些入口直接返回压缩结果 JSON。
+压缩请求保留规则处理后的模型、输入和 instructions，使用独立的 compact 字段配置，
+不发送普通生成的 stream、store、tools、tool_choice、reasoning 和 include。
+上游压缩结果的整个 `output` 窗口及 `encrypted_content` 原样保留；下一轮使用返回的
+窗口加新消息作为完整 input，不使用网关包装响应的 ID 作为 `previous_response_id`。
+压缩操作目前要求完整历史，带 `previous_response_id` 的请求会明确返回 400。
+原生压缩需要当前上游端点和账号凭据支持 `/responses/compact`；订阅共享允许输入压缩摘要
+不等于授予压缩端点权限。上游拒绝时返回实际错误，不会静默删除触发项或伪造摘要。
+
 ## 快速开始
 
 ### Docker Compose

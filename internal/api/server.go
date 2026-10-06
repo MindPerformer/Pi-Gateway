@@ -97,6 +97,9 @@ func New(opts Options) *Server {
 // this gateway by changing only their base URL, since Pi appends
 // "/codex/responses" to whatever base URL it is given.
 func (s *Server) Routes(mux *http.ServeMux) {
+	for _, path := range []string{"/v1/responses/compact", "/backend-api/codex/responses/compact", "/codex/responses/compact", "/responses/compact"} {
+		mux.HandleFunc("POST "+path, s.handleResponsesHTTP)
+	}
 	mux.HandleFunc("POST /v1/responses", s.handleResponsesHTTP)
 	mux.HandleFunc("GET /v1/responses", s.handleResponsesWS)
 	mux.HandleFunc("POST /backend-api/codex/responses", s.handleResponsesHTTP)
@@ -110,6 +113,8 @@ func (s *Server) Routes(mux *http.ServeMux) {
 
 // prepared is one fully validated, middleware-processed request.
 type prepared struct {
+	Compact            bool
+	CompactDirect      bool
 	Key                *store.APIKey
 	Account            *store.Account
 	Release            func()
@@ -156,6 +161,11 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	if clientBody == nil {
 		clientBody = map[string]any{}
 	}
+	compactDirect := strings.HasSuffix(r.URL.Path, "/responses/compact")
+	compact, compactErr := detectCompaction(clientBody, compactDirect)
+	if compactErr != nil {
+		return nil, compactErr
+	}
 	rt := s.settings.Get()
 	headerHints := []string{r.Header.Get("x-client-request-id"), r.Header.Get("session-id"), r.Header.Get("session_id"), r.Header.Get("x-session-id")}
 	sessionID := piwire.DeriveSessionID(clientBody, headerHints, func() string { return internalSessionID(ctx) })
@@ -164,13 +174,25 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	if err != nil {
 		return nil, &apiError{Status: http.StatusBadRequest, Message: err.Error(), Type: "invalid_request_error"}
 	}
+	if compact {
+		for _, field := range []string{"instructions", "prompt_cache_options"} {
+			if value, ok := clientBody[field]; ok {
+				built.Body.Set(field, value)
+			}
+		}
+		built.JSON, _ = json.Marshal(built.Body)
+	}
 	p := &prepared{
+		Compact: compact, CompactDirect: compactDirect,
 		Key: key, ClientBody: clientBody, ClientHeaders: r.Header.Clone(), Built: built, SessionID: sessionID,
 		WireSessionID: promptCacheKey, PoolSessionID: poolSessionID(ctx, sessionID),
 		WantsStream: wantsStream(clientBody), RawRequestBody: rawBody,
 		RuleContext: map[string]any{"original_model": built.Model, "model": built.Model,
 			"api_key_id": key.ID, "client_protocol": clientTransport,
 			"request_path": r.URL.Path, "request_method": r.Method},
+	}
+	if compactDirect {
+		p.WantsStream = false
 	}
 	if rt.CaptureEnabled {
 		p.Recorder = s.newRecorder(key, nil, clientTransport, "", built)
@@ -183,7 +205,15 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	// Enforce transport invariants independently of user rules, with a distinct
 	// provenance record so a later repair is not blamed on the last user rule.
 	beforeShape, _ := json.Marshal(built.Body)
-	shapeChanges := piwire.EnforcePiShape(built.Body)
+	var shapeChanges []string
+	if p.Compact {
+		built.Body, err = compactRequestBody(built.Body)
+		if err != nil {
+			return p, &apiError{Status: http.StatusBadRequest, Message: err.Error(), Type: "invalid_request_error", Code: "invalid_compaction_request"}
+		}
+	} else {
+		shapeChanges = piwire.EnforcePiShape(built.Body)
+	}
 	built.JSON, err = json.Marshal(built.Body)
 	if err != nil {
 		return p, &apiError{Status: http.StatusInternalServerError, Message: "could not encode rule-transformed request", Type: "server_error", Code: "rule_error"}
@@ -191,6 +221,9 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	if len(shapeChanges) > 0 {
 		p.MW.Changes = append(p.MW.Changes, shapeChanges...)
 		p.recordGatewayDifference("pi_shape", "Pi protocol invariants", beforeShape, built.JSON)
+	}
+	if p.Compact {
+		p.recordGatewayDifference("compaction", "Native compaction request", beforeShape, built.JSON)
 	}
 	built.SessionID = sessionID
 	rawPrevious, _ := built.Body.Get("previous_response_id")
@@ -241,6 +274,9 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	p.AccountRelease = release
 	release = composeRelease(keyRelease, release)
 	transport := s.resolveTransport(rt, key, account, clientTransport)
+	if p.Compact {
+		transport = "sse" // Compaction is a separate HTTP operation, never a socket delta.
+	}
 	if continuation != nil && transport != "websocket-cached" && transport != "auto" {
 		release()
 		return p, continuationAPIError(session.ErrMiss)

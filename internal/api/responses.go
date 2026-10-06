@@ -87,6 +87,8 @@ func (s *Server) newUpstreamRequest(ctx context.Context, p *prepared) (*upstream
 	}
 
 	return &upstream.Request{
+		Compact:            p.Compact,
+		CompactDirect:      p.CompactDirect,
 		ProxyURL:           p.Account.ProxyURL,
 		SSEHeaders:         piwire.BuildSSEHeaders(headerOpts),
 		WSHeaders:          piwire.BuildWSHeaders(headerOpts),

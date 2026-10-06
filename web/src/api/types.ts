@@ -301,6 +301,8 @@ export interface Capture {
 }
 
 export interface Settings {
+    compaction_mode?: 'auto' | 'on' | 'off'
+    compaction_model?: string
     switch_on_429?: boolean
     account_cooldown_seconds?: number
     max_attempts?: number
@@ -329,6 +331,8 @@ export interface StaticConfig {
 }
 
 export interface SettingsResponse {
+    compaction_models?: string[]
+    compaction_models_error?: boolean
     current: Settings
     defaults: Settings
     transports: string[]

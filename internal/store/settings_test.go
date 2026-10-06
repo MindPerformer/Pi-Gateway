@@ -20,7 +20,11 @@ func TestRuntimePoolSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if defaults.RotationStrategy != "" || got.DefaultModel != "original" || got.DefaultStrategy != "sticky" {
 		t.Fatalf("caller defaults mutated: %+v %+v", defaults, got)
 	}
+	if got.CompactionMode != "on" || got.CompactionModel != "gpt-6-luna" {
+		t.Fatalf("compaction defaults=%+v", got)
+	}
 	want := *got
+	want.CompactionMode, want.CompactionModel = "off", "custom-summary"
 	want.SwitchOn429 = false
 	want.RotationStrategy = "round_robin"
 	want.RequestIntervalMS = 125

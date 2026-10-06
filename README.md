@@ -43,9 +43,8 @@
 同一认证连接的 WebSocket 续接，不能作为 HTTP 持久会话使用；顶层 `type` 由 WebSocket 传输层生成。
 管理界面的复制按钮同时支持 Clipboard API 和局域网 HTTP 的浏览器复制回退。
 
-Codex 在普通 Responses 请求末尾发送 `compaction_trigger` 时，网关会将该操作转为
-同一上游 Responses 地址下的 `POST /responses/compact`：移除触发项，发送完整历史，
-并将真实的压缩结果适配回 JSON、SSE 或 WebSocket Responses 响应。
+Codex 在普通 Responses 请求末尾发送 `compaction_trigger` 时，网关将该操作视为压缩请求：
+移除触发项，发送完整历史，并将压缩结果适配回 JSON、SSE 或 WebSocket Responses 响应。
 同时支持 `/v1/responses/compact`、`/backend-api/codex/responses/compact`、
 `/codex/responses/compact` 和 `/responses/compact`，这些入口直接返回压缩结果 JSON。
 压缩请求保留规则处理后的模型、输入和 instructions，使用独立的 compact 字段配置，
@@ -53,11 +52,22 @@ Codex 在普通 Responses 请求末尾发送 `compaction_trigger` 时，网关�
 上游压缩结果的整个 `output` 窗口及 `encrypted_content` 原样保留；下一轮使用返回的
 窗口加新消息作为完整 input，不使用网关包装响应的 ID 作为 `previous_response_id`。
 压缩操作目前要求完整历史，带 `previous_response_id` 的请求会明确返回 400。
-原生压缩需要当前上游端点和账号凭据支持 `/responses/compact`；订阅共享允许输入压缩摘要
-不等于授予压缩端点权限。当端点返回 404 / 405 / 501，或 403 且明确提示
-`This ChatPass credential is not authorized for the requested operation.` 时，网关使用同一账号、
-同一规则路由后的普通模型生成续接摘要。摘要调用不提供工具，不向客户端透出摘要生成过程，
-真实用量继续计入记录；401、429、其他权限错误及服务故障不会触发额外生成请求。
+在线设置 → 模型与推理中提供“模拟压缩”和独立的“压缩模型”，默认开启模拟压缩、
+默认模型为 `gpt-6-luna`；旧数据库未保存这些字段时也使用该默认值。模型可从本地缓存目录
+选择或手动输入，保存后立即生效并持久化。三种模式：
+
+- **开启（on，默认）**：直接使用所选普通模型生成续接摘要，不调用原生 compact 端点。
+- **自动（auto）**：先调用原生 `/responses/compact`；端点返回 404 / 405 / 501，或 403 且
+  明确提示 `This ChatPass credential is not authorized for the requested operation.` 时，
+  使用同一账号和所选压缩模型生成续接摘要。模型被该账号或分组禁用时明确返回错误。
+- **关闭（off）**：只调用原生端点，不进行模型摘要回退；仍可读取之前生成的网关摘要。
+
+开启模式在请求规则和账号选择前应用压缩模型，规则可继续改写或拒绝请求；模型禁用策略
+始终生效。自动模式的原生请求保留客户端模型，仅在回退时改用所选压缩模型。
+原生压缩需要当前上游端点和账号凭据支持；允许输入压缩摘要不等于授予该端点权限。
+摘要调用不提供工具，不向客户端透出摘要生成过程，按实际压缩模型记录用量和费用。
+自动模式遇到原生端点的 401、429、其他权限错误及服务故障时不会转为摘要；
+429 仍遵守已配置的换号重试策略，摘要调用的重试继续使用摘要模型。
 回退结果保留 `response.compaction` / `compaction` 的客户端结构，使用带
 `pi_compact_v1:` 前缀的网关 AES-GCM 加密内容。下一轮在网关中校验并还原为历史摘要消息，
 也支持再次压缩；原生压缩项仍原样透传。摘要绑定客户端 API Key ID，使用数据库中持久化的

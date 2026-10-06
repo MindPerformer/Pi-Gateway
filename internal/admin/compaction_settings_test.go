@@ -1,0 +1,57 @@
+package admin
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+
+	"pi-gateway/internal/accounts"
+	"pi-gateway/internal/config"
+	"pi-gateway/internal/settings"
+	"pi-gateway/internal/store"
+)
+
+func TestCompactionSettingsValidationAndCatalog(t *testing.T) {
+	st := newAdminTestStore(t)
+	ctx := context.Background()
+	cfg := config.Default()
+	holder := settings.New(st, cfg)
+	if err := holder.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{cfg: cfg, store: st, settings: holder, accounts: accounts.New(st, nil, nil, accounts.Options{})}
+	a := &store.Account{Name: "catalog", Enabled: true, SupplementalModels: []string{"custom-summary"}}
+	if err := st.CreateAccount(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	out := policyRequest(t, s.handleGetSettings, "GET", 0, "", 200)
+	var ids []string
+	if err := json.Unmarshal(out["compaction_models"], &ids); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ids, []string{"custom-summary", "gpt-6-luna"}) {
+		t.Fatalf("suggestions=%v", ids)
+	}
+	if holder.Get().CompactionMode != "on" || holder.Get().CompactionModel != "gpt-6-luna" {
+		t.Fatal("wrong defaults")
+	}
+	policyRequest(t, s.handlePutSettings, "PUT", 0, `{"compaction_mode":"auto","compaction_model":" custom-summary "}`, 200)
+	if holder.Get().CompactionMode != "auto" || holder.Get().CompactionModel != "custom-summary" {
+		t.Fatal("settings not applied")
+	}
+	for _, body := range []string{`{"compaction_mode":"unknown"}`, `{"compaction_model":""}`, `{"compaction_model":"model with spaces"}`, `{"compaction_model":"line\nbreak"}`, `{"compaction_model":"` + strings.Repeat("x", 257) + `"}`} {
+		policyRequest(t, s.handlePutSettings, "PUT", 0, body, 400)
+		if holder.Get().CompactionMode != "auto" || holder.Get().CompactionModel != "custom-summary" {
+			t.Fatal("invalid request changed settings")
+		}
+	}
+	policyRequest(t, s.handlePutSettings, "PUT", 0, `{"compaction_mode":"off"}`, 200)
+	if err := holder.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if holder.Get().CompactionMode != "off" || holder.Get().CompactionModel != "custom-summary" {
+		t.Fatal("settings did not survive reload")
+	}
+}

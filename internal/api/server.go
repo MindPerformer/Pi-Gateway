@@ -113,6 +113,8 @@ func (s *Server) Routes(mux *http.ServeMux) {
 
 // prepared is one fully validated, middleware-processed request.
 type prepared struct {
+	CompactionMode     string
+	CompactionModel    string
 	Compact            bool
 	CompactDirect      bool
 	Key                *store.APIKey
@@ -194,6 +196,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		built.JSON, _ = json.Marshal(built.Body)
 	}
 	p := &prepared{
+		CompactionMode: rt.CompactionMode, CompactionModel: rt.CompactionModel,
 		Compact: compact, CompactDirect: compactDirect,
 		Key: key, ClientBody: clientBody, ClientHeaders: r.Header.Clone(), Built: built, SessionID: sessionID,
 		WireSessionID: promptCacheKey, PoolSessionID: poolSessionID(ctx, sessionID),
@@ -209,8 +212,19 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		p.Recorder = s.newRecorder(key, nil, clientTransport, "", built)
 		p.Recorder.OnClientRequest(r.Header, rawBody)
 	}
+	if compact && p.CompactionMode == "on" {
+		before, _ := json.Marshal(built.Body)
+		built.Body.Set("model", p.CompactionModel)
+		built.Model = p.CompactionModel
+		built.JSON, _ = json.Marshal(built.Body)
+		p.RuleContext["model"] = built.Model
+		p.recordGatewayDifference("compaction_model", "Model summary configuration", before, built.JSON)
+	}
 	if apiErr := s.applyRequestRules(ctx, p); apiErr != nil {
 		return p, apiErr
+	}
+	if compact && p.CompactionMode == "on" {
+		p.CompactionModel = built.Model
 	}
 
 	// Enforce transport invariants independently of user rules, with a distinct
@@ -234,7 +248,11 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		p.recordGatewayDifference("pi_shape", "Pi protocol invariants", beforeShape, built.JSON)
 	}
 	if p.Compact {
-		p.recordGatewayDifference("compaction", "Native compaction request", beforeShape, built.JSON)
+		name := "Native compaction request"
+		if p.CompactionMode == "on" {
+			name = "Model summary compaction request"
+		}
+		p.recordGatewayDifference("compaction", name, beforeShape, built.JSON)
 	}
 	built.SessionID = sessionID
 	rawPrevious, _ := built.Body.Get("previous_response_id")

@@ -141,6 +141,11 @@ func (c *Client) Close() { c.pool.closeAll() }
 
 // Request describes one upstream call.
 type Request struct {
+	// CompactionMode: on uses model summaries directly, auto tries native first,
+	// off uses native only. Empty keeps auto for internal legacy callers.
+	CompactionMode  string
+	CompactionModel string
+	BeforeSummary   func(context.Context, string) error
 	// Compact invokes the native HTTP compaction endpoint. CompactDirect keeps
 	// its JSON response shape; otherwise it is adapted into Responses events.
 	Compact       bool
@@ -195,6 +200,13 @@ func (c *Client) Stream(ctx context.Context, req *Request, onEvent func(*Event) 
 	copyReq.Body = body
 	req = &copyReq
 	if req.Compact {
+		switch req.CompactionMode {
+		case "on":
+			return c.streamSummaryCompact(ctx, req, onEvent)
+		case "", "auto", "off":
+		default:
+			return nil, &FailureError{Code: "invalid_compaction_mode", Status: 400, Message: "compaction_mode must be auto, on or off"}
+		}
 		return c.streamCompact(ctx, req, onEvent)
 	}
 	previous, err := requestPreviousID(req)

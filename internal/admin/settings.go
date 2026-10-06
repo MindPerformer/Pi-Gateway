@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"unicode"
 
 	"pi-gateway/internal/config"
 	"pi-gateway/internal/middleware"
@@ -13,8 +14,10 @@ import (
 
 // settingsView is the runtime settings plus the read-only defaults.
 type settingsView struct {
-	Current  *store.Settings `json:"current"`
-	Defaults store.Settings  `json:"defaults"`
+	CompactionModels      []string        `json:"compaction_models"`
+	CompactionModelsError bool            `json:"compaction_models_error,omitempty"`
+	Current               *store.Settings `json:"current"`
+	Defaults              store.Settings  `json:"defaults"`
 	// Enums help the UI render valid choices.
 	Transports []string `json:"transports"`
 	Strategies []string `json:"strategies"`
@@ -40,7 +43,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Data.Driver == "sqlite" && s.cfg.Data.DSN == "" {
 		database = s.cfg.Data.Database
 	}
+	models, catalogErr := s.compactionModelOptions(r)
 	writeJSON(w, http.StatusOK, settingsView{
+		CompactionModels: models, CompactionModelsError: catalogErr != nil,
 		Current:    s.settings.Get(),
 		Defaults:   s.settings.Defaults(),
 		Transports: config.ValidTransports,
@@ -58,10 +63,60 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Suggestions use local catalogs only; opening settings never probes upstream.
+func (s *Server) compactionModelOptions(r *http.Request) ([]string, error) {
+	current := s.settings.Get()
+	seen := map[string]bool{store.DefaultCompactionModel: true}
+	for _, name := range []string{current.CompactionModel, current.DefaultModel} {
+		if name != "" {
+			seen[name] = true
+		}
+	}
+	list := func() []string {
+		out := make([]string, 0, len(seen))
+		for name := range seen {
+			out = append(out, name)
+		}
+		sort.Strings(out)
+		return out
+	}
+	accounts, err := s.store.ListAccounts(r.Context())
+	if err != nil {
+		return list(), err
+	}
+	ids := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		if account.Enabled {
+			ids = append(ids, account.ID)
+		}
+	}
+	catalogs, err := s.store.GetAccountModelCatalogs(r.Context(), ids)
+	if err != nil {
+		return list(), err
+	}
+	for _, catalog := range catalogs {
+		for _, model := range catalog.Models {
+			if model.ID != "" {
+				seen[model.ID] = true
+			}
+		}
+	}
+	return list(), nil
+}
+
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	body := *s.settings.Get()
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !contains([]string{"auto", "on", "off"}, body.CompactionMode) {
+		writeErr(w, 400, "compaction_mode must be auto, on or off")
+		return
+	}
+	body.CompactionModel = strings.TrimSpace(body.CompactionModel)
+	if body.CompactionModel == "" || len(body.CompactionModel) > 256 || strings.IndexFunc(body.CompactionModel, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		writeErr(w, 400, "compaction_model must be a nonempty model ID of at most 256 bytes without whitespace")
 		return
 	}
 	if body.UpstreamTransport == "" || !contains(config.ValidTransports, body.UpstreamTransport) {

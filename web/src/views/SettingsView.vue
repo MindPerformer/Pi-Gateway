@@ -28,7 +28,7 @@ async function load() {
 	try {
 		const result = await api.getSettings()
 		data.value = result
-		form.value = { ...result.current, switch_on_429: result.current.switch_on_429 ?? true, account_cooldown_seconds: result.current.account_cooldown_seconds ?? 60, max_attempts: result.current.max_attempts ?? 2 }
+		form.value = { ...result.current, compaction_mode: result.current.compaction_mode || 'on', compaction_model: result.current.compaction_model || 'gpt-6-luna', switch_on_429: result.current.switch_on_429 ?? true, account_cooldown_seconds: result.current.account_cooldown_seconds ?? 60, max_attempts: result.current.max_attempts ?? 2 }
 		mappingText.value = JSON.stringify(result.current.model_mappings ?? {}, null, 2)
 	} catch (err) {
 		toast.error(err instanceof Error ? err.message : 'failed to load settings')
@@ -78,6 +78,7 @@ async function changePassword() {
 }
 
 const builtinUserAgent = computed(() => data.value?.current.user_agent || 'pi (linux 6.1.0; x64)')
+const compactionModels = computed(() => [...new Set(['gpt-6-luna', form.value?.compaction_model, form.value?.default_model, ...(data.value?.compaction_models ?? [])].filter((model): model is string => !!model))].sort())
 </script>
 
 <template>
@@ -150,6 +151,22 @@ const builtinUserAgent = computed(() => data.value?.current.user_agent || 'pi (l
 				<div class="card panel-content">
 					<h2 class="section-title"><Sparkles aria-hidden="true" />{{ t('settings.modelsSection') }}</h2>
 					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label class="label" for="s-compaction-mode">{{ t('settings.compactionMode') }}</label>
+							<select id="s-compaction-mode" v-model="form.compaction_mode" class="input" aria-describedby="s-compaction-hint">
+								<option value="auto">{{ t('settings.compactionAuto') }}</option>
+									<option value="on">{{ t('settings.compactionOn') }}</option>
+									<option value="off">{{ t('settings.compactionOff') }}</option>
+								</select>
+							<p id="s-compaction-hint" class="setting-option-hint">{{ t('settings.compactionHint') }}</p>
+						</div>
+						<div>
+							<label class="label" for="s-compaction-model">{{ t('settings.compactionModel') }}</label>
+							<input id="s-compaction-model" v-model="form.compaction_model" list="compaction-models" class="input font-mono" placeholder="gpt-6-luna" :disabled="form.compaction_mode === 'off'" aria-describedby="s-compaction-model-hint" />
+							<datalist id="compaction-models"><option v-for="model in compactionModels" :key="model" :value="model" /></datalist>
+							<p id="s-compaction-model-hint" class="setting-option-hint">{{ t('settings.compactionModelHint') }}</p>
+							<p v-if="data?.compaction_models_error" class="setting-option-hint">{{ t('settings.compactionCatalogError') }}</p>
+						</div>
 						<div>
 							<label class="label" for="s-model">{{ t('settings.defaultModel') }}</label>
 							<input id="s-model" v-model="form.default_model" class="input font-mono" :placeholder="data?.current.default_model || 'YOUR_MODEL'" />

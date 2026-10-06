@@ -125,9 +125,10 @@ func (s *Store) FinishUsageRecord(ctx context.Context, id int64, r *UsageRecord)
 	res, err := s.ExecContext(ctx, `UPDATE usage_records SET outcome=?,status_code=?,error_code=?,error_message=?,upstream_send_state=?,
  input_tokens=?,cached_tokens=?,cache_write_tokens=?,output_tokens=?,reasoning_tokens=?,total_tokens=?,
  connect_ms=?,headers_ms=?,first_event_ms=?,first_token_ms=?,latency_ms=?,cost_micros=?,cost_source=?,price_version=?,completed_at=?,
- upstream_transport=CASE WHEN ?='' THEN upstream_transport ELSE ? END WHERE id=?`,
+	 upstream_transport=CASE WHEN ?='' THEN upstream_transport ELSE ? END,
+	 model=CASE WHEN ?='' THEN model ELSE ? END WHERE id=?`,
 		r.Outcome, r.StatusCode, r.ErrorCode, r.ErrorMessage, r.UpstreamSendState, r.InputTokens, r.CachedTokens, r.CacheWriteTokens, r.OutputTokens, r.ReasoningTokens, r.TotalTokens,
-		r.ConnectMS, r.HeadersMS, r.FirstEventMS, r.FirstTokenMS, r.LatencyMS, r.CostMicros, r.CostSource, r.PriceVersion, r.CompletedAt, r.UpstreamTransport, r.UpstreamTransport, id)
+		r.ConnectMS, r.HeadersMS, r.FirstEventMS, r.FirstTokenMS, r.LatencyMS, r.CostMicros, r.CostSource, r.PriceVersion, r.CompletedAt, r.UpstreamTransport, r.UpstreamTransport, r.Model, r.Model, id)
 	if err != nil {
 		return err
 	}

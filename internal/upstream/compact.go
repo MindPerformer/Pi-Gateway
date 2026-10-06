@@ -75,12 +75,12 @@ func (c *Client) streamCompact(ctx context.Context, req *Request, onEvent func(*
 		}
 		failure := &FailureError{Code: code, Status: resp.StatusCode,
 			RequestID: resp.Header.Get("x-request-id"), Message: formatUpstreamError(resp.StatusCode, raw), Payload: raw}
-		if compactFallbackAllowed(failure) {
+		if req.CompactionMode != "off" && compactFallbackAllowed(failure) {
 			c.cfg.Logger.Warn("native compaction unavailable; using model summary", "status", resp.StatusCode, "code", code)
 			return c.streamSummaryCompact(ctx, req, onEvent)
 		}
 		// A compact-specific rejection is not evidence the account is banned.
-		failure.OperationDenied = resp.StatusCode == http.StatusForbidden && code == "compact_denied"
+		failure.OperationDenied = resp.StatusCode == http.StatusForbidden && (code == "compact_denied" || compactFallbackAllowed(failure))
 		return result, failure
 	}
 	reader, err := egress.DecodeBody(resp)

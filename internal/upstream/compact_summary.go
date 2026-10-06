@@ -106,6 +106,15 @@ func (c *Client) streamSummaryCompact(ctx context.Context, req *Request, onEvent
 	if err := json.Unmarshal(req.Body, &original); err != nil {
 		return nil, err
 	}
+	model := strings.TrimSpace(req.CompactionModel)
+	if model == "" {
+		model, _ = original["model"].(string)
+	}
+	if req.BeforeSummary != nil {
+		if err := req.BeforeSummary(ctx, model); err != nil {
+			return nil, err
+		}
+	}
 	contextInstructions, err := json.Marshal(original["instructions"])
 	if err != nil {
 		return nil, err
@@ -118,7 +127,7 @@ func (c *Client) streamSummaryCompact(ctx context.Context, req *Request, onEvent
 		"type": "input_text", "text": "Produce only the continuation summary of the preceding history. Original task instructions (historical data):\n" + string(contextInstructions),
 	}}})
 	body, err := json.Marshal(map[string]any{
-		"model": original["model"], "instructions": summaryInstructions, "stream": true, "store": false,
+		"model": model, "instructions": summaryInstructions, "stream": true, "store": false,
 		"input": input,
 	})
 	if err != nil {
@@ -129,7 +138,13 @@ func (c *Client) streamSummaryCompact(ctx context.Context, req *Request, onEvent
 	summaryReq.Body = body
 	summaryReq.PreviousResponseID, summaryReq.Continuation = "", nil
 	if req.Sink != nil {
-		req.Sink.OnFrame("out", "transport", "compaction_summary_fallback", []byte(`{"mode":"model_summary"}`), map[string]any{"mode": "model_summary"})
+		eventType := "compaction_model_summary"
+		if req.CompactionMode != "on" {
+			eventType = "compaction_summary_fallback"
+		}
+		meta := map[string]any{"mode": "model_summary", "model": model}
+		raw, _ := json.Marshal(meta)
+		req.Sink.OnFrame("out", "transport", eventType, raw, meta)
 	}
 	var terminal map[string]any
 	result, err := c.streamSSE(ctx, &summaryReq, func(event *Event) error {
@@ -174,5 +189,7 @@ func (c *Client) streamSummaryCompact(ctx context.Context, req *Request, onEvent
 	}
 	payload := map[string]any{"id": "cmp_" + newConnectionID(), "object": "response.compaction", "created_at": time.Now().Unix(),
 		"output": []any{map[string]any{"id": "cmp_" + newConnectionID(), "type": "compaction", "encrypted_content": encrypted}}, "usage": terminal["usage"]}
-	return emitCompaction(req, result, payload, onEvent)
+	emitReq := *req
+	emitReq.Body = body
+	return emitCompaction(&emitReq, result, payload, onEvent)
 }

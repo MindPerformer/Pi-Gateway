@@ -29,6 +29,7 @@ func New(st *store.Store, cfg *config.Config) *Holder {
 // DefaultsFromConfig derives runtime defaults from the config file.
 func DefaultsFromConfig(cfg *config.Config) store.Settings {
 	return store.Settings{
+		CompactionMode: store.DefaultCompactionMode, CompactionModel: store.DefaultCompactionModel,
 		SwitchOn429: true, AccountCooldownSeconds: 60, MaxAttempts: 2,
 		UpstreamTransport: cfg.Upstream.Transport,
 		CaptureEnabled:    cfg.Capture.Enabled,

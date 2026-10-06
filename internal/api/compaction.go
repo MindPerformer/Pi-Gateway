@@ -1,11 +1,48 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"pi-gateway/internal/piwire"
+	"pi-gateway/internal/upstream"
 )
+
+// Auto mode keeps the selected native account. Check its current account/group
+// policies for the summary model before a second request, and account for the
+// actual model used rather than the client's native compaction model.
+func (s *Server) prepareSummaryModel(ctx context.Context, p *prepared, model string) error {
+	denied, err := s.store.DisabledModelsForAccount(ctx, p.Account.ID, p.Key)
+	if err != nil {
+		return err
+	}
+	for _, blocked := range denied {
+		if blocked == model {
+			return &upstream.FailureError{Status: 403, Code: "model_disabled", Message: "The configured compaction model is disabled for the selected account or groups.", OperationDenied: true}
+		}
+	}
+	// Once auto has selected the summary operation, retries must reserve accounts
+	// for that model and send summaries directly. Response rules see the actual
+	// model too, while the global mode remains unchanged.
+	p.CompactionMode = "on"
+	p.Built.Model = model
+	p.Built.Body.Set("model", model)
+	p.Built.JSON, err = json.Marshal(p.Built.Body)
+	if err != nil {
+		return err
+	}
+	if p.Usage != nil {
+		p.Usage.model = model
+		p.Usage.status = 0 // Summary headers supersede a native endpoint rejection.
+	}
+	p.RuleContext["model"] = model
+	if p.Recorder != nil {
+		p.Recorder.SetRoute(p.Account.ID, p.Account.Name, model, p.SessionID, p.Transport)
+	}
+	return nil
+}
 
 // Detect the operation before user rules run: dropping the trigger must not
 // accidentally turn a compaction request into another model/tool execution.

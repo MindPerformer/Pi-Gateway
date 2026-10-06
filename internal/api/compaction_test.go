@@ -55,6 +55,7 @@ func TestSummaryCompactionHTTPContinuationAndRecompact(t *testing.T) {
 				}
 				_, _ = io.WriteString(w, terminalSSE)
 			}), "sse")
+			setCompactionMode(t, h, "auto")
 			path := "/v1/responses/compact"
 			if stream {
 				path = "/v1/responses"
@@ -103,6 +104,7 @@ func TestSummaryCompactionWebSocket(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"WS summary"}]}]}}`+"\n\n")
 	}), "websocket-cached")
+	setCompactionMode(t, h, "auto")
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(h.server.URL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer " + h.key}})
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +137,7 @@ func TestCompactDenialDoesNotBanAccount(t *testing.T) {
 		w.WriteHeader(403)
 		_, _ = io.WriteString(w, `{"error":{"code":"compact_denied","message":"compaction unavailable"}}`)
 	}), "sse")
+	setCompactionMode(t, h, "auto")
 	resp, _ := postCompactTest(t, h, "/v1/responses/compact", `{"model":"test","input":[]}`)
 	if resp.StatusCode != 403 {
 		t.Fatalf("status=%d", resp.StatusCode)
@@ -142,6 +145,15 @@ func TestCompactDenialDoesNotBanAccount(t *testing.T) {
 	a, err := h.store.GetAccount(context.Background(), h.accountID)
 	if err != nil || a.Status != store.AccountStatusReady {
 		t.Fatalf("operation denial banned account: %+v %v", a, err)
+	}
+}
+
+func setCompactionMode(t *testing.T, h *testHarness, mode string) {
+	t.Helper()
+	rt := h.dataPlane.settings.Get()
+	rt.CompactionMode = mode
+	if err := h.dataPlane.settings.Set(context.Background(), rt); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -260,6 +272,7 @@ func TestCompactionHTTPAndNextTurn(t *testing.T) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				_, _ = io.WriteString(w, terminalSSE)
 			}), "websocket-cached")
+			setCompactionMode(t, h, "auto")
 			body := fmt.Sprintf(`{"model":"test","input":%s,"instructions":"Preserve requirements","stream":%t,"tools":[{"type":"function","name":"dangerous","parameters":{}}]}`, compactHistory, tc.stream)
 			resp, raw := postCompactTest(t, h, tc.path, body)
 			if resp.StatusCode != 200 {
@@ -296,6 +309,7 @@ func TestCompactionWSReturnsItems(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, compactFixture)
 	}), "websocket-cached")
+	setCompactionMode(t, h, "auto")
 	header := http.Header{"Authorization": []string{"Bearer " + h.key}}
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(h.server.URL, "http")+"/v1/responses", header)
 	if err != nil {
@@ -329,6 +343,7 @@ func TestCompactionWSReturnsItems(t *testing.T) {
 func TestCompactionRejectsIncompleteOrMalformedRequests(t *testing.T) {
 	var calls atomic.Int32
 	h := newHarness(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }), "sse")
+	setCompactionMode(t, h, "auto")
 	for _, tc := range []struct{ path, body string }{
 		{"/v1/responses", `{"model":"test","input":[{"type":"compaction_trigger"},{"role":"user","content":"hi"}]}`},
 		{"/v1/responses", `{"model":"test","input":` + compactHistory + `,"previous_response_id":"resp_old"}`},
@@ -356,6 +371,7 @@ func TestCompactionCaptureAndRejection(t *testing.T) {
 					_, _ = io.WriteString(w, `{"error":{"code":"compact_denied","message":"compaction unavailable"}}`)
 				}
 			}), "sse")
+			setCompactionMode(t, h, "auto")
 			resp, raw, record := capturedHTTPResponse(t, h, `{"model":"test","input":`+compactHistory+`,"stream":true}`)
 			if resp.StatusCode != status || !strings.HasSuffix(record.URL, "/responses/compact") {
 				t.Fatalf("status=%d record=%+v body=%s", resp.StatusCode, record, raw)
@@ -392,6 +408,7 @@ func TestCompactionPolicyCannotLoseOperationOrRestoreInstructions(t *testing.T) 
 		}
 		_, _ = io.WriteString(w, compactFixture)
 	}), "sse")
+	setCompactionMode(t, h, "auto")
 	publishUnifiedRules(t, h, unifiedRule("compact-policy", rules.PhaseRequest, 1,
 		unifiedAction("drop-trigger", "drop_input_items", map[string]any{"types": []any{"compaction_trigger"}}),
 		unifiedAction("remove-instructions", "json_remove", map[string]any{"paths": []any{"/instructions"}}),
@@ -417,6 +434,7 @@ func TestCompaction429RetryKeepsHTTPCompaction(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, compactFixture)
 	}), "websocket-cached")
+	setCompactionMode(t, h, "auto")
 	ctx := context.Background()
 	a := &store.Account{Name: "second", AccountID: "acct-second", AccessToken: fakeJWT(t, "acct-second"), ExpiresAt: time.Now().Add(time.Hour).UnixMilli(), Enabled: true, Weight: 1, Concurrency: 3, Status: store.AccountStatusReady}
 	if err := h.store.CreateAccount(ctx, a); err != nil {

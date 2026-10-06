@@ -10,7 +10,9 @@ import (
 
 // Settings holds the runtime-adjustable knobs that override config defaults.
 type Settings struct {
-	SwitchOn429 bool `json:"switch_on_429"`
+	SwitchOn429     bool   `json:"switch_on_429"`
+	CompactionMode  string `json:"compaction_mode"`
+	CompactionModel string `json:"compaction_model"`
 
 	UpstreamTransport             string            `json:"upstream_transport"`
 	CaptureEnabled                bool              `json:"capture_enabled"`
@@ -37,7 +39,9 @@ type Settings struct {
 }
 
 const (
-	settingPrefix = "settings."
+	settingPrefix          = "settings."
+	DefaultCompactionMode  = "on"
+	DefaultCompactionModel = "gpt-6-luna"
 )
 
 // LoadSettings reads the runtime settings row, falling back to the supplied defaults.
@@ -47,6 +51,12 @@ func (s *Store) LoadSettings(ctx context.Context, defaults *Settings) (*Settings
 		out = *defaults
 	}
 	out.SwitchOn429 = true
+	if out.CompactionMode == "" {
+		out.CompactionMode = DefaultCompactionMode
+	}
+	if out.CompactionModel == "" {
+		out.CompactionModel = DefaultCompactionModel
+	}
 	// New knobs have store-level defaults so older config callers also get the
 	// frozen behavior. Persisted values (including zero) still override these.
 	if out.RotationStrategy == "" {
@@ -110,6 +120,12 @@ func (s *Store) LoadSettings(ctx context.Context, defaults *Settings) (*Settings
 		out.UpstreamTransport = v
 	}
 	getBool("switch_on_429", &out.SwitchOn429)
+	if v, ok := getStr("compaction_mode"); ok && v != "" {
+		out.CompactionMode = v
+	}
+	if v, ok := getStr("compaction_model"); ok && v != "" {
+		out.CompactionModel = v
+	}
 	getBool("capture_enabled", &out.CaptureEnabled)
 	getInt("capture_limit", &out.CaptureLimit)
 	if v, ok := getStr("default_model"); ok {
@@ -164,6 +180,8 @@ func (s *Store) SaveSettings(ctx context.Context, in *Settings) error {
 		return fmt.Errorf("store: encode model mappings: %w", err)
 	}
 	pairs := map[string]string{
+		"compaction_mode":                  in.CompactionMode,
+		"compaction_model":                 in.CompactionModel,
 		"switch_on_429":                    fmt.Sprintf("%t", in.SwitchOn429),
 		"upstream_transport":               in.UpstreamTransport,
 		"capture_enabled":                  fmt.Sprintf("%t", in.CaptureEnabled),

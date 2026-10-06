@@ -180,6 +180,10 @@ export const api = {
     async refreshAccount(id: number) {
         return request<{ account: Account }>(`/api/accounts/${id}/refresh`, {method: 'POST'})
     },
+
+    async recoverAccount(id: number) {
+        return request<{ account: Account }>(`/api/accounts/${id}/recover`, {method: 'POST'})
+    },
     async testProxy(id: number, proxyUrl?: string) {
         return request<ProxyTestResult>(
             `/api/accounts/${id}/test-proxy`,

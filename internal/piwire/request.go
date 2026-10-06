@@ -22,9 +22,8 @@ type BuildOptions struct {
 	// session headers and the upstream socket pool) is tracked separately and must
 	// never be passed here, or a generated id would leak into the body.
 	SessionID string
-	// ExtraFields are additional client fields allowed through untouched.
-	// Pi itself only ever sends the fields below, so anything else is dropped by
-	// default to keep the upstream payload byte-shape identical to Pi's.
+	// ExtraFields is retained for compatibility. Non-rejected client fields now
+	// pass through by default; this cannot override route constraints.
 	ExtraFields []string
 }
 
@@ -36,14 +35,9 @@ type BuiltRequest struct {
 	SessionID string
 }
 
-// BuildRequest converts a client Responses API payload into the exact body Pi sends
-// on the Sign in with ChatGPT route (api/openai-responses.ts).
-//
-// Key order follows Pi's object construction: model, input, stream,
-// prompt_cache_key, store, [service_tier], [tools], [tool_choice], [reasoning],
-// [include], [previous_response_id]. Sign in with ChatGPT rejects
-// temperature/max_output_tokens and Pi never sends
-// prompt_cache_retention/prompt_cache_options on this route, so those are dropped.
+// BuildRequest normalises a Sign in with ChatGPT Responses payload. Core keys
+// retain Pi's order; other client fields pass through unless the preview docs
+// explicitly reject them. Continuation is validated separately by the gateway.
 func BuildRequest(client map[string]any, o BuildOptions) (*BuiltRequest, error) {
 	if client == nil {
 		client = map[string]any{}
@@ -83,9 +77,6 @@ func BuildRequest(client map[string]any, o BuildOptions) (*BuiltRequest, error) 
 	// ChatGPT rejects store:true for subscription accounts ("Store must be set to false").
 	body.Set("store", false)
 
-	// Sign in with ChatGPT rejects temperature and max_output_tokens, and Pi's
-	// openai-responses path never sends prompt_cache_retention/prompt_cache_options,
-	// so none of them are included here.
 	if v, ok := client["service_tier"]; ok && v != nil {
 		body.Set("service_tier", v)
 	}
@@ -116,18 +107,23 @@ func BuildRequest(client map[string]any, o BuildOptions) (*BuiltRequest, error) 
 		body.SetLast("previous_response_id", v)
 	}
 
-	// Optional pass-through of extra client fields (disabled by default).
-	for _, field := range o.ExtraFields {
-		if field == "" {
+	// Preserve extensions and model-specific options, including false, null and
+	// nested values. Never restore a field already owned by normalisation.
+	var extraKeys []string
+	for field := range client {
+		switch field {
+		case "model", "input", "stream", "store", "prompt_cache_key", "service_tier", "tools", "tool_choice", "reasoning", "include", "previous_response_id", "type":
 			continue
 		}
-		if body.Has(field) {
-			continue
-		}
-		if v, ok := client[field]; ok && v != nil {
-			body.SetLast(field, v)
+		if !isChatGPTRejectedField(field) {
+			extraKeys = append(extraKeys, field)
 		}
 	}
+	sort.Strings(extraKeys)
+	for _, field := range extraKeys {
+		body.Set(field, client[field])
+	}
+	EnforcePiShape(body)
 
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -136,18 +132,37 @@ func BuildRequest(client map[string]any, o BuildOptions) (*BuiltRequest, error) 
 	return &BuiltRequest{Body: body, JSON: raw, Model: model, SessionID: o.SessionID}, nil
 }
 
-// chatgptRejectedFields are the fields the Sign in with ChatGPT route refuses
-// outright, or that Pi never sends there. They are enforced again after the
-// middleware chain so a passthrough/drop middleware cannot reintroduce them and
-// make the upstream reject the request.
+// chatgptRejectedFields follows the preview limitations for this route:
+// https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
+// previous_response_id is handled by connection-local continuation validation,
+// rather than this transport-independent field filter.
 var chatgptRejectedFields = []string{
-	"instructions",
-	"text",
-	"temperature",
+	"background",
+	"conversation",
 	"max_output_tokens",
-	"parallel_tool_calls",
+	"max_tool_calls",
+	"metadata",
+	"moderation",
+	"multi_agent",
+	"prompt",
 	"prompt_cache_retention",
-	"prompt_cache_options",
+	"safety_identifier",
+	"temperature",
+	"top_logprobs",
+	"top_p",
+	"truncation",
+	"user",
+	// The WebSocket envelope is added by the transport, never by client fields.
+	"type",
+}
+
+func isChatGPTRejectedField(field string) bool {
+	for _, rejected := range chatgptRejectedFields {
+		if field == rejected {
+			return true
+		}
+	}
+	return false
 }
 
 // EnforcePiShape re-applies the route invariants to a body that middleware may
@@ -155,9 +170,8 @@ var chatgptRejectedFields = []string{
 // true, and previous_response_id is moved back to the end where Pi spreads it. It
 // reports what it changed so the capture can note it.
 //
-// Fields that are legitimate parts of the Responses API but simply not sent by Pi
-// (metadata, truncation, top_p, …) are left alone: an operator who explicitly opts
-// into passthrough keeps that choice.
+// Fields not forbidden by the preview docs are preserved, including instructions,
+// text options and parallel_tool_calls. A model may still reject an option.
 func EnforcePiShape(body *OrderedMap) []string {
 	if body == nil {
 		return nil
@@ -219,14 +233,11 @@ func buildReasoning(client map[string]any, o BuildOptions) map[string]any {
 		switch t := raw.(type) {
 		case map[string]any:
 			effort := getString(t, "effort")
-			summary := getString(t, "summary")
-			out := map[string]any{}
-			if effort != "" {
-				out["effort"] = effort
+			out := make(map[string]any, len(t)+1)
+			for key, value := range t {
+				out[key] = value
 			}
-			if summary != "" {
-				out["summary"] = summary
-			} else if o.DefaultReasoningSummary != "" && effort != "" {
+			if _, present := t["summary"]; !present && o.DefaultReasoningSummary != "" && effort != "" {
 				out["summary"] = o.DefaultReasoningSummary
 			}
 			if len(out) == 0 {

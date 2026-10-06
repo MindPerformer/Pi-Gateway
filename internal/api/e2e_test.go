@@ -263,6 +263,10 @@ func newHarnessWithStore(t *testing.T, upstreamHandler http.Handler, transport s
 		Sessions:   sessions,
 		Logger:     discardLogger(),
 	}
+	upstreamCfg.CompactionKey, err = st.CompactionKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if sessions != nil {
 		// Real service CI can take longer than the production best-effort cache
 		// deadline; still bound the test and require every completed write.
@@ -340,6 +344,8 @@ func TestSSERequestReproducesPiWireShape(t *testing.T) {
 	body := `{
 		"model": "gpt-5.1-codex",
 		"instructions": "You are Pi.",
+		"text": {"verbosity":"high","format":{"type":"text"}},
+		"parallel_tool_calls": false,
 		"input": [{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],
 		"stream": true,
 		"prompt_cache_key": "session-abc",
@@ -448,10 +454,17 @@ func TestSSERequestReproducesPiWireShape(t *testing.T) {
 		t.Errorf("reasoning.effort = %v, want medium", reasoning["effort"])
 	}
 	// Sign in with ChatGPT rejects these, and Pi never sends them on this route.
-	for _, dropped := range []string{"metadata", "max_output_tokens", "temperature", "instructions", "text", "parallel_tool_calls", "tool_choice"} {
+	for _, dropped := range []string{"metadata", "max_output_tokens", "temperature", "tool_choice"} {
 		if _, exists := sent[dropped]; exists {
 			t.Errorf("%s was forwarded upstream; it must be dropped", dropped)
 		}
+	}
+	if sent["instructions"] != "You are Pi." || sent["parallel_tool_calls"] != false {
+		t.Errorf("client instructions/parallel_tool_calls changed: %s", sentBody)
+	}
+	text, _ := sent["text"].(map[string]any)
+	if text["verbosity"] != "high" {
+		t.Errorf("text.verbosity lost: %s", sentBody)
 	}
 
 	// Pi serialises in a fixed key order; verify the prefix matches byte for byte.
@@ -954,7 +967,7 @@ func TestWebSocketClientAndUpstream(t *testing.T) {
 	if !strings.HasPrefix(sentFrame, `{"type":"response.create","model":"gpt-5.1-codex","input":`) {
 		t.Errorf("upstream websocket frame is not Pi-shaped:\n%s", sentFrame)
 	}
-	if !strings.Contains(sentFrame, `"stream":true,`) || !strings.HasSuffix(sentFrame, `"store":false}`) {
+	if !strings.Contains(sentFrame, `"stream":true,`) || !strings.Contains(sentFrame, `"store":false`) || !strings.Contains(sentFrame, `"instructions":"hi"`) {
 		t.Errorf("upstream websocket frame lacks Pi's field order:\n%s", sentFrame)
 	}
 }

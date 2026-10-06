@@ -525,6 +525,26 @@ func (s *Store) SetAccountStatus(ctx context.Context, id int64, status, lastErr 
 	return nil
 }
 
+// RecoverAccount clears health failures so the administrator can retry the
+// existing credential. It does not enable disabled accounts or alter quota,
+// credentials, lifetime usage, model policies, or in-flight concurrency.
+func (s *Store) RecoverAccount(ctx context.Context, id int64) error {
+	result, err := s.ExecContext(ctx, `UPDATE accounts SET status=?,last_error='',
+ consecutive_failures=0,cooldown_until=0,cooldown_kind='',ewma_failure_rate_bp=0,
+ updated_at=? WHERE id=?`, AccountStatusReady, NowMS(), id)
+	if err != nil {
+		return fmt.Errorf("store: recover account: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("store: account not found")
+	}
+	return nil
+}
+
 // SaveAccountQuotaIfCurrent persists quota only while the same Codex refresh token
 // remains attached. An unlink or relink causes a compare-and-swap failure.
 func (s *Store) SaveAccountQuotaIfCurrent(ctx context.Context, id int64, expectedRefresh, snapshotJSON, planType, quotaErr string) error {

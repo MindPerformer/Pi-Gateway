@@ -73,8 +73,15 @@ func (c *Client) streamCompact(ctx context.Context, req *Request, onEvent func(*
 		if code == "" {
 			code = fmt.Sprintf("http_%d", resp.StatusCode)
 		}
-		return result, &FailureError{Code: code, Status: resp.StatusCode,
+		failure := &FailureError{Code: code, Status: resp.StatusCode,
 			RequestID: resp.Header.Get("x-request-id"), Message: formatUpstreamError(resp.StatusCode, raw), Payload: raw}
+		if compactFallbackAllowed(failure) {
+			c.cfg.Logger.Warn("native compaction unavailable; using model summary", "status", resp.StatusCode, "code", code)
+			return c.streamSummaryCompact(ctx, req, onEvent)
+		}
+		// A compact-specific rejection is not evidence the account is banned.
+		failure.OperationDenied = resp.StatusCode == http.StatusForbidden && code == "compact_denied"
+		return result, failure
 	}
 	reader, err := egress.DecodeBody(resp)
 	if err != nil {
@@ -121,6 +128,11 @@ func (c *Client) streamCompact(ctx context.Context, req *Request, onEvent func(*
 	if !found {
 		return result, fmt.Errorf("upstream: compacted output has no compaction item")
 	}
+	return emitCompaction(req, result, payload, onEvent)
+}
+
+func emitCompaction(req *Request, result *StreamResult, payload map[string]any, onEvent func(*Event) error) (*StreamResult, error) {
+	items := payload["output"].([]any)
 	emit := func(kind string, data map[string]any) error {
 		data["type"] = kind
 		encoded, err := json.Marshal(data)

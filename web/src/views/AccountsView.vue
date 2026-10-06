@@ -402,6 +402,16 @@ async function refresh(account: Account) {
 	}
 }
 
+async function recover(account: Account) {
+	try {
+		await api.recoverAccount(account.id)
+		toast.success(c('recovered', { name: account.name }))
+		await load()
+	} catch (err) {
+		toast.error(err instanceof Error ? err.message : 'recovery failed')
+	}
+}
+
 async function remove(account: Account) {
 	if (!confirm(t('accounts.deleteConfirm', { name: account.name }))) return
 	try {
@@ -502,7 +512,7 @@ async function copyText(value: string, tag: string) {
 			<div v-if="loadError" class="notice notice-error" role="alert">{{ loadError }}</div>
 			<div v-if="groupError" class="notice notice-warning" role="alert">{{ t('accounts.groups') }}: {{ groupError }}</div>
 			<AccountsTable :accounts="accounts" :groups="groups" :groups-loaded="groupsLoaded" :loading="loading" :quota-busy="quotaBusy" :settings="settings"
-				@refresh="reload" @create="openWizard('chatgpt')" @edit="openEdit" @delete="remove" @refresh-token="refresh"
+				@refresh="reload" @create="openWizard('chatgpt')" @edit="openEdit" @delete="remove" @refresh-token="refresh" @recover="recover"
 				@quota="openQuota" @refresh-quota="refreshQuota" @link="linkCodex" @unlink="unlinkCodex" @toggle="toggleEnabled" @protocol="setProtocol"
 				@test="account => { modelTestTarget = account }" />
 		</div>

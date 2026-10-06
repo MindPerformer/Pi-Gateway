@@ -175,6 +175,7 @@ func (s *Server) Routes(mux *http.ServeMux, spa http.Handler) {
 	mux.HandleFunc("PATCH /api/accounts/{id}", s.requireAuth(s.handleUpdateAccount))
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.requireAuth(s.handleDeleteAccount))
 	mux.HandleFunc("POST /api/accounts/{id}/refresh", s.requireAuth(s.handleRefreshAccount))
+	mux.HandleFunc("POST /api/accounts/{id}/recover", s.requireAuth(s.handleRecoverAccount))
 	mux.HandleFunc("POST /api/accounts/{id}/test-proxy", s.requireAuth(s.handleTestProxy))
 	mux.HandleFunc("GET /api/accounts/{id}/models", s.requireAuth(s.handleAccountModels))
 	mux.HandleFunc("POST /api/accounts/{id}/models/refresh", s.requireAuth(s.handleRefreshAccountModels))

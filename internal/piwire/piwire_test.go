@@ -3,6 +3,7 @@ package piwire
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -27,30 +28,29 @@ func TestBuildRequestMatchesPiFieldOrder(t *testing.T) {
 	}
 }
 
-// TestBuildRequestDropsCodexOnlyFields verifies the fields Sign in with ChatGPT
-// rejects, plus Pi's never-sent cache fields, are not forwarded.
-func TestBuildRequestDropsCodexOnlyFields(t *testing.T) {
+// The preview's explicit field restrictions apply even with ExtraFields enabled.
+func TestBuildRequestDropsRejectedFields(t *testing.T) {
+	rejected := []string{"background", "conversation", "max_output_tokens", "max_tool_calls", "metadata", "moderation", "multi_agent", "prompt", "prompt_cache_retention", "safety_identifier", "temperature", "top_logprobs", "top_p", "truncation", "user", "type"}
 	client := map[string]any{
-		"model":                  "gpt-5.1-codex",
-		"input":                  []any{},
-		"instructions":           "be terse",
-		"text":                   map[string]any{"verbosity": "high"},
-		"parallel_tool_calls":    true,
-		"temperature":            0.2,
-		"max_output_tokens":      128,
-		"prompt_cache_retention": "24h",
-		"prompt_cache_options":   map[string]any{"mode": "explicit"},
+		"model": "gpt-5.1-codex", "input": []any{},
 	}
-	built, err := BuildRequest(client, BuildOptions{})
+	for _, field := range rejected {
+		client[field] = "rejected"
+	}
+	built, err := BuildRequest(client, BuildOptions{ExtraFields: rejected})
 	if err != nil {
 		t.Fatalf("BuildRequest: %v", err)
 	}
-	for _, forbidden := range []string{
-		"instructions", `"text"`, "parallel_tool_calls", "temperature",
-		"max_output_tokens", "prompt_cache_retention", "prompt_cache_options",
-	} {
-		if strings.Contains(string(built.JSON), forbidden) {
+	for _, forbidden := range rejected {
+		if built.Body.Has(forbidden) {
 			t.Errorf("field %s should not be forwarded: %s", forbidden, built.JSON)
+		}
+		built.Body.Set(forbidden, "reintroduced by rule")
+	}
+	EnforcePiShape(built.Body)
+	for _, forbidden := range rejected {
+		if built.Body.Has(forbidden) {
+			t.Errorf("rule reintroduced forbidden field %s", forbidden)
 		}
 	}
 }
@@ -77,24 +77,31 @@ func TestBuildRequestAppendsPreviousResponseIDLast(t *testing.T) {
 	}
 }
 
-// TestBuildRequestDropsUnknownFields verifies the payload stays Pi-shaped.
-func TestBuildRequestDropsUnknownFields(t *testing.T) {
+func TestBuildRequestPreservesClientOptions(t *testing.T) {
 	client := map[string]any{
-		"model":             "gpt-5-codex",
-		"input":             []any{},
-		"metadata":          map[string]any{"a": "b"},
-		"top_p":             0.5,
-		"max_output_tokens": 10,
-		"user":              "someone",
+		"model": "gpt-5-codex", "input": []any{},
+		"instructions":         "be terse",
+		"text":                 map[string]any{"verbosity": "high", "format": map[string]any{"type": "json_object"}},
+		"parallel_tool_calls":  false,
+		"prompt_cache_options": map[string]any{"mode": "explicit"},
+		"future_option":        map[string]any{"empty": []any{}, "null": nil, "flag": false},
+		"nullable_option":      nil,
+		"reasoning":            map[string]any{"effort": "high", "future_option": false, "summary": nil},
+		"previous_response_id": "resp-prev",
 	}
 	built, err := BuildRequest(client, BuildOptions{})
 	if err != nil {
 		t.Fatalf("BuildRequest: %v", err)
 	}
-	for _, forbidden := range []string{"metadata", "top_p", "max_output_tokens", `"user"`} {
-		if strings.Contains(string(built.JSON), forbidden) {
-			t.Errorf("field %s should not be forwarded: %s", forbidden, built.JSON)
+	EnforcePiShape(built.Body)
+	for _, field := range []string{"instructions", "text", "parallel_tool_calls", "prompt_cache_options", "future_option", "nullable_option", "reasoning"} {
+		if got, exists := built.Body.Get(field); !exists || !reflect.DeepEqual(got, client[field]) {
+			t.Errorf("field %s changed: got %#v want %#v", field, got, client[field])
 		}
+	}
+	keys := built.Body.Keys()
+	if keys[len(keys)-1] != "previous_response_id" {
+		t.Errorf("extra fields displaced continuation: %v", keys)
 	}
 }
 
@@ -437,12 +444,13 @@ func TestEnforcePiShapeRepairsMiddlewareDrift(t *testing.T) {
 func TestEnforcePiShapeLeavesLegitimateFieldsAlone(t *testing.T) {
 	body := NewOrderedMap()
 	body.Set("model", "gpt-5.1-codex")
-	body.Set("metadata", map[string]any{"k": "v"})
-	body.Set("truncation", "auto")
+	body.Set("instructions", "preserve this")
+	body.Set("text", map[string]any{"verbosity": "high"})
+	body.Set("parallel_tool_calls", false)
 
 	EnforcePiShape(body)
 
-	if !body.Has("metadata") || !body.Has("truncation") {
+	if !body.Has("instructions") || !body.Has("text") || !body.Has("parallel_tool_calls") {
 		t.Errorf("legitimate fields were dropped: %v", body.Keys())
 	}
 }

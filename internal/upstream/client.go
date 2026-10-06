@@ -45,10 +45,12 @@ func IsIdleTimeoutError(err error) bool { return errors.Is(err, ErrIdleTimeout) 
 
 // Config configures the upstream client.
 type Config struct {
-	SSEURL     string
-	WSURL      string
-	Originator string
-	UserAgent  string
+	// CompactionKey persists gateway summaries across restarts (32 bytes).
+	CompactionKey []byte
+	SSEURL        string
+	WSURL         string
+	Originator    string
+	UserAgent     string
 	// Zstd enables zstd compression of the SSE request body (Pi does this).
 	Zstd bool
 	// ConnectTimeout bounds the WebSocket handshake and TCP connect.
@@ -90,11 +92,12 @@ func (NopSink) OnResponseID(string)                                    {}
 
 // Client performs upstream requests.
 type Client struct {
-	cfg        Config
-	factory    *egress.Factory
-	pool       *wsPool
-	instanceID string
-	commits    chan struct{}
+	compactCodec *compactionCodec
+	cfg          Config
+	factory      *egress.Factory
+	pool         *wsPool
+	instanceID   string
+	commits      chan struct{}
 }
 
 // New builds an upstream client.
@@ -124,6 +127,7 @@ func New(cfg Config, factory *egress.Factory) *Client {
 		cfg.MaxPoolConnections = 256
 	}
 	c := &Client{cfg: cfg, factory: factory, instanceID: newConnectionID()}
+	c.compactCodec = newCompactionCodec(cfg.CompactionKey)
 	c.pool = newWSPool(cfg.IdleTimeout, cfg.Logger)
 	c.commits = make(chan struct{}, cfg.MaxPoolConnections)
 	c.pool.maxConnections = cfg.MaxPoolConnections
@@ -183,6 +187,13 @@ type StreamResult struct {
 //   - auto:             websocket-cached, falling back to SSE only for allowed
 //     setup failures known to precede sending response.create
 func (c *Client) Stream(ctx context.Context, req *Request, onEvent func(*Event) error) (*StreamResult, error) {
+	body, err := c.ExpandCompactionBody(req.Body, req.ClientKeyID)
+	if err != nil {
+		return nil, err
+	}
+	copyReq := *req
+	copyReq.Body = body
+	req = &copyReq
 	if req.Compact {
 		return c.streamCompact(ctx, req, onEvent)
 	}

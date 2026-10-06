@@ -66,11 +66,12 @@ func IsTerminal(eventType string) bool {
 
 // FailureError is returned when the upstream reports a logical failure.
 type FailureError struct {
-	Code      string
-	Message   string
-	Payload   []byte
-	Status    int
-	RequestID string
+	OperationDenied bool // Endpoint permission failure, not account health.
+	Code            string
+	Message         string
+	Payload         []byte
+	Status          int
+	RequestID       string
 }
 
 func (e *FailureError) Error() string {

@@ -16,7 +16,7 @@ import { useAccountControls } from './accountControlsLocale'
 import { accountStatusLabel, transportLabel } from '../../utils/uiOptions'
 
 const props = defineProps<{ accounts: Account[]; groups: AccountGroup[]; loading: boolean; groupsLoaded: boolean; quotaBusy: boolean; settings: Settings | null }>()
-const emit = defineEmits<{ refresh: []; create: []; edit: [account: Account]; delete: [account: Account]; refreshToken: [account: Account]; quota: [account: Account]; refreshQuota: [account: Account]; link: [account: Account]; unlink: [account: Account]; toggle: [account: Account]; test: [account: Account]; protocol: [account: Account, value: string] }>()
+const emit = defineEmits<{ refresh: []; create: []; edit: [account: Account]; delete: [account: Account]; recover: [account: Account]; refreshToken: [account: Account]; quota: [account: Account]; refreshQuota: [account: Account]; link: [account: Account]; unlink: [account: Account]; toggle: [account: Account]; test: [account: Account]; protocol: [account: Account, value: string] }>()
 const { t } = useI18n()
 const { c } = useAccountControls()
 const protocolDefault = computed(() => c('protocolDefault', { value: props.settings?.upstream_transport ? transportLabel(props.settings.upstream_transport) : c('settingsFailed') }))
@@ -69,7 +69,7 @@ function tone(account: Account) { const category = accountCategory(account); ret
 							<td class="td quota-column"><AccountQuotaSummaryCell :account="account" :on-open="account => emit('quota', account)" :on-link="account => emit('link', account)" /></td>
 							<td class="td"><div class="group-chips"><Badge v-for="item in groupMap.get(account.id) ?? []" :key="item.id" :tone="item.enabled ? 'neutral' : 'warn'">{{ item.name }}</Badge><span v-if="!groupMap.get(account.id)?.length" class="muted">{{ c('publicAccount') }}</span></div></td>
 							<td class="td last-used"><span :title="formatTime(account.last_used_at)">{{ formatRelative(account.last_used_at) }}</span><small>{{ metric(account.request_count) }} {{ t('accounts.col.requests') }}</small></td>
-							<td class="td actions-column"><AccountTableActions :account="account" :quota-busy="quotaBusy" @edit="emit('edit', $event)" @delete="emit('delete', $event)" @refresh="emit('refreshToken', $event)" @quota="emit('quota', $event)" @refresh-quota="emit('refreshQuota', $event)" @link="emit('link', $event)" @unlink="emit('unlink', $event)" @toggle="emit('toggle', $event)" @test="emit('test', $event)" /></td>
+							<td class="td actions-column"><AccountTableActions :account="account" :quota-busy="quotaBusy" @recover="emit('recover', $event)" @edit="emit('edit', $event)" @delete="emit('delete', $event)" @refresh="emit('refreshToken', $event)" @quota="emit('quota', $event)" @refresh-quota="emit('refreshQuota', $event)" @link="emit('link', $event)" @unlink="emit('unlink', $event)" @toggle="emit('toggle', $event)" @test="emit('test', $event)" /></td>
 						</tr>
 						<tr v-if="expanded.has(account.id)" class="detail-row"><td colspan="9"><div class="account-detail-grid">
 							<div><label>{{ t('common.enabled') }}</label><Toggle :model-value="account.enabled" :aria-label="c(account.enabled ? 'disableAccount' : 'enableAccount')" @update:modelValue="emit('toggle', account)" /></div>

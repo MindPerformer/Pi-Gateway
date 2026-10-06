@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n'
 import { useAccountControls } from './accountControlsLocale'
 
 const props = defineProps<{ account: Account; quotaBusy: boolean }>()
-const emit = defineEmits<{ edit: [account: Account]; delete: [account: Account]; refresh: [account: Account]; quota: [account: Account]; refreshQuota: [account: Account]; link: [account: Account]; unlink: [account: Account]; toggle: [account: Account]; test: [account: Account] }>()
+const emit = defineEmits<{ edit: [account: Account]; delete: [account: Account]; recover: [account: Account]; refresh: [account: Account]; quota: [account: Account]; refreshQuota: [account: Account]; link: [account: Account]; unlink: [account: Account]; toggle: [account: Account]; test: [account: Account] }>()
 const { t } = useI18n()
 const { c } = useAccountControls()
 const open = ref(false)
@@ -14,6 +14,7 @@ const trigger = ref<HTMLButtonElement>()
 const panel = ref<HTMLElement>()
 const position = ref({ top: '0px', left: '0px' })
 const items = computed(() => [
+	{ label: c('manualRecover'), icon: RefreshCw, action: () => emit('recover', props.account) },
 	{ label: c('modelTest'), icon: Send, action: () => emit('test', props.account) },
 	{ label: c(props.account.enabled ? 'disableAccount' : 'enableAccount'), icon: Power, action: () => emit('toggle', props.account) },
 	{ label: t('accounts.refreshToken'), icon: RefreshCw, action: () => emit('refresh', props.account) },

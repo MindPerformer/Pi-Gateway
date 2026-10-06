@@ -28,6 +28,19 @@
 其他客户端继续使用配置的 Pi 请求头，鉴权始终使用上游账号凭据。
 默认规则集包含可编辑、可禁用的“排除图像生成”规则，通过 `drop_tools.types` 排除内置
 `image_generation`（包括 namespace 中的工具）及对应工具选择；同名自定义 function 保留。
+旧安装升级后会一次性补入缺失的该规则并默认启用；已有固定 ID 的规则保留编辑和禁用状态。
+迁移完成后手动删除该规则，重启也不会再次补入。
+在管理界面“规则”中启用该规则即可；自行添加时，使用请求阶段、始终匹配，动作选择 `drop_tools`，
+参数为 `{"types":["image_generation"]}`。此动作处理 `tools` 及其 namespace，不扫描历史 `input`。
+
+普通生成请求默认透传客户端未被官方明确禁止的字段，包括 `instructions`、完整 `text` 对象
+（如 `verbosity` / `format`）、`parallel_tool_calls` 和未知扩展字段；保留嵌套值及显式 `false` / `null`。
+依据 [Sign in with ChatGPT 预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)，
+网关固定 `store:false`、`stream:true`，将字符串 `input` 转为消息数组，移除 `background`、`conversation`、
+`max_output_tokens`、`max_tool_calls`、`metadata`、`moderation`、`multi_agent`、`prompt`、`prompt_cache_retention`、
+`safety_identifier`、`temperature`、`top_logprobs`、`top_p`、`truncation` 和 `user`；规则无法重新引入这些字段。
+未列为禁止只表示网关允许透传，具体模型及上游仍可能拒绝该参数。`previous_response_id` 继续由网关校验
+同一认证连接的 WebSocket 续接，不能作为 HTTP 持久会话使用；顶层 `type` 由 WebSocket 传输层生成。
 管理界面的复制按钮同时支持 Clipboard API 和局域网 HTTP 的浏览器复制回退。
 
 Codex 在普通 Responses 请求末尾发送 `compaction_trigger` 时，网关会将该操作转为
@@ -41,7 +54,20 @@ Codex 在普通 Responses 请求末尾发送 `compaction_trigger` 时，网关�
 窗口加新消息作为完整 input，不使用网关包装响应的 ID 作为 `previous_response_id`。
 压缩操作目前要求完整历史，带 `previous_response_id` 的请求会明确返回 400。
 原生压缩需要当前上游端点和账号凭据支持 `/responses/compact`；订阅共享允许输入压缩摘要
-不等于授予压缩端点权限。上游拒绝时返回实际错误，不会静默删除触发项或伪造摘要。
+不等于授予压缩端点权限。当端点返回 404 / 405 / 501，或 403 且明确提示
+`This ChatPass credential is not authorized for the requested operation.` 时，网关使用同一账号、
+同一规则路由后的普通模型生成续接摘要。摘要调用不提供工具，不向客户端透出摘要生成过程，
+真实用量继续计入记录；401、429、其他权限错误及服务故障不会触发额外生成请求。
+回退结果保留 `response.compaction` / `compaction` 的客户端结构，使用带
+`pi_compact_v1:` 前缀的网关 AES-GCM 加密内容。下一轮在网关中校验并还原为历史摘要消息，
+也支持再次压缩；原生压缩项仍原样透传。摘要绑定客户端 API Key ID，使用数据库中持久化的
+内部密钥，因此可跨网关重启和账号轮换，但需要继续通过同一网关数据库和同一客户端 Key 使用，
+不能直接提交给官方端点。备份数据库时须保留该内部密钥；网关不额外持久化摘要正文。
+文字摘要可能遗漏细节，不能复现原生压缩的内部推理状态；模型摘要失败或为空时返回错误。
+
+账号菜单提供“手动恢复”，将错误状态重置为正常，清除最近错误、连续失败和冷却状态，
+允许重新尝试现有凭据。恢复不会启用已停用账号，也不会修改凭据、配额、模型限制或历史统计；
+实际凭据过期或上游限制仍需刷新凭据、重新登录或等待额度恢复。操作记录进入管理审计。
 
 ## 快速开始
 

@@ -18,7 +18,7 @@ import (
 // _research/pi/packages/ai/src/api/openai-codex-responses.ts:553-564 sets
 // stream:true/store:false, and :1542 sends {type:"response.create", ...requestBody}.
 // This fixture checks the envelope operation, not the gateway's separate HTTP
-// body policy, which intentionally filters some Codex-only fields.
+// body policy, which filters fields rejected by the preview route.
 func TestBuildWSFrameMatchesPiCodexEnvelope(t *testing.T) {
 	const piBody = `{"model":"gpt-5.1-codex","store":false,"stream":true,"instructions":"You are a helpful assistant.","input":[],"text":{"verbosity":"low"},"include":["reasoning.encrypted_content"],"tool_choice":"auto","parallel_tool_calls":true}`
 	for _, tc := range []struct {
@@ -66,18 +66,19 @@ func TestBuildWSFrameMatchesPiCodexEnvelope(t *testing.T) {
 func TestBuildWSFramePreservesBuildRequestAndEnforcePiShape(t *testing.T) {
 	for _, session := range []string{"", "wire-session"} {
 		t.Run("session="+session, func(t *testing.T) {
-			built, err := piwire.BuildRequest(map[string]any{
+			client := map[string]any{
 				"model": "gpt-5.1-codex", "input": []any{}, "stream": false, "store": true,
-			}, piwire.BuildOptions{SessionID: session})
+				"instructions": "preserve client instructions", "text": map[string]any{"verbosity": "high"}, "parallel_tool_calls": false,
+			}
+			built, err := piwire.BuildRequest(client, piwire.BuildOptions{SessionID: session})
 			if err != nil {
 				t.Fatal(err)
 			}
 			// Keep middleware shape enforcement intact before transport framing.
 			built.Body.Set("stream", false)
 			built.Body.Set("store", true)
-			built.Body.Set("instructions", "must be filtered by the existing HTTP policy")
-			built.Body.Set("text", map[string]any{"verbosity": "high"})
-			built.Body.Set("parallel_tool_calls", true)
+			built.Body.Set("temperature", 0.2)
+			built.Body.Set("metadata", map[string]any{"unsupported": true})
 			piwire.EnforcePiShape(built.Body)
 			httpBody, err := json.Marshal(built.Body)
 			if err != nil {
@@ -91,6 +92,9 @@ func TestBuildWSFramePreservesBuildRequestAndEnforcePiShape(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := map[string]any{"type": "response.create", "model": "gpt-5.1-codex", "input": []any{}, "stream": true, "store": false}
+			for _, field := range []string{"instructions", "text", "parallel_tool_calls"} {
+				want[field] = client[field]
+			}
 			if session != "" {
 				want["prompt_cache_key"] = session
 			}

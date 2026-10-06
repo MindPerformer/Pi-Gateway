@@ -41,6 +41,18 @@ func newRulesAdmin(t *testing.T, migrateEmpty bool) (*store.Store, *http.ServeMu
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Complete startup upgrades, then deliberately empty the set. Later admin
+		// requests must honor the deletion rather than reseeding defaults.
+		if err := rulesruntime.New(st).Ensure(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		filter, err := st.GetRule(t.Context(), "default-drop-image-generation")
+		if err != nil || filter == nil {
+			t.Fatalf("default upgrade: %+v err=%v", filter, err)
+		}
+		if _, err := st.PublishRules(t.Context(), nil, []store.RuleChange{{Kind: "delete", ID: filter.ID, ExpectedRevision: filter.Revision}}, rulesruntime.ValidateSnapshot); err != nil {
+			t.Fatal(err)
+		}
 	}
 	s := &Server{store: st, sessions: map[string]time.Time{"rules-test": time.Now().Add(time.Hour)}}
 	mux := http.NewServeMux()
@@ -50,6 +62,31 @@ func newRulesAdmin(t *testing.T, migrateEmpty bool) (*store.Store, *http.ServeMu
 
 func httpRuleJSON(name string, priority int) string {
 	return fmt.Sprintf(`{"schema_version":1,"name":%q,"description":"admin test","enabled":true,"priority":%d,"phase":"request","when":{"op":"always"},"actions":[],"stop_after_match":false,"on_error":"abort"}`, name, priority)
+}
+
+func TestRulesAdminBackfillsOldInstallation(t *testing.T) {
+	st, mux := newRulesAdmin(t, false)
+	before, err := st.InitializeRules(t.Context(), func(context.Context, []*store.MiddlewareRow) ([]*store.RuleRow, error) {
+		return []*store.RuleRow{{ID: "existing", Rule: json.RawMessage(httpRuleJSON("existing", 10)), Source: "user"}}, nil
+	}, rulesruntime.ValidateSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := ruleHTTP(t, mux, "GET", "/api/rules", "", 200)
+	var definitions []rules.Rule
+	if err := json.Unmarshal(out["rules"], &definitions); err != nil || len(definitions) != 2 {
+		t.Fatalf("old installation list=%s err=%v", out["rules"], err)
+	}
+	filter, err := st.GetRule(t.Context(), "default-drop-image-generation")
+	version, versionErr := st.RuleSetVersion(t.Context())
+	if err != nil || versionErr != nil || filter == nil || !filter.Enabled || version != before.Version+1 {
+		t.Fatalf("backfill failed: filter=%+v version=%d err=%v/%v", filter, version, err, versionErr)
+	}
+	ruleHTTP(t, mux, "DELETE", "/api/rules/"+filter.ID+"?expected_revision=1", "", 200)
+	out = ruleHTTP(t, mux, "GET", "/api/rules", "", 200)
+	if err := json.Unmarshal(out["rules"], &definitions); err != nil || len(definitions) != 1 || definitions[0].ID != "existing" {
+		t.Fatalf("admin request resurrected deleted default: %s err=%v", out["rules"], err)
+	}
 }
 
 func createHTTPRule(t *testing.T, st *store.Store, mux http.Handler, name string, priority int) rules.Rule {

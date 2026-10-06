@@ -207,7 +207,12 @@ func run() error {
 		},
 	})
 
+	compactionKey, err := st.CompactionKey(rootCtx)
+	if err != nil {
+		return err
+	}
 	upstreamClient := upstream.New(upstream.Config{
+		CompactionKey:         compactionKey,
 		SSEURL:                cfg.UpstreamSSEURL(),
 		WSURL:                 cfg.UpstreamWSURL(),
 		Originator:            cfg.Upstream.Originator,

@@ -316,17 +316,17 @@ func TestUnifiedRulesRequestOrderingAndMultipleActions(t *testing.T) {
 	h, observed, calls := unifiedHarness(t, "sse", unifiedRulesEvents)
 	first := unifiedRule("first", rules.PhaseRequest, 10,
 		unifiedAction("model", "rewrite_model", map[string]any{"model": "gpt-5.5"}),
-		unifiedSet("instructions", "/metadata/order", "seed"),
-		unifiedSet("copy-client", "/metadata/copied", map[string]any{"$ref": map[string]any{"source": "client", "path": "/marker"}}),
-		unifiedSet("literal", "/metadata/literal", map[string]any{"$literal": map[string]any{"$ref": "not-an-expression"}}),
+		unifiedSet("instructions", "/text/order", "seed"),
+		unifiedSet("copy-client", "/text/copied", map[string]any{"$ref": map[string]any{"source": "client", "path": "/marker"}}),
+		unifiedSet("literal", "/text/literal", map[string]any{"$literal": map[string]any{"$ref": "not-an-expression"}}),
 		unifiedAction("reasoning", "set_reasoning", map[string]any{"effort": "high", "summary": "concise"}))
 	first.When = rules.Condition{Op: "all", Conditions: []rules.Condition{
 		{Op: "eq", Source: "context", Path: "/original_model", Value: "original-model"},
 		{Op: "eq", Source: "client", Path: "/marker", Value: map[string]any{"$literal": map[string]any{"nested": []any{true, nil, 7}}}},
 	}}
-	second := unifiedRule("second", rules.PhaseRequest, 20, unifiedReplace("replace", "/metadata/order", "seed", "second"))
+	second := unifiedRule("second", rules.PhaseRequest, 20, unifiedReplace("replace", "/text/order", "seed", "second"))
 	second.When = rules.Condition{Op: "eq", Source: "current", Path: "/model", Value: map[string]any{"$ref": map[string]any{"source": "context", "path": "/model"}}}
-	third := unifiedRule("third", rules.PhaseRequest, 30, unifiedReplace("replace", "/metadata/order", "second", "final"))
+	third := unifiedRule("third", rules.PhaseRequest, 30, unifiedReplace("replace", "/text/order", "second", "final"))
 	// Publish in reverse execution order: insertion/name order must not win.
 	version := publishUnifiedRules(t, h, third, second, first)
 	request := `{"model":"original-model","input":"hello","stream":false,"marker":{"nested":[true,null,7]}}`
@@ -336,7 +336,7 @@ func TestUnifiedRulesRequestOrderingAndMultipleActions(t *testing.T) {
 	}
 	_, sent := observed.get()
 	payload := unifiedObject(t, sent)
-	metadata, _ := payload["metadata"].(map[string]any)
+	metadata, _ := payload["text"].(map[string]any)
 	if payload["model"] != "gpt-5.5" || metadata["order"] != "final" {
 		t.Fatalf("priority/multiple actions did not reach upstream: %s", sent)
 	}
@@ -369,9 +369,9 @@ func TestUnifiedRulesDisabledAndStopAfterMatch(t *testing.T) {
 			h, observed, _ := unifiedHarness(t, "sse", unifiedRulesEvents)
 			disabled := unifiedRule("disabled", rules.PhaseRequest, 0, unifiedAction("deny", "reject_request", map[string]any{"message": "must not run"}))
 			disabled.Enabled = false
-			first := unifiedRule("first", rules.PhaseRequest, 10, unifiedSet("set", "/metadata/order", "first"))
+			first := unifiedRule("first", rules.PhaseRequest, 10, unifiedSet("set", "/text/order", "first"))
 			first.StopAfterMatch = stop
-			later := unifiedRule("later", rules.PhaseRequest, 20, unifiedSet("set", "/metadata/order", "later"))
+			later := unifiedRule("later", rules.PhaseRequest, 20, unifiedSet("set", "/text/order", "later"))
 			publishUnifiedRules(t, h, later, disabled, first)
 			response, body, record := capturedHTTPResponse(t, h, `{"model":"gpt-5.5","input":[],"stream":false}`)
 			if response.StatusCode != http.StatusOK {
@@ -382,9 +382,9 @@ func TestUnifiedRulesDisabledAndStopAfterMatch(t *testing.T) {
 			if stop {
 				want = "first"
 			}
-			metadata, _ := unifiedObject(t, raw)["metadata"].(map[string]any)
+			metadata, _ := unifiedObject(t, raw)["text"].(map[string]any)
 			if metadata["order"] != want {
-				t.Fatalf("stop=%t upstream=%s want metadata.order=%q", stop, raw, want)
+				t.Fatalf("stop=%t upstream=%s want text.order=%q", stop, raw, want)
 			}
 			if len(unifiedTraces(t, record, "disabled")) != 0 || (stop && len(unifiedTraces(t, record, "later")) != 0) {
 				t.Fatalf("disabled/stopped rule was executed: %s", record.RuleTraces)

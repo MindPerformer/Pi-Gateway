@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -82,7 +83,12 @@ func (s *Server) streamWith429Retry(ctx context.Context, p *prepared, req *upstr
 			message = err.Error()
 		}
 		recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		recordErr := s.accounts.RecordResult(recordCtx, p.Account.ID, accounts.Result{Failed: err != nil, StatusCode: status, RetryAfter: retryAfterDuration(p.ResponseHeaders, now), Error: message}, now)
+		healthStatus := status
+		var failure *upstream.FailureError
+		if errors.As(err, &failure) && failure.OperationDenied {
+			healthStatus = 0
+		}
+		recordErr := s.accounts.RecordResult(recordCtx, p.Account.ID, accounts.Result{Failed: err != nil, StatusCode: healthStatus, RetryAfter: retryAfterDuration(p.ResponseHeaders, now), Error: message}, now)
 		cancel()
 		if recordErr != nil {
 			s.logger.Warn("recording account attempt failed", "account", p.Account.ID, "error", recordErr)

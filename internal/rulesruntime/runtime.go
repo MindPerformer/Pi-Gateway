@@ -25,42 +25,58 @@ type Service struct {
 	mu      sync.Mutex
 	engine  *rules.Engine
 	version int64
+	ensured bool
 }
 
 func New(st *store.Store) *Service { return &Service{store: st} }
 
-// Ensure initializes the new tables exactly once. Existing legacy rows and the
-// original migration snapshot remain in storage for diagnostics and rollback.
+// Ensure initializes legacy rules and applies one-time default-rule upgrades.
 func (s *Service) Ensure(ctx context.Context) error {
-	version, err := s.store.RuleSetVersion(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ensureLocked(ctx)
+}
+
+func (s *Service) ensureLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.ensured {
+		return nil
+	}
+	if _, err := s.store.InitializeRules(ctx, ConvertLegacy, ValidateSnapshot); err != nil {
+		return err
+	}
+	definition := defaultImageExclusion()
+	raw, err := EditableJSON(definition)
 	if err != nil {
 		return err
 	}
-	if version > 0 {
-		return nil
+	if err := s.store.UpgradeDefaultRules(ctx, "internal_default_image_exclusion_v1", []store.RuleChange{
+		{Kind: "create", ID: definition.ID, Rule: raw, Source: "default"},
+	}, ValidateSnapshot); err != nil {
+		return err
 	}
-	_, err = s.store.InitializeRules(ctx, ConvertLegacy, ValidateSnapshot)
-	return err
+	s.ensured = true
+	return nil
 }
 
 // Load checks the shared version on every new request, but never per response
 // frame. A storage error is reported rather than silently using a revoked rule.
 func (s *Service) Load(ctx context.Context) (*rules.Engine, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureLocked(ctx); err != nil {
+		return nil, 0, err
+	}
 	version, err := s.store.RuleSetVersion(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.engine != nil && s.version == version {
 		return s.engine, s.version, nil
 	}
-	var snapshot *store.RuleSetSnapshot
-	if version == 0 {
-		snapshot, err = s.store.InitializeRules(ctx, ConvertLegacy, ValidateSnapshot)
-	} else {
-		snapshot, err = s.store.LoadRuleSet(ctx)
-	}
+	snapshot, err := s.store.LoadRuleSet(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -159,12 +175,9 @@ func ConvertLegacy(ctx context.Context, rows []*store.MiddlewareRow) ([]*store.R
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMigration, err)
 	}
-	definitions = append(definitions, rules.Rule{
-		SchemaVersion: rules.SchemaVersion, ID: "default-drop-image-generation", Name: "排除图像生成 / Exclude image generation",
-		Enabled: true, Priority: 1000, OrderIndex: int64(len(definitions)), Phase: rules.PhaseRequest,
-		When: rules.Condition{Op: "always"}, OnError: rules.OnErrorAbort,
-		Actions: []rules.Action{{ID: "drop-image-generation", Type: "drop_tools", Params: map[string]any{"types": []any{"image_generation"}}}},
-	})
+	filter := defaultImageExclusion()
+	filter.OrderIndex = int64(len(definitions))
+	definitions = append(definitions, filter)
 	result := make([]*store.RuleRow, 0, len(definitions))
 	for _, definition := range definitions {
 		raw, err := EditableJSON(definition)
@@ -182,4 +195,13 @@ func ConvertLegacy(ctx context.Context, rows []*store.MiddlewareRow) ([]*store.R
 		})
 	}
 	return result, nil
+}
+
+func defaultImageExclusion() rules.Rule {
+	return rules.Rule{
+		SchemaVersion: rules.SchemaVersion, ID: "default-drop-image-generation", Name: "排除图像生成 / Exclude image generation",
+		Enabled: true, Priority: 1000, Phase: rules.PhaseRequest,
+		When: rules.Condition{Op: "always"}, OnError: rules.OnErrorAbort,
+		Actions: []rules.Action{{ID: "drop-image-generation", Type: "drop_tools", Params: map[string]any{"types": []any{"image_generation"}}}},
+	}
 }

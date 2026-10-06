@@ -518,9 +518,8 @@ func (m *DropTools) Apply(_ context.Context, req *Request, cfg map[string]any) (
 
 // DropFields removes arbitrary top-level body fields.
 //
-// This is empty by default on purpose: the request builder already emits only the
-// exact field set Pi sends, so nothing extra reaches the backend unless an
-// operator explicitly allows it through.
+// This is empty by default: the builder already removes documented unsupported
+// fields; operators can remove additional client options here.
 type DropFields struct{}
 
 func (m *DropFields) Name() string     { return "drop_fields" }
@@ -565,12 +564,12 @@ func (m *RewriteModel) Apply(_ context.Context, req *Request, cfg map[string]any
 	return res, nil
 }
 
-// PassthroughFields allows extra client fields through (opt-in).
+// PassthroughFields restores missing fields from the original client payload.
 type PassthroughFields struct{}
 
 func (m *PassthroughFields) Name() string { return "passthrough_fields" }
 func (m *PassthroughFields) Describe() string {
-	return "Forward additional client body fields verbatim (Pi sends none of these)"
+	return "Restore missing client body fields verbatim, subject to route constraints"
 }
 func (m *PassthroughFields) DefaultConfig() string { return `{"fields":[]}` }
 

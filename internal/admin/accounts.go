@@ -491,6 +491,38 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (s *Server) handleRecoverAccount(w http.ResponseWriter, r *http.Request) {
+	id, err := pathInt(r, "id")
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	acc, err := s.store.GetAccount(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if acc == nil {
+		writeErr(w, 404, "account not found")
+		return
+	}
+	if err := s.store.RecoverAccount(r.Context(), id); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	updated, err := s.store.GetAccount(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if updated == nil {
+		writeErr(w, 404, "account not found")
+		return
+	}
+	_ = s.store.RecordAudit(r.Context(), "account.recovered", acc.Name)
+	writeJSON(w, 200, map[string]any{"account": s.viewAccount(updated)})
+}
+
 func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
 	id, err := pathInt(r, "id")
 	if err != nil {

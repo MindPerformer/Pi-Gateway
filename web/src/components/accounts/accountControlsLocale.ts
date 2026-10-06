@@ -1,6 +1,8 @@
 import {useI18n} from '../../i18n'
 
 const zh = {
+    manualRecover: '手动恢复',
+    recovered: '已恢复“{name}”的账号状态，可重新尝试请求。',
     manageGroups: '管理分组',
     newGroup: '新增分组',
     groupName: '分组名称',
@@ -134,6 +136,8 @@ const zh = {
     downloadModelMetadata: '下载完整元数据',
 } as const
 const en: Record<keyof typeof zh, string> = {
+    manualRecover: 'Recover account',
+    recovered: 'Account status restored for "{name}". Requests can be retried.',
     manageGroups: 'Manage groups',
     newGroup: 'New group',
     groupName: 'Group name',

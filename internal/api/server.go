@@ -170,7 +170,18 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	headerHints := []string{r.Header.Get("x-client-request-id"), r.Header.Get("session-id"), r.Header.Get("session_id"), r.Header.Get("x-session-id")}
 	sessionID := piwire.DeriveSessionID(clientBody, headerHints, func() string { return internalSessionID(ctx) })
 	promptCacheKey := piwire.DeriveSessionID(clientBody, headerHints, nil)
-	built, err := rulescapture.NormalizeRequest(clientBody, rt, promptCacheKey)
+	expandedBody, expandErr := s.upstream.ExpandCompactionBody(rawBody, key.ID)
+	if expandErr != nil {
+		return nil, errorFromUpstream(expandErr)
+	}
+	normalizeBody := clientBody
+	if !bytes.Equal(expandedBody, rawBody) {
+		normalizeBody = make(map[string]any)
+		if err := json.Unmarshal(expandedBody, &normalizeBody); err != nil {
+			return nil, compactInputError(err.Error())
+		}
+	}
+	built, err := rulescapture.NormalizeRequest(normalizeBody, rt, promptCacheKey)
 	if err != nil {
 		return nil, &apiError{Status: http.StatusBadRequest, Message: err.Error(), Type: "invalid_request_error"}
 	}
@@ -335,9 +346,8 @@ func normalizeTransport(configured, clientTransport string) string {
 	}
 }
 
-// extraFieldsFrom reports additional client body fields allowed through upstream.
-// Pi never sends anything beyond its own fixed field set, so this is empty unless
-// an operator opts in through the passthrough_fields middleware.
+// extraFieldsFrom is retained for compatibility; normalisation now passes through
+// all client options except documented unsupported fields by default.
 func extraFieldsFrom(rt *store.Settings) []string { return nil }
 
 func wantsStream(body map[string]any) bool {

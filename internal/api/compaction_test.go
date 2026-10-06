@@ -24,6 +24,127 @@ import (
 const compactFixture = `{"id":"cmp_response","object":"response.compaction","created_at":1791300000,"output":[{"id":"msg_retained","type":"message","role":"user","content":[{"type":"input_text","text":"Keep the task requirements"}]},{"id":"cmp_item","type":"compaction","encrypted_content":"opaque+/=State"}],"usage":{"input_tokens":1200,"output_tokens":100,"total_tokens":1300}}`
 const compactHistory = `[{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep the task requirements"}]},{"type":"compaction_trigger"}]`
 
+func TestSummaryCompactionHTTPContinuationAndRecompact(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			var compactCalls, summaryCalls, generationCalls atomic.Int32
+			h := newHarness(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				encoded, _ := json.Marshal(body)
+				if bytes.Contains(encoded, []byte("pi_compact_v1:")) {
+					t.Error("gateway item reached upstream")
+				}
+				if strings.HasSuffix(r.URL.Path, "/compact") {
+					if compactCalls.Add(1) > 1 && !bytes.Contains(encoded, []byte("summary of requirements")) {
+						t.Error("recompact lost summary")
+					}
+					w.WriteHeader(403)
+					_, _ = io.WriteString(w, `{"error":{"message":"This ChatPass credential is not authorized for the requested operation."}}`)
+					return
+				}
+				instructions, _ := body["instructions"].(string)
+				if strings.Contains(instructions, "Compress the conversation") {
+					summaryCalls.Add(1)
+					_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"summary of requirements"}]}],"usage":{"input_tokens":30,"output_tokens":8,"total_tokens":38}}}`+"\n\n")
+					return
+				}
+				generationCalls.Add(1)
+				if !bytes.Contains(encoded, []byte("summary of requirements")) || !bytes.Contains(encoded, []byte("continue task")) {
+					t.Error("next turn lost history or new input")
+				}
+				_, _ = io.WriteString(w, terminalSSE)
+			}), "sse")
+			path := "/v1/responses/compact"
+			if stream {
+				path = "/v1/responses"
+			}
+			resp, raw := postCompactTest(t, h, path, fmt.Sprintf(`{"model":"test","input":%s,"stream":%t}`, compactHistory, stream))
+			if resp.StatusCode != 200 {
+				t.Fatalf("status=%d body=%s", resp.StatusCode, raw)
+			}
+			var compact map[string]any
+			if stream {
+				compact = compactSSEOutput(t, raw)
+			} else {
+				_ = json.Unmarshal(raw, &compact)
+			}
+			if compact["usage"].(map[string]any)["total_tokens"] != float64(38) {
+				t.Fatal("real summary usage missing")
+			}
+			output := compact["output"].([]any)
+			next := append(append([]any(nil), output...), map[string]any{"role": "user", "content": "continue task"})
+			body, _ := json.Marshal(map[string]any{"model": "test", "input": next, "stream": false})
+			resp, raw = postCompactTest(t, h, "/v1/responses", string(body))
+			if resp.StatusCode != 200 {
+				t.Fatalf("next status=%d body=%s", resp.StatusCode, raw)
+			}
+			body, _ = json.Marshal(map[string]any{"model": "test", "input": next})
+			resp, raw = postCompactTest(t, h, "/v1/responses/compact", string(body))
+			if resp.StatusCode != 200 {
+				t.Fatalf("recompact status=%d body=%s", resp.StatusCode, raw)
+			}
+			if compactCalls.Load() != 2 || summaryCalls.Load() != 2 || generationCalls.Load() != 1 {
+				t.Fatal("unexpected executions")
+			}
+			a, err := h.store.GetAccount(context.Background(), h.accountID)
+			if err != nil || a.Status != store.AccountStatusReady || a.ConsecutiveFailures != 0 {
+				t.Fatalf("fallback poisoned account: %+v %v", a, err)
+			}
+		})
+	}
+}
+
+func TestSummaryCompactionWebSocket(t *testing.T) {
+	h := newHarness(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/compact") {
+			w.WriteHeader(404)
+			return
+		}
+		_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"WS summary"}]}]}}`+"\n\n")
+	}), "websocket-cached")
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(h.server.URL, "http")+"/v1/responses", http.Header{"Authorization": []string{"Bearer " + h.key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"test","input":`+compactHistory+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var frame map[string]any
+		if err := conn.ReadJSON(&frame); err != nil {
+			t.Fatal(err)
+		}
+		if frame["type"] == "response.output_text.delta" {
+			t.Fatal("summary output leaked")
+		}
+		if frame["type"] == "response.completed" {
+			item := frame["response"].(map[string]any)["output"].([]any)[0].(map[string]any)
+			if item["type"] != "compaction" || !strings.HasPrefix(item["encrypted_content"].(string), "pi_compact_v1:") {
+				t.Fatalf("bad WS compaction: %+v", item)
+			}
+			break
+		}
+	}
+}
+
+func TestCompactDenialDoesNotBanAccount(t *testing.T) {
+	h := newHarness(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = io.WriteString(w, `{"error":{"code":"compact_denied","message":"compaction unavailable"}}`)
+	}), "sse")
+	resp, _ := postCompactTest(t, h, "/v1/responses/compact", `{"model":"test","input":[]}`)
+	if resp.StatusCode != 403 {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	a, err := h.store.GetAccount(context.Background(), h.accountID)
+	if err != nil || a.Status != store.AccountStatusReady {
+		t.Fatalf("operation denial banned account: %+v %v", a, err)
+	}
+}
+
 func postCompactTest(t *testing.T, h *testHarness, path, body string) (*http.Response, []byte) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, h.server.URL+path, strings.NewReader(body))

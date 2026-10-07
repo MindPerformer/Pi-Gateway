@@ -124,6 +124,59 @@ func exerciseRulePublication(t *testing.T, first, second *Store) {
 	if version, err := first.RuleSetVersion(ctx); err != nil || version != 4 {
 		t.Fatalf("published version=%d %v", version, err)
 	}
+	exerciseRuleSnapshotMarker(t, first, second)
+}
+
+// Shared by SQLite and the real PostgreSQL publication test. In particular,
+// PostgreSQL rejects even an ON CONFLICT DO NOTHING insert in a read-only tx.
+func exerciseRuleSnapshotMarker(t *testing.T, first, second *Store) {
+	t.Helper()
+	ctx := context.Background()
+	published, err := first.PublishRules(ctx, nil, []RuleChange{
+		{Kind: "create", ID: "language-v2-installed", Rule: testRuleJSON("V2 installed", 0)},
+	}, acceptRuleSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err := second.RulesV2Installed(ctx)
+	if err != nil || !installed {
+		t.Fatalf("publication did not persist installation marker: installed=%t err=%v", installed, err)
+	}
+	if _, err := first.ExecContext(ctx, `DELETE FROM settings WHERE key='rules.language.v2'`); err != nil {
+		t.Fatal(err)
+	}
+	// Mimic an earlier V2 installation that has the rule but no durable setting.
+	loaded, err := second.LoadRuleSet(ctx)
+	if err != nil || loaded.Version != published.Version || !hasV2Marker(loaded) {
+		t.Fatalf("read-only V2 snapshot: %+v err=%v", loaded, err)
+	}
+	installed, err = second.RulesV2Installed(ctx)
+	if err != nil || installed {
+		t.Fatalf("snapshot load must not write a setting: installed=%t err=%v", installed, err)
+	}
+	for range 2 {
+		installed, err = second.RestoreRulesV2Marker(ctx)
+		if err != nil || !installed {
+			t.Fatalf("restore old installation marker: installed=%t err=%v", installed, err)
+		}
+	}
+	if version, err := first.RuleSetVersion(ctx); err != nil || version != published.Version {
+		t.Fatalf("marker repair changed publication version: %d %v", version, err)
+	}
+	deleted, err := first.PublishRules(ctx, nil, []RuleChange{
+		{Kind: "delete", ID: "language-v2-installed", ExpectedRevision: 1},
+	}, acceptRuleSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err = second.RestoreRulesV2Marker(ctx)
+	if err != nil || !installed {
+		t.Fatalf("rule deletion lost durable installation: installed=%t err=%v", installed, err)
+	}
+	loaded, err = second.LoadRuleSet(ctx)
+	if err != nil || loaded.Version != deleted.Version || hasV2Marker(loaded) {
+		t.Fatalf("marker repair resurrected deleted rule: %+v err=%v", loaded, err)
+	}
 }
 
 func TestRulesSQLitePublication(t *testing.T) {

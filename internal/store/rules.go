@@ -155,11 +155,6 @@ func (s *Store) LoadRuleSet(ctx context.Context) (*RuleSetSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if hasV2Marker(snapshot) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
-			return nil, err
-		}
-	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -761,6 +756,37 @@ func hasV2Marker(snapshot *RuleSetSnapshot) bool {
 	}
 	return false
 }
+
+// RestoreRulesV2Marker repairs installations predating the durable setting.
+// Keep this write out of LoadRuleSet's read-only snapshot transaction and
+// serialize it with publication so the marker cannot race a rule deletion.
+func (s *Store) RestoreRulesV2Marker(ctx context.Context) (bool, error) {
+	tx, err := s.beginRulePublication(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var setting, marker int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key='rules.language.v2'`).Scan(&setting); err != nil {
+		return false, err
+	}
+	if setting == 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rules WHERE id='language-v2-installed'`).Scan(&marker); err != nil {
+			return false, err
+		}
+	}
+	installed := setting > 0 || marker > 0
+	if setting == 0 && installed {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return installed, nil
+}
+
 func (s *Store) RulesV2Installed(ctx context.Context) (bool, error) {
 	var n int
 	err := s.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key='rules.language.v2'`).Scan(&n)

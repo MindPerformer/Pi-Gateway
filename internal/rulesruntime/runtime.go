@@ -246,7 +246,14 @@ func (s *Service) upgrade(ctx context.Context) error {
 			}
 		}
 		if marker {
-			return nil
+			installed, err := s.store.RestoreRulesV2Marker(ctx)
+			if err != nil {
+				return err
+			}
+			if installed {
+				return nil
+			}
+			continue
 		}
 		changes := []store.RuleChange{}
 		for _, row := range snapshot.Rules {

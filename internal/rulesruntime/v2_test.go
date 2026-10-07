@@ -121,3 +121,39 @@ func TestProtocolDefaultsUpgradeEarlierV2Installation(t *testing.T) {
 		t.Fatalf("restart reseeded deleted defaults: version=%d err=%v", version, err)
 	}
 }
+
+func TestV2RestoresEarlierInstallationMarkerBeforeRuleDeletion(t *testing.T) {
+	st := runtimeStore(t, filepath.Join(t.TempDir(), "earlier-marker.db"))
+	if err := New(st).Ensure(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ExecContext(t.Context(), `DELETE FROM settings WHERE key='rules.language.v2'`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.LoadRuleSet(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := New(st).Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := st.RulesV2Installed(t.Context())
+	if err != nil || !installed {
+		t.Fatalf("old installation marker not restored: installed=%t err=%v", installed, err)
+	}
+	changes := []store.RuleChange{}
+	for _, row := range before.Rules {
+		changes = append(changes, store.RuleChange{Kind: "delete", ID: row.ID, ExpectedRevision: row.Revision})
+	}
+	deleted, err := st.PublishRules(t.Context(), &before.Version, changes, ValidateSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := New(st).Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := st.LoadRuleSet(t.Context())
+	if err != nil || len(after.Rules) != 0 || after.Version != deleted.Version {
+		t.Fatalf("restart reinstalled deleted old defaults: %+v err=%v", after, err)
+	}
+}

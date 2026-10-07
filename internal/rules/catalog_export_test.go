@@ -26,6 +26,16 @@ func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {
 		t.Fatalf("capability count %d/%d", len(c.Actions), len(c.Conditions))
 	}
 	seen := map[string]bool{}
+	for _, group := range [][]FieldSpec{c.RuleFields, c.ContextFields, selectorFields()} {
+		for _, f := range group {
+			assertFieldHelp(t, f)
+		}
+	}
+	for _, cap := range c.ValueExpressions {
+		for _, f := range cap.Fields {
+			assertFieldHelp(t, f)
+		}
+	}
 	for _, a := range c.Actions {
 		if seen[a.ID] {
 			t.Fatal("duplicate action", a.ID)
@@ -36,6 +46,7 @@ func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {
 		}
 		fields := map[string]bool{}
 		for _, f := range a.Fields {
+			assertFieldHelp(t, f)
 			if fields[f.Name] || f.Label == "" || f.Description == "" || f.Control == "" || f.Type == "" {
 				t.Fatalf("incomplete field %s/%s", a.ID, f.Name)
 			}
@@ -50,6 +61,7 @@ func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {
 			t.Fatal("condition missing help")
 		}
 		for _, f := range cond.Fields {
+			assertFieldHelp(t, f)
 			if f.Label == "" || f.Description == "" || f.Control == "" {
 				t.Fatal("condition field incomplete")
 			}
@@ -93,4 +105,16 @@ func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {
 		t.Fatal("catalog aliases registry")
 	}
 	compileTest(t, rule("untouched", act("rewrite_model", map[string]any{"model": "new"})))
+}
+
+func assertFieldHelp(t *testing.T, f FieldSpec) {
+	t.Helper()
+	if f.Description == "" || len(f.Examples) == 0 {
+		t.Fatalf("field %s lacks description or examples", f.Name)
+	}
+	for _, option := range f.Enum {
+		if f.EnumHelp[option] == "" {
+			t.Fatalf("field %s lacks option help for %s", f.Name, option)
+		}
+	}
 }

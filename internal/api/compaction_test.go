@@ -73,6 +73,7 @@ func TestSummaryCompactionHTTPContinuationAndRecompact(t *testing.T) {
 			if compact["usage"].(map[string]any)["total_tokens"] != float64(38) {
 				t.Fatal("real summary usage missing")
 			}
+			assertCompactionUsage(t, h)
 			output := compact["output"].([]any)
 			next := append(append([]any(nil), output...), map[string]any{"role": "user", "content": "continue task"})
 			body, _ := json.Marshal(map[string]any{"model": "test", "input": next, "stream": false})
@@ -285,6 +286,7 @@ func TestCompactionHTTPAndNextTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			output := assertCompactOutput(t, response, tc.direct)
+			assertCompactionUsage(t, h)
 			// A compacted window is full input, not a continuation of the synthetic
 			// response ID. Explicit SSE keeps this test independent of socket mocks.
 			rt := h.dataPlane.settings.Get()
@@ -420,6 +422,26 @@ func TestCompactionPolicyCannotLoseOperationOrRestoreInstructions(t *testing.T) 
 	}
 }
 
+func TestV2FinalizeSelectsActualSummaryModel(t *testing.T) {
+	h := newHarness(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if strings.HasSuffix(r.URL.Path, "/compact") || body["model"] != "final-summary" {
+			t.Errorf("finalize model did not reach summary request: path=%s body=%+v", r.URL.Path, body)
+		}
+		_, _ = io.WriteString(w, summaryTestSSE)
+	}), "sse")
+	setCompactionMode(t, h, "on")
+	publishUnifiedRules(t, h, unifiedRule("summary-finalize", rules.PhaseRequestFinalize, 1,
+		unifiedSet("final-model", "/model", "final-summary")))
+	resp, raw := postCompactTest(t, h, "/v1/responses/compact", `{"model":"test","input":[]}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status=%d %s", resp.StatusCode, raw)
+	}
+}
+
 func TestCompaction429RetryKeepsHTTPCompaction(t *testing.T) {
 	var calls atomic.Int32
 	h := newHarness(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -453,4 +475,18 @@ func TestCompaction429RetryKeepsHTTPCompaction(t *testing.T) {
 	var response map[string]any
 	_ = json.Unmarshal(raw, &response)
 	assertCompactOutput(t, response, false)
+	assertCompactionUsage(t, h)
+}
+
+func assertCompactionUsage(t *testing.T, h *testHarness) {
+	t.Helper()
+	records, _, err := h.store.ListUsageRecords(t.Context(), store.UsageFilter{})
+	if err != nil || len(records) == 0 {
+		t.Fatalf("missing compaction usage: %v", err)
+	}
+	for _, record := range records {
+		if record.RequestKind != "compaction" {
+			t.Fatalf("compaction ledger missing request type: %+v", record)
+		}
+	}
 }

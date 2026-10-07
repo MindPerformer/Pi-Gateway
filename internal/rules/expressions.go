@@ -70,6 +70,21 @@ func (s *evaluation) compute(e map[string]any) (any, bool, error) {
 	}
 	bad := func() (any, bool, error) { return nil, false, fmt.Errorf("invalid argument types for %s", op) }
 	switch op {
+	case "join":
+		items, ok := args[0].([]any)
+		separator, sepOK := args[1].(string)
+		if !ok || !sepOK {
+			return bad()
+		}
+		parts := make([]string, len(items))
+		for i, item := range items {
+			part, ok := item.(string)
+			if !ok {
+				return bad()
+			}
+			parts[i] = part
+		}
+		return strings.Join(parts, separator), true, nil
 	case "array":
 		return args, true, nil
 	case "object":
@@ -238,7 +253,7 @@ func (s *evaluation) compute(e map[string]any) (any, bool, error) {
 
 var expressionArity = map[string][2]int{
 	"array": {0, 256}, "object": {0, 256}, "coalesce": {1, 256}, "concat": {1, 256}, "and": {1, 256}, "or": {1, 256},
-	"get": {2, 2}, "index": {2, 2}, "eq": {2, 2}, "ne": {2, 2}, "contains": {2, 2}, "add": {2, 2}, "subtract": {2, 2}, "gt": {2, 2}, "gte": {2, 2}, "lt": {2, 2}, "lte": {2, 2},
+	"join": {2, 2}, "get": {2, 2}, "index": {2, 2}, "eq": {2, 2}, "ne": {2, 2}, "contains": {2, 2}, "add": {2, 2}, "subtract": {2, 2}, "gt": {2, 2}, "gte": {2, 2}, "lt": {2, 2}, "lte": {2, 2},
 	"type": {1, 1}, "length": {1, 1}, "keys": {1, 1}, "exists": {1, 1}, "not": {1, 1}, "trim": {1, 1}, "lower": {1, 1}, "upper": {1, 1}, "string": {1, 1}, "pointer_escape": {1, 1}, "json_parse": {1, 1}, "json_stringify": {1, 1}, "slice": {3, 3}, "regex_replace": {3, 3},
 }
 

@@ -493,7 +493,9 @@ func TestGatewayContinuationDisconnectAndShutdownDoNotCommitCreated(t *testing.T
 			defer memory.Close()
 			h := newGatewayContinuationHarness(t, b, memory)
 			if action == "max-age" {
-				h.dataPlane.wsMaxAge = 250 * time.Millisecond
+				// Leave room for the first turn's database/rule initialization;
+				// expiry must interrupt the created response, not its setup.
+				h.dataPlane.wsMaxAge = time.Second
 			}
 			conn := dialGatewayContinuation(t, h, h.key)
 			if err := conn.WriteJSON(gatewayCreate([]any{gatewayUser("one")}, "", "")); err != nil {

@@ -357,6 +357,25 @@ func (s *Store) PublishRules(ctx context.Context, expectedVersion *int64, change
 }
 
 func (s *Store) beginRulePublication(ctx context.Context) (*storeTx, error) {
+	// A pooled SQLite connection can encounter transient setup/write contention
+	// before busy_timeout takes effect. Retry only lock acquisition, before any
+	// publication reads or changes, so revision checks keep their normal meaning.
+	for attempt := 0; ; attempt++ {
+		tx, err := s.tryBeginRulePublication(ctx)
+		if err == nil || s.driver != "sqlite" || !isSQLiteBusy(err) || attempt >= 5 {
+			return tx, err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *Store) tryBeginRulePublication(ctx context.Context) (*storeTx, error) {
 	tx, err := s.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err

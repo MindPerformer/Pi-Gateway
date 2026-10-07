@@ -46,11 +46,15 @@ func newRulesAdmin(t *testing.T, migrateEmpty bool) (*store.Store, *http.ServeMu
 		if err := rulesruntime.New(st).Ensure(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		filter, err := st.GetRule(t.Context(), "default-drop-image-generation")
-		if err != nil || filter == nil {
-			t.Fatalf("default upgrade: %+v err=%v", filter, err)
+		snapshot, err := st.LoadRuleSet(t.Context())
+		if err != nil {
+			t.Fatal(err)
 		}
-		if _, err := st.PublishRules(t.Context(), nil, []store.RuleChange{{Kind: "delete", ID: filter.ID, ExpectedRevision: filter.Revision}}, rulesruntime.ValidateSnapshot); err != nil {
+		changes := []store.RuleChange{}
+		for _, row := range snapshot.Rules {
+			changes = append(changes, store.RuleChange{Kind: "delete", ID: row.ID, ExpectedRevision: row.Revision})
+		}
+		if _, err := st.PublishRules(t.Context(), nil, changes, rulesruntime.ValidateSnapshot); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -74,18 +78,23 @@ func TestRulesAdminBackfillsOldInstallation(t *testing.T) {
 	}
 	out := ruleHTTP(t, mux, "GET", "/api/rules", "", 200)
 	var definitions []rules.Rule
-	if err := json.Unmarshal(out["rules"], &definitions); err != nil || len(definitions) != 2 {
+	if err := json.Unmarshal(out["rules"], &definitions); err != nil || len(definitions) != 6 {
 		t.Fatalf("old installation list=%s err=%v", out["rules"], err)
 	}
 	filter, err := st.GetRule(t.Context(), "default-drop-image-generation")
 	version, versionErr := st.RuleSetVersion(t.Context())
-	if err != nil || versionErr != nil || filter == nil || !filter.Enabled || version != before.Version+1 {
+	if err != nil || versionErr != nil || filter == nil || !filter.Enabled || version != before.Version+2 {
 		t.Fatalf("backfill failed: filter=%+v version=%d err=%v/%v", filter, version, err, versionErr)
 	}
 	ruleHTTP(t, mux, "DELETE", "/api/rules/"+filter.ID+"?expected_revision=1", "", 200)
 	out = ruleHTTP(t, mux, "GET", "/api/rules", "", 200)
-	if err := json.Unmarshal(out["rules"], &definitions); err != nil || len(definitions) != 1 || definitions[0].ID != "existing" {
+	if err := json.Unmarshal(out["rules"], &definitions); err != nil || len(definitions) != 5 {
 		t.Fatalf("admin request resurrected deleted default: %s err=%v", out["rules"], err)
+	}
+	for _, definition := range definitions {
+		if definition.ID == filter.ID {
+			t.Fatal("deleted image rule resurrected")
+		}
 	}
 }
 

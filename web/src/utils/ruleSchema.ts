@@ -163,7 +163,7 @@ export function localHelp(value: LocalizedHelp | string | undefined, locale: str
 }
 
 export function defaultForField(f: RuleField): unknown {
-    return f.default !== undefined ? structuredClone(f.default) : f.type === 'boolean' ? false : f.type === 'number' ? 0 : f.type === 'strings' || f.type === 'values' || f.type === 'action_array' ? [] : f.type === 'value' ? null : f.type === 'condition' ? {op: 'always'} : f.enum?.[0] ?? ''
+    return f.non_empty && (f.default === undefined || f.default === '') && f.examples?.length ? structuredClone(f.examples[0]) : f.default !== undefined ? structuredClone(f.default) : f.type === 'boolean' ? false : f.type === 'number' ? 0 : f.type === 'strings' || f.type === 'values' || f.type === 'action_array' ? [] : f.type === 'value' ? null : f.type === 'condition' ? {op: 'always'} : f.enum?.[0] ?? ''
 }
 
 export function newRule(): Rule {

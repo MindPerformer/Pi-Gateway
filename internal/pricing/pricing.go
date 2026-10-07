@@ -9,14 +9,14 @@ import (
 )
 
 // Rule 为每 1M token 的美元单价。
-// 超过 LongContextThreshold 时，UnpricedLongContext 表示未定价；
+// 达到 LongContextThreshold 时，UnpricedLongContext 表示未定价；
 // 否则使用 LongContext，若其为 nil 则沿用短档价格。阈值为 0 时不切换。
 type Rule struct {
 	Input, CachedInput, CacheWrite, Output float64
 	LongContextThreshold                   int64
 	LongContext                            *Rule
 	// UnpricedLongContext 对应参考实现的 unpriced_long_context。
-	// 超过阈值时 Cost 返回 ok=false，而不是把未确认价格当作零。
+	// 达到阈值时 Cost 返回 ok=false，而不是把未确认价格当作零。
 	UnpricedLongContext bool
 }
 
@@ -140,7 +140,7 @@ func scaleRule(r *Rule, multiplier float64) bool {
 
 // Cost 返回 micro-USD（USD×1e6），不使用浮点乘法或浮点累加。
 // input 包含 cached 与 cacheWrite；uncached=max(input-cached-cacheWrite, 0)。
-// 整次请求按原始 input 是否 > LongContextThreshold 选择长上下文价格，
+// 整次请求按原始 input 是否 >= LongContextThreshold 选择长上下文价格，
 // 不是只对超过阈值的增量 token 加价（来源 usage.rs:499-510）。
 //
 // 分段计费来源 usage.rs:902-941，但按本任务约定始终扣除 cached/cacheWrite，
@@ -154,7 +154,7 @@ func Cost(r Rule, input, cached, cacheWrite, output int64) (int64, bool) {
 	if input < 0 || cached < 0 || cacheWrite < 0 || output < 0 {
 		return 0, false
 	}
-	if r.LongContextThreshold > 0 && input > r.LongContextThreshold {
+	if r.LongContextThreshold > 0 && input >= r.LongContextThreshold {
 		if r.UnpricedLongContext {
 			return 0, false
 		}

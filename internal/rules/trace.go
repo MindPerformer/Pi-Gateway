@@ -71,8 +71,8 @@ func boundTrace(t Trace) Trace {
 	return t
 }
 func sensitiveKey(k string) bool {
-	k = strings.ToLower(k)
-	return contains([]string{"authorization", "proxy-authorization", "api_key", "access_token", "refresh_token", "password", "secret", "cookie", "set-cookie"}, k)
+	k = strings.ReplaceAll(strings.ToLower(k), "-", "_")
+	return contains([]string{"authorization", "proxy_authorization", "api_key", "x_api_key", "openai_api_key", "id_token", "client_secret", "access_token", "refresh_token", "password", "secret", "cookie", "set_cookie"}, k)
 }
 func redact(v any) any {
 	if m, ok := object(v); ok {

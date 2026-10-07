@@ -18,6 +18,8 @@ const set = (value: unknown) => emit('update:modelValue', value)
 const fieldErrors = computed(() => (props.errors ?? []).filter(e => e.path === props.path || e.path.startsWith(`${props.path}/`) && props.field.type !== 'condition'))
 const controlId = computed(() => `rule-field-${props.idPrefix ? `${props.idPrefix}-` : ''}${props.path}`)
 const samplePathId = computed(() => `sample-path-${props.idPrefix ? `${props.idPrefix}-` : ''}${props.path}`)
+const hoverHelp = computed(() => `${localHelp(props.field.description, locale.value)}\n${(props.field.examples ?? []).map(v => JSON.stringify(v)).join('\n')}`)
+const selectedHelp = computed(() => props.field.enum_help?.[String(fieldValue.value)])
 // Missing optional fields stay missing until a control is actually changed.
 const fieldValue = computed(() => props.compact && props.modelValue === undefined ? defaultForField(props.field) : props.modelValue)
 const items = computed<unknown[]>(() => Array.isArray(fieldValue.value) ? fieldValue.value : [])
@@ -46,7 +48,7 @@ function numberInput(event: Event) {
 <template>
   <div class="space-y-1.5" :class="{'rule-field-compact': compact}" :data-rule-path="path" :data-renderer="field.type">
     <div class="flex flex-wrap items-center gap-2">
-      <label :id="`${controlId}-label`" :for="controlId" class="text-[12px] font-medium" :title="compact ? localHelp(field.description, locale) : undefined">{{ field.label?.split(' / ')[locale==='zh-CN'?0:1] ?? ruleLabel('field', field.name, locale) }}</label><ParameterHelp :field="field" />
+      <label :id="`${controlId}-label`" :for="controlId" class="text-[12px] font-medium" :title="`${localHelp(field.description, locale)}\n${(field.examples ?? []).map(v=>JSON.stringify(v)).join('\n')}`">{{ field.label?.split(' / ')[locale==='zh-CN'?0:1] ?? ruleLabel('field', field.name, locale) }}</label><ParameterHelp :field="field" />
       <span v-if="!compact" class="text-[10px] text-[color:var(--color-ink-faint)]">{{ field.required ? t('rules.required') : t('rules.optional') }} · {{ ruleOptionLabel(field.type, locale) }}</span>
       <span v-else-if="field.required" class="text-[10px] text-[color:var(--color-ink-faint)]">{{ t('rules.required') }}</span>
       <button v-if="!field.required && !field.readonly" class="btn btn-ghost !px-1.5 !py-0.5 text-[10px]" type="button" @click="set(modelValue === undefined ? defaultForField(field) : undefined)">{{ modelValue === undefined ? t('rules.include') : t('rules.unset') }}</button>
@@ -72,17 +74,17 @@ function numberInput(event: Event) {
     </div>
     <div v-if="modelValue === undefined && !field.required" class="text-[11px] text-[color:var(--color-ink-faint)]">{{ t('rules.none') }}</div>
     <template v-if="compact || modelValue !== undefined || field.required">
-      <select v-if="field.enum?.length" :id="controlId" class="input" :disabled="field.readonly" :value="fieldValue" :aria-invalid="!!fieldErrors.length" @change="set(($event.target as HTMLSelectElement).value)"><option v-for="option in field.enum" :key="option" :value="option">{{ ruleOptionLabel(option, locale) }}</option></select>
-      <textarea v-else-if="field.type === 'string'" :id="controlId" class="input" :rows="compact ? 1 : 2" :readonly="field.readonly" :value="String(fieldValue ?? '')" :required="field.non_empty" :aria-invalid="!!fieldErrors.length" @input="textInput" @compositionend="compact && textInput($event)" />
-      <input v-else-if="field.type === 'number'" :id="controlId" class="input" type="number" step="1" required :readonly="field.readonly" :min="field.min" :max="field.max" :value="fieldValue ?? 0" :aria-invalid="!!fieldErrors.length" @input="numberInput" />
-      <input v-else-if="field.type === 'boolean'" :id="controlId" type="checkbox" :disabled="field.readonly" :checked="!!fieldValue" @change="set(($event.target as HTMLInputElement).checked)" />
-      <ValueEditor v-else-if="field.type === 'value'" :model-value="(fieldValue ?? null) as ValueExpr" :schema="schema" :compact="compact" :id-prefix="idPrefix ? controlId : undefined" @update:model-value="set" />
+      <select v-if="field.enum?.length" :id="controlId" :title="`${hoverHelp}\n${selectedHelp ?? ''}`" class="input" :disabled="field.readonly" :value="fieldValue" :aria-invalid="!!fieldErrors.length" @change="set(($event.target as HTMLSelectElement).value)"><option v-for="option in field.enum" :key="option" :value="option" :title="field.enum_help?.[option]">{{ ruleOptionLabel(option, locale) }}</option></select>
+      <textarea v-else-if="field.type === 'string'" :id="controlId" :title="hoverHelp" class="input" :rows="compact ? 1 : 2" :readonly="field.readonly" :value="String(fieldValue ?? '')" :required="field.non_empty" :aria-invalid="!!fieldErrors.length" @input="textInput" @compositionend="compact && textInput($event)" />
+      <input v-else-if="field.type === 'number'" :id="controlId" :title="hoverHelp" class="input" type="number" step="1" required :readonly="field.readonly" :min="field.min" :max="field.max" :value="fieldValue ?? 0" :aria-invalid="!!fieldErrors.length" @input="numberInput" />
+      <input v-else-if="field.type === 'boolean'" :id="controlId" :title="hoverHelp" type="checkbox" :disabled="field.readonly" :checked="!!fieldValue" @change="set(($event.target as HTMLInputElement).checked)" />
+      <ValueEditor v-else-if="field.type === 'value'" :model-value="(fieldValue ?? null) as ValueExpr" :schema="schema" :compact="compact" :id-prefix="controlId" @update:model-value="set" />
       <ConditionEditor v-else-if="field.type === 'condition'" :model-value="(modelValue ?? {op:'always'}) as RuleCondition" :schema="schema" :path="path" :errors="errors" :sample="sample" @update:model-value="set" />
       <div v-else-if="field.type === 'strings' || field.type === 'values'" :id="controlId" class="space-y-2" role="group" :aria-labelledby="`${controlId}-label`">
         <p v-if="compact && items.length > visibleItems.length" class="text-[10px] text-[color:var(--color-ink-muted)]">{{ visibleItems.length }} / {{ items.length }} · {{ t('rules.canvas.inlineAdvanced') }}</p>
         <div v-for="(item, index) in visibleItems" :key="index" class="flex items-start gap-1">
           <input v-if="field.type === 'strings'" :id="idPrefix ? `${controlId}-${index}` : undefined" class="input min-w-0 flex-1" :value="item" :aria-label="`${ruleLabel('field', field.name, locale)} ${index + 1}`" @input="textInput($event, index)" @compositionend="compact && textInput($event, index)" />
-          <ValueEditor v-else class="min-w-0 flex-1" :model-value="item as ValueExpr" :schema="schema" :compact="compact" :id-prefix="idPrefix ? `${controlId}-${index}` : undefined" @update:model-value="updateItem(index, $event)" />
+          <ValueEditor v-else class="min-w-0 flex-1" :model-value="item as ValueExpr" :schema="schema" :compact="compact" :id-prefix="`${controlId}-${index}`" @update:model-value="updateItem(index, $event)" />
           <button type="button" class="btn btn-ghost !px-2" :disabled="index === 0" :title="t('rules.up')" @click="set(moveItem(items, index, -1))">↑</button>
           <button type="button" class="btn btn-ghost !px-2" :disabled="index === items.length - 1" :title="t('rules.down')" @click="set(moveItem(items, index, 1))">↓</button>
           <button type="button" class="btn btn-ghost !px-2" :title="t('rules.remove')" @click="set(items.filter((_, i) => i !== index))">×</button>
@@ -90,6 +92,11 @@ function numberInput(event: Event) {
         <button type="button" class="btn btn-ghost" @click="set([...items, field.type === 'strings' ? '' : null])">{{ t('rules.addItem') }}</button>
       </div>
     </template>
+    <p v-if="selectedHelp && !compact" class="text-[11px] text-[color:var(--color-ink-muted)]" data-testid="selected-option-help">{{ localHelp(selectedHelp, locale) }}</p>
+    <div v-if="field.type === 'condition_array'" class="space-y-2">
+      <ConditionEditor v-for="(item,index) in items" :key="index" :model-value="item as RuleCondition" :schema="schema" :path="`${path}/${index}`" :errors="errors" :sample="sample" @update:model-value="updateItem(index,$event)" />
+      <button type="button" class="btn btn-ghost" @click="set([...items,{op:'always'}])">{{ t('rules.addItem') }}</button>
+    </div>
     <ActionEditor v-if="field.type === 'action_array'" :model-value="(modelValue ?? []) as import('../../api/rules').RuleAction[]" :schema="schema" :phase="phase ?? 'request'" :base-path="path" :errors="errors" :sample="sample" @update:model-value="set" />
     <p v-for="error in fieldErrors" :key="error.path + error.message" class="text-xs text-red-500" role="alert">{{ error.path }}: {{ error.message }}</p>
   </div>

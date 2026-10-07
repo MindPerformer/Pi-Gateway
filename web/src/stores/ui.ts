@@ -110,10 +110,10 @@ export function formatRelative(ms: number): string {
 
 // formatUntil renders a countdown for token or window expiry.
 export function formatUntil(ms: number): string {
-    if (!ms) return '—'
+    if (!Number.isFinite(ms)) return '—'
     if (ms <= 0) return translateNow('common.expired')
     const hours = Math.floor(ms / 3_600_000)
-    if (hours >= 48) return `${Math.floor(hours / 24)}d`
+    if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`
     if (hours >= 1) return `${hours}h ${Math.floor((ms % 3_600_000) / 60_000)}m`
     return `${Math.max(1, Math.floor(ms / 60_000))}m`
 }

@@ -8,6 +8,8 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "check:i18n": "node check-i18n.mjs",
+    "check:quota": "node check-quota-cost.mjs",
+    "check:billing": "node check-usage-billing.mjs",
     "check:capture": "node check-capture-diff.mjs && node check-capture-inspection.mjs",
     "check:rules": "node check-rules.mjs",
     "check:simulation": "node check-rule-simulation.mjs",

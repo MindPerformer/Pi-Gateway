@@ -5,8 +5,46 @@ import (
 	"database/sql"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestOpenAddsUsageRequestKindToOldDatabase(t *testing.T) {
+	path := t.TempDir() + "/old-usage.db"
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSchema := strings.ReplaceAll(schemaSQL, " request_kind TEXT NOT NULL DEFAULT '',\n", "")
+	for _, column := range []string{"reasoning_effort", "requested_service_tier", "service_tier", "billing_details"} {
+		oldSchema = strings.ReplaceAll(oldSchema, " "+column+" TEXT NOT NULL DEFAULT '',\n", "")
+	}
+	if _, err := db.Exec(oldSchema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO usage_records(request_id,model,outcome,started_at,completed_at) VALUES('historical','test','succeeded',1,2)`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		st, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records, _, err := st.ListUsageRecords(t.Context(), UsageFilter{})
+		if err != nil || len(records) != 1 || records[0].RequestID != "historical" || records[0].RequestKind != "" || records[0].ReasoningEffort != "" || records[0].RequestedServiceTier != "" || records[0].ServiceTier != "" || records[0].BillingDetails != "" {
+			st.Close()
+			t.Fatalf("historical record changed during migration: %+v err=%v", records, err)
+		}
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestOpenMigratesLegacyAccountsColumnsIdempotently(t *testing.T) {
 	path := t.TempDir() + "/legacy.db"

@@ -65,7 +65,7 @@ async function load() {
 }
 async function loadSchema() {
   try { const raw = await api.getRuleSchema(); try { schema.value = adaptSchema(raw); schemaWarning.value = ''; schemaUnsupported.value = false } catch (error) { schemaWarning.value = `${t('rules.schemaUnsupported')} ${message(error)}`; schemaUnsupported.value = true } }
-  catch { schemaWarning.value = t('rules.schemaUnavailable') }
+  catch { schemaWarning.value = t('rules.schemaUnavailable'); schemaUnsupported.value = true }
 }
 onMounted(() => { void loadSchema(); void load(); window.addEventListener('beforeunload', leaveWindow) })
 onBeforeUnmount(() => { loadSequence++; clearTimeout(searchTimer); window.removeEventListener('beforeunload', leaveWindow) })

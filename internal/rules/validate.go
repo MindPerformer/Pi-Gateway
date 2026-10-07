@@ -279,7 +279,8 @@ func validateFieldValue(v any, f FieldSpec, path, phase string, item bool) error
 		_, e := asCondition(v, path)
 		return e
 	case "action_array":
-		return validateLiteral(v, path, 0)
+		_, err := decodeActions(v, path)
+		return err
 	case "condition_array":
 		switch v.(type) {
 		case []Condition, []any:

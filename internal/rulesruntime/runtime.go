@@ -2,6 +2,7 @@
 package rulesruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,8 +45,14 @@ func (s *Service) ensureLocked(ctx context.Context) error {
 	if s.ensured {
 		return nil
 	}
-	if _, err := s.store.InitializeRules(ctx, ConvertLegacy, ValidateSnapshot); err != nil {
+	version, err := s.store.RuleSetVersion(ctx)
+	if err != nil {
 		return err
+	}
+	if version == 0 {
+		if _, err := s.store.InitializeRules(ctx, ConvertLegacy, ValidateSnapshot); err != nil {
+			return err
+		}
 	}
 	definition := defaultImageExclusion()
 	raw, err := EditableJSON(definition)
@@ -58,6 +65,9 @@ func (s *Service) ensureLocked(ctx context.Context) error {
 		return err
 	}
 	if err := s.upgrade(ctx); err != nil {
+		return err
+	}
+	if err := s.upgradeProtocolProfile(ctx); err != nil {
 		return err
 	}
 	s.ensured = true
@@ -252,7 +262,9 @@ func (s *Service) upgrade(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			changes = append(changes, store.RuleChange{Kind: "update", ID: row.ID, ExpectedRevision: row.Revision, Rule: raw})
+			if !bytes.Equal(raw, row.Rule) {
+				changes = append(changes, store.RuleChange{Kind: "update", ID: row.ID, ExpectedRevision: row.Revision, Rule: raw})
+			}
 		}
 		for _, definition := range rules.DefaultProfile() {
 			if snapshotHas(snapshot, definition.ID) {
@@ -287,6 +299,21 @@ func snapshotHas(s *store.RuleSetSnapshot, id string) bool {
 	return false
 }
 
+// Protocol profiles have their own installation marker: an earlier V2 language
+// installation may predate these defaults. Existing rules are never overwritten.
+func (s *Service) upgradeProtocolProfile(ctx context.Context) error {
+	definitions := rules.DefaultProfile()
+	changes := make([]store.RuleChange, 0, len(definitions))
+	for _, definition := range definitions {
+		raw, err := EditableJSON(definition)
+		if err != nil {
+			return err
+		}
+		changes = append(changes, store.RuleChange{Kind: "create", ID: definition.ID, Rule: raw, Source: "protocol"})
+	}
+	return s.store.UpgradeDefaultRules(ctx, "rules.protocol.chatgpt.v1", changes, ValidateSnapshot)
+}
+
 func defaultImageExclusion() rules.Rule {
-	return rules.Rule{SchemaVersion: rules.SchemaVersion, ID: "default-drop-image-generation", Name: "Exclude image generation", Enabled: true, Priority: 1000, Phase: rules.PhaseRequest, When: rules.Condition{Op: "always"}, OnError: rules.OnErrorAbort, Actions: []rules.Action{{ID: "drop-image-generation", Type: "drop_tools", Params: map[string]any{"types": []any{"image_generation"}}}}}
+	return rules.Rule{SchemaVersion: rules.SchemaVersion, ID: "default-drop-image-generation", Name: "排除图像生成 / Exclude image generation", Enabled: true, Priority: 1000, Phase: rules.PhaseRequest, When: rules.Condition{Op: "always"}, OnError: rules.OnErrorAbort, Actions: []rules.Action{{ID: "drop-image-generation", Type: "drop_tools", Params: map[string]any{"types": []any{"image_generation"}}}}}
 }

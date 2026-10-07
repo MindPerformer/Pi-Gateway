@@ -31,7 +31,7 @@ func flowCapabilities() []Capability {
 		{ID: "for_each", Label: "逐项处理 / For each", Description: "以原始元素快照迭代数组或对象；current 是元素本身，original 是该元素原值；变量作用域隔离。", Phases: phases, Fields: []FieldSpec{ptr("path", true), field("bind", "string", "绑定名称 / Binding", "vars 中保存原始 value、index/key、path；嵌套遍历使用不同名称。", "item", false), steps, field("keep", "condition", "保留条件 / Keep", "在修改后判断；不成立删除元素；原始下标保持稳定。", map[string]any{"op": "always"}, false), missing}},
 		{ID: "walk", Label: "递归遍历 / Walk", Description: "深度优先处理选定子树；先处理子节点再处理父节点；predicate 决定是否运行内部步骤。", Phases: phases, Fields: []FieldSpec{ptr("path", true), field("predicate", "condition", "节点条件 / Predicate", "只选择指定类型或具有指定字段的节点。", map[string]any{"op": "always"}, false), steps, field("keep", "condition", "保留条件 / Keep", "执行后不成立删除节点；禁止删除遍历根。", map[string]any{"op": "always"}, false), missing}},
 		{ID: "let", Label: "保存变量 / Variable", Description: "变量只在当前规则和当前作用域中有效；不会写入请求。", Phases: phases, Fields: []FieldSpec{requiredString("name", "名称 / Name", "字母或下划线开头，后续可用数字，最多 64 字符。"), field("value", "value", "值 / Value", "字面量、引用或计算表达式；读取不存在的值报错。", nil, true)}},
-		{ID: "scope", Label: "规则片段 / Fragments", Description: "定义局部可调用片段；片段由普通步骤组成，编译检查调用目标与递归。", Phases: phases, Fields: []FieldSpec{field("functions", "value", "片段 / Functions", "对象键为片段名，值为步骤数组；调用可通过 vars 传参。", nil, true), steps}},
+		{ID: "scope", Label: "规则片段 / Fragments", Description: "定义局部可调用片段；片段由普通步骤组成，编译检查调用目标与递归。", Phases: phases, Fields: []FieldSpec{field("functions", "value", "片段 / Functions", "对象键为片段名，值为步骤数组；调用可通过 vars 传参。例如 {filter: [{id: remove, type: json_remove, params: {paths: [/metadata]}}]}。", map[string]any{}, true), steps}},
 		{ID: "call", Label: "调用片段 / Call", Description: "在最近的 scope 中查找片段；禁止递归调用。", Phases: phases, Fields: []FieldSpec{requiredString("name", "片段名 / Fragment", "例如 filter；必须在外层 scope 的 functions 中定义。")}},
 	}
 }
@@ -150,7 +150,7 @@ func validateCalls(actions []compiledAction, scopes []map[string][]compiledActio
 		if a.raw.Type == "scope" {
 			next := append(append([]map[string][]compiledAction{}, scopes...), a.functions)
 			for name, body := range a.functions {
-				key := a.path + ":" + name
+				key := fmt.Sprintf("%d:%s", len(next)-1, name)
 				active[key] = true
 				err := validateCalls(body, next, active, depth+1)
 				delete(active, key)
@@ -174,7 +174,7 @@ func validateCalls(actions []compiledAction, scopes []map[string][]compiledActio
 						return invalid(a.path, "recursive fragment call")
 					}
 					active[key] = true
-					err := validateCalls(body, scopes, active, depth+1)
+					err := validateCalls(body, scopes[:i+1], active, depth+1)
 					delete(active, key)
 					if err != nil {
 						return err
@@ -242,6 +242,11 @@ func (s *evaluation) runSteps(actions []compiledAction) (terminal, error) {
 	return terminal{}, nil
 }
 
+type runtimeFragment struct {
+	steps     []compiledAction
+	functions map[string]*runtimeFragment
+}
+
 func (a compiledAction) executeFlow(s *evaluation) (terminal, error) {
 	p := a.raw.Params
 	switch a.raw.Type {
@@ -264,18 +269,31 @@ func (a compiledAction) executeFlow(s *evaluation) (terminal, error) {
 		return s.runSteps(a.otherwise)
 	case "scope":
 		old := s.functions
-		next := map[string][]compiledAction{}
+		next := map[string]*runtimeFragment{}
 		for k, v := range old {
 			next[k] = v
 		}
 		for k, v := range a.functions {
-			next[k] = v
+			next[k] = &runtimeFragment{steps: v, functions: next}
 		}
+		oldVars := s.vars
+		s.vars = map[string]any{}
+		for k, v := range oldVars {
+			s.vars[k] = v
+		}
+		defer func() { s.vars = oldVars }()
 		s.functions = next
 		defer func() { s.functions = old }()
 		return s.runSteps(a.children)
 	case "call":
-		return s.runSteps(s.functions[stringParam(p, "name")])
+		fragment := s.functions[stringParam(p, "name")]
+		if fragment == nil {
+			return terminal{}, fmt.Errorf("unknown fragment")
+		}
+		old := s.functions
+		s.functions = fragment.functions
+		defer func() { s.functions = old }()
+		return s.runSteps(fragment.steps)
 	case "for_each", "walk":
 		path := stringParam(p, "path")
 		v, exists, err := s.selectValue("current", path, "")
@@ -324,6 +342,9 @@ func (a compiledAction) each(s *evaluation, v any, path string) (any, terminal, 
 	if arr, ok := v.([]any); ok {
 		out := []any{}
 		for i, item := range arr {
+			if err := s.tick(); err != nil {
+				return nil, terminal{}, err
+			}
 			n := scoped(s, item, fmt.Sprintf("%s/%d", path, i), i, "", stringParam(a.raw.Params, "bind"))
 			t, err := n.runSteps(a.children)
 			if err != nil {
@@ -345,6 +366,9 @@ func (a compiledAction) each(s *evaluation, v any, path string) (any, terminal, 
 	if _, ok := object(v); ok {
 		out := map[string]any{}
 		for i, k := range keys(v) {
+			if err := s.tick(); err != nil {
+				return nil, terminal{}, err
+			}
 			item, _ := objGet(v, k)
 			n := scoped(s, item, joinPointer(path, k), i, k, stringParam(a.raw.Params, "bind"))
 			t, err := n.runSteps(a.children)
@@ -371,6 +395,10 @@ func (a compiledAction) walk(s *evaluation, v any, path string, depth int) (any,
 		return nil, false, terminal{}, fmt.Errorf("maximum traversal depth exceeded")
 	}
 	if err := s.tick(); err != nil {
+		return nil, false, terminal{}, err
+	}
+	original, err := cloneJSON(v)
+	if err != nil {
 		return nil, false, terminal{}, err
 	}
 	if arr, ok := v.([]any); ok {
@@ -400,6 +428,7 @@ func (a compiledAction) walk(s *evaluation, v any, path string, depth int) (any,
 		}
 	}
 	n := scoped(s, v, path, 0, "", "")
+	n.original, n.item = original, original
 	match, err := a.predicate.matches(&n)
 	if err != nil {
 		return nil, false, terminal{}, err

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"time"
 
@@ -12,6 +13,9 @@ import (
 
 // quotaView is the account quota state as the UI consumes it.
 type quotaView struct {
+	// Cost is all retained account usage; window costs align with the quota report.
+	Cost        *store.UsageCost  `json:"cost"`
+	WindowCosts []quotaWindowCost `json:"window_costs"`
 	// Report is the parsed usage: rate-limit windows, credits, spend control.
 	Report *quota.Report `json:"report"`
 	// ResetCredits is the inventory of consumable rate-limit resets.
@@ -30,10 +34,25 @@ type quotaView struct {
 	Available bool `json:"available"`
 }
 
-func (s *Server) buildQuotaView(account *store.Account) quotaView {
+type quotaWindowCost struct {
+	LimitID               string           `json:"limit_id"`
+	Role                  string           `json:"role"`
+	StartAt               int64            `json:"start_at"`
+	AsOf                  int64            `json:"as_of"`
+	Usage                 *store.UsageCost `json:"usage"`
+	EstimatedTotalUSD     *float64         `json:"estimated_total_usd"`
+	EstimatedRemainingUSD *float64         `json:"estimated_remaining_usd"`
+	UnavailableReason     string           `json:"unavailable_reason,omitempty"`
+}
+
+func (s *Server) buildQuotaView(ctx context.Context, account *store.Account) quotaView {
 	view := quotaView{
-		Windows:   []quota.Window{},
-		Available: s.accounts.QuotaClient() != nil,
+		Windows:     []quota.Window{},
+		WindowCosts: []quotaWindowCost{},
+		Available:   s.accounts.QuotaClient() != nil,
+	}
+	if account != nil {
+		view.Cost, _ = s.store.AccountUsageCost(ctx, account.ID, store.UsageRange{}, 0)
 	}
 	// Quota state is produced by the Codex credential; without one there is no
 	// authoritative snapshot to show, so no account-facing response may expose a
@@ -53,8 +72,57 @@ func (s *Server) buildQuotaView(account *store.Account) quotaView {
 		view.Windows = snapshot.Report.Windows
 		view.Session = quota.FindWindow(snapshot.Report.Windows, "codex", quota.KindShortTerm)
 		view.Weekly = quota.FindWindow(snapshot.Report.Windows, "codex", quota.KindWeekly)
+		asOf := snapshot.Report.FetchedAt
+		// Legacy reports may lack fetched_at. A failed refresh updates the account
+		// timestamp without updating the report, so it cannot be used in that case.
+		if asOf == 0 && account.QuotaError == "" && snapshot.Report.Error == "" {
+			asOf = account.QuotaUpdatedAt
+		}
+		for _, window := range view.Windows {
+			// Additional buckets do not identify which model requests consumed them.
+			if window.LimitID == "codex" {
+				view.WindowCosts = append(view.WindowCosts, s.buildQuotaWindowCost(ctx, account.ID, window, asOf, store.NowMS()))
+			}
+		}
 	}
 	return view
+}
+
+func (s *Server) buildQuotaWindowCost(ctx context.Context, accountID int64, window quota.Window, asOf, now int64) quotaWindowCost {
+	cost := quotaWindowCost{LimitID: window.LimitID, Role: window.Role, AsOf: asOf}
+	if window.ResetAt <= 0 || window.WindowSeconds <= 0 || window.WindowSeconds > window.ResetAt/1000 {
+		cost.UnavailableReason = "missing_window"
+		return cost
+	}
+	cost.StartAt = window.ResetAt - window.WindowSeconds*1000
+	if asOf <= 0 || asOf > now || asOf < cost.StartAt || asOf >= window.ResetAt {
+		cost.UnavailableReason = "missing_snapshot"
+		return cost
+	}
+	var err error
+	cost.Usage, err = s.store.AccountUsageCost(ctx, accountID, store.UsageRange{Start: cost.StartAt, End: asOf}, asOf)
+	switch {
+	case err != nil:
+		cost.Usage = nil
+		cost.UnavailableReason = "query_failed"
+	case window.ResetAt <= now:
+		cost.UnavailableReason = "expired"
+	case cost.Usage.UnpricedRequests > 0:
+		cost.UnavailableReason = "unpriced"
+	case cost.Usage.PricedRequests == 0:
+		cost.UnavailableReason = "no_usage"
+	case window.UsedPercent <= 0 || window.UsedPercent > 100 || math.IsNaN(window.UsedPercent) || math.IsInf(window.UsedPercent, 0):
+		cost.UnavailableReason = "no_consumption"
+	default:
+		total := float64(cost.Usage.CostMicros) / 1e6 * 100 / window.UsedPercent
+		remaining := total * (100 - window.UsedPercent) / 100
+		if math.IsInf(total, 0) || math.IsNaN(total) {
+			cost.UnavailableReason = "no_consumption"
+			break
+		}
+		cost.EstimatedTotalUSD, cost.EstimatedRemainingUSD = &total, &remaining
+	}
+	return cost
 }
 
 // handleGetQuota returns the stored snapshot without contacting the upstream.
@@ -79,7 +147,7 @@ func (s *Server) handleGetQuota(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "this account has no Codex credential; link one to read quota")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"quota": s.buildQuotaView(account)})
+	writeJSON(w, http.StatusOK, map[string]any{"quota": s.buildQuotaView(r.Context(), account)})
 }
 
 // handleRefreshQuota fetches fresh quota data from the upstream and returns it.
@@ -118,7 +186,7 @@ func (s *Server) handleRefreshQuota(w http.ResponseWriter, r *http.Request) {
 		updated = account
 	}
 
-	view := s.buildQuotaView(updated)
+	view := s.buildQuotaView(r.Context(), updated)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"quota":   view,
 		"fetched": snapshot != nil,
@@ -170,7 +238,7 @@ func (s *Server) handleConsumeResetCredit(w http.ResponseWriter, r *http.Request
 	if getErr != nil || updated == nil {
 		updated = account
 	}
-	view := s.buildQuotaView(updated)
+	view := s.buildQuotaView(r.Context(), updated)
 
 	status := http.StatusOK
 	if err != nil {

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -251,37 +252,50 @@ func (s *Server) handleUsageRecords(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(records))
 	for _, rec := range records {
+		var billingDetails any
+		if rec.BillingDetails != "" {
+			_ = json.Unmarshal([]byte(rec.BillingDetails), &billingDetails)
+		}
 		var costUSDValue any
 		if rec.CostMicros != nil {
 			costUSDValue = costUSD(*rec.CostMicros)
 		}
 		items = append(items, map[string]any{
-			"id":                 rec.ID,
-			"request_id":         rec.RequestID,
-			"api_key_id":         rec.APIKeyID,
-			"api_key_name":       rec.APIKeyName,
-			"account_id":         rec.AccountID,
-			"account_name":       rec.AccountName,
-			"model":              rec.Model,
-			"client_transport":   rec.ClientTransport,
-			"upstream_transport": rec.UpstreamTransport,
-			"outcome":            rec.Outcome,
-			"status_code":        rec.StatusCode,
-			"error_code":         rec.ErrorCode,
-			"error_message":      rec.ErrorMessage,
-			"input_tokens":       rec.InputTokens,
-			"cached_tokens":      rec.CachedTokens,
-			"output_tokens":      rec.OutputTokens,
-			"reasoning_tokens":   rec.ReasoningTokens,
-			"total_tokens":       rec.TotalTokens,
-			"first_token_ms":     rec.FirstTokenMS,
-			"latency_ms":         rec.LatencyMS,
-			"cost_usd":           costUSDValue,
-			"cost_micros":        rec.CostMicros,
-			"cost_source":        rec.CostSource,
-			"session_id":         rec.SessionID,
-			"started_at":         rec.StartedAt,
-			"completed_at":       rec.CompletedAt,
+			"id":                     rec.ID,
+			"request_id":             rec.RequestID,
+			"api_key_id":             rec.APIKeyID,
+			"api_key_name":           rec.APIKeyName,
+			"account_id":             rec.AccountID,
+			"account_name":           rec.AccountName,
+			"model":                  rec.Model,
+			"reasoning_effort":       rec.ReasoningEffort,
+			"requested_service_tier": rec.RequestedServiceTier,
+			"service_tier":           rec.ServiceTier,
+			"service_priority":       rec.ServiceTier,
+			"billing_details":        billingDetails,
+			"price_version":          rec.PriceVersion,
+			"request_kind":           rec.RequestKind,
+			"client_transport":       rec.ClientTransport,
+			"upstream_transport":     rec.UpstreamTransport,
+			"outcome":                rec.Outcome,
+			"status_code":            rec.StatusCode,
+			"error_code":             rec.ErrorCode,
+			"error_message":          rec.ErrorMessage,
+			"input_tokens":           rec.InputTokens,
+			"cached_tokens":          rec.CachedTokens,
+			"cache_write_tokens":     rec.CacheWriteTokens,
+			"output_tokens":          rec.OutputTokens,
+			"reasoning_tokens":       rec.ReasoningTokens,
+			"total_tokens":           rec.TotalTokens,
+			"first_token_ms":         rec.FirstTokenMS,
+			"latency_ms":             rec.LatencyMS,
+			"output_tps":             rec.OutputTPS(),
+			"cost_usd":               costUSDValue,
+			"cost_micros":            rec.CostMicros,
+			"cost_source":            rec.CostSource,
+			"session_id":             rec.SessionID,
+			"started_at":             rec.StartedAt,
+			"completed_at":           rec.CompletedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"records": items, "total": total, "limit": limit, "offset": offset})

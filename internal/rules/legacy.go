@@ -9,6 +9,8 @@ import (
 	"pi-gateway/internal/middleware"
 )
 
+var oldRegistry = middleware.Registry()
+
 // MigrateLegacy is a pure conversion of the old chain's effective configuration.
 // Unknown registry names remain ignored, duplicate rows are last-wins, and missing
 // rows use enabled=true/order=100 with an EMPTY config (not DefaultConfig JSON).

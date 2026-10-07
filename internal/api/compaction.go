@@ -36,6 +36,9 @@ func (s *Server) prepareSummaryModel(ctx context.Context, p *prepared, model str
 	if p.Usage != nil {
 		p.Usage.model = model
 		p.Usage.status = 0 // Summary headers supersede a native endpoint rejection.
+		p.Usage.reasoningEffort = ""
+		p.Usage.tier = ""
+		p.Usage.actualTier = ""
 	}
 	p.RuleContext["model"] = model
 	if p.Recorder != nil {

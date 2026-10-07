@@ -1126,3 +1126,39 @@ func TestUnifiedRulesCachedResponseDoesNotPolluteContinuationBaseline(t *testing
 		}
 	}
 }
+
+func TestV2ClientAndMetadataRulesReachBothTransports(t *testing.T) {
+	for _, transport := range []string{"sse", "websocket"} {
+		t.Run(transport, func(t *testing.T) {
+			h, observed, _ := unifiedHarness(t, transport, unifiedRulesEvents)
+			publishUnifiedRules(t, h,
+				unifiedRule("client-change", rules.PhaseClientRequest, 10, unifiedSet("input", "/input", "changed before normalization")),
+				unifiedRule("metadata-change", rules.PhaseUpstreamHeaders, 10, unifiedSet("agent", "/user-agent", []any{"custom-rule-client"}), unifiedSet("sdk", "/x-stainless-package-version", []any{"test-version"})))
+			response, body, record := capturedHTTPResponse(t, h, `{"model":"gpt-5.5","input":"original","stream":false}`)
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.StatusCode, body)
+			}
+			headers, raw := observed.get()
+			if headers.Get("User-Agent") != "custom-rule-client" || headers.Get("X-Stainless-Package-Version") != "test-version" {
+				t.Fatalf("metadata rules not applied: %#v", headers)
+			}
+			if headers.Get("Authorization") == "" {
+				t.Fatal("gateway credential missing")
+			}
+			if transport == "websocket" {
+				observed.mu.Lock()
+				raw = append([]byte(nil), observed.wsFrame...)
+				observed.mu.Unlock()
+			}
+			payload := unifiedObject(t, raw)
+			input := payload["input"].([]any)
+			content := input[0].(map[string]any)["content"].([]any)
+			if content[0].(map[string]any)["text"] != "changed before normalization" {
+				t.Fatalf("client phase lost before construction: %s", raw)
+			}
+			if len(unifiedTraces(t, record, "metadata-change")) == 0 {
+				t.Fatal("missing metadata provenance")
+			}
+		})
+	}
+}

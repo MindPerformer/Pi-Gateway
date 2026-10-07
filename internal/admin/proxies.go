@@ -292,7 +292,7 @@ func (s *Server) handleProxyAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]accountView, 0, len(items))
 	for _, a := range items {
-		out = append(out, s.viewAccount(a))
+		out = append(out, s.viewAccount(r.Context(), a))
 	}
 	writeJSON(w, 200, map[string]any{"accounts": out, "total": total, "page": page, "page_size": size})
 }

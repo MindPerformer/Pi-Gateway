@@ -29,7 +29,7 @@ type evaluation struct {
 	nestedTraces  *traceCollector
 	traceRule     *compiledRule
 	itemPath      string
-	functions     map[string][]compiledAction
+	functions     map[string]*runtimeFragment
 }
 
 func (s *evaluation) source(source string) any {
@@ -48,6 +48,11 @@ func (s *evaluation) source(source string) any {
 			facts[k] = v
 		}
 		facts["model"] = s.model
+		if !s.hasItem && (s.phase == PhaseRequest || s.phase == PhaseRequestFinalize) {
+			if model, ok := objGet(s.body, "model"); ok {
+				facts["model"] = model
+			}
+		}
 		facts["original_model"] = s.originalModel
 		if s.phase == PhaseResponseEvent || s.phase == PhaseResponseBody {
 			facts["event_type"] = s.eventType

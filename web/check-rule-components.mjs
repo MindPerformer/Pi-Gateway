@@ -146,7 +146,7 @@ export async function checkRuleComponents(schema) {
     let fieldsEdited = 0, enumsEdited = 0, capabilitiesRendered = 0, roundtrips = 0
 
     async function editField(field) {
-        if (field.readonly || ['action_array', 'condition_array'].includes(field.type)) return
+        if (field.readonly) return
         const value = components.defaultForField(field)
         const mounted = mount(components.RuleField, value, {field, schema, path: '/field'})
         const {host, state} = mounted
@@ -190,7 +190,13 @@ export async function checkRuleComponents(schema) {
         } else if (field.type === 'condition') {
             await fire(control(host, n => n.type === 'select'), 'onChange', 'not');
             assert.deepEqual(normalized(state.value), {op: 'not', conditions: [{op: 'always'}]})
-        } else if(field.type==='action_array'){await fire(control(host,n=>n.props.id==='add-rule-action'),'onChange','json_set');assert.equal(state.value.at(-1).type,'json_set')} else assert.fail(`No real component test for renderer ${field.type}`)
+        } else if (field.type === 'action_array') {
+            await fire(control(host, n => n.props.id?.startsWith('add-rule-action')), 'onChange', 'json_set');
+            assert.equal(state.value.at(-1).type, 'json_set')
+        } else if (field.type === 'condition_array') {
+            await clickLabel(host, 'Add item');
+            assert.equal(state.value.at(-1).op, 'always')
+        } else assert.fail(`No real component test for renderer ${field.type}`)
         fieldsEdited++;
         mounted.unmount()
         if (!field.required) {
@@ -257,6 +263,18 @@ export async function checkRuleComponents(schema) {
     await fire(control(value.host, n => n.type === 'select'), 'onChange', 'escape')
     assert.ok(Object.hasOwn(value.state.value, '$literal'));
     value.unmount()
+    const expression = mount(components.ValueEditor, {
+        $expr: {
+            op: 'concat', args: [
+                {$ref: {source: 'current', path: '/model'}},
+                {$expr: {op: 'concat', args: ['suffix']}}
+            ]
+        }
+    }, {schema, idPrefix: 'nested-expression'})
+    const expressionIDs = walk(expression.host).map(n => n.props.id).filter(Boolean)
+    assert.equal(new Set(expressionIDs).size, expressionIDs.length, 'nested expressions must have unique control IDs')
+    assert.ok(walk(expression.host).some(n => n.props['data-testid'] === 'selected-option-help' && text(n).includes('concat(')), 'selected operator must show argument order and example')
+    expression.unmount()
     // Type change is one atomic update; stable IDs and ordering survive.
     const actions = mount(components.ActionEditor, [components.newAction('json_set', schema), components.newAction('json_remove', schema)], {
         schema,

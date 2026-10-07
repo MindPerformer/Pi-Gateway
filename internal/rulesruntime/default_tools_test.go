@@ -68,7 +68,13 @@ func oldRulesStore(t *testing.T, path string) *store.Store {
 		if err != nil {
 			return nil, err
 		}
-		return converted[:len(converted)-1], nil
+		out := []*store.RuleRow{}
+		for _, row := range converted {
+			if row.ID != "default-drop-image-generation" {
+				out = append(out, row)
+			}
+		}
+		return out, nil
 	}, ValidateSnapshot)
 	if err != nil {
 		t.Fatal(err)

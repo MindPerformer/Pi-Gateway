@@ -1,6 +1,7 @@
 package pricing
 
-// 完整移植自 _research/codex-proxy-rs/backend/crates/providers/openai/src/transport/usage.rs:234-486。
+// 初始价目移植自 _research/codex-proxy-rs/backend/crates/providers/openai/src/transport/usage.rs:234-486。
+// Long fast/pro 及 >= 阈值边界参照 github.com/james-6-23/codex2api/database/billing.go 补齐。
 // 以下每项的行号均指该来源文件，不宣称重新核验了上游公开价格。
 // TokenRates 参数顺序和单位照抄来源 :105-125：input, output, cache_read，
 // 数值为 USD / 1M token 的万分之一，亦为单 token 的 USD ticks。
@@ -14,7 +15,7 @@ type modelPricing struct {
 	unpricedLongContext              bool
 }
 
-// 来源 :16（LONG_CONTEXT_THRESHOLD）；仅 input > 阈值才切换整次请求的价格。
+// 来源 :16（LONG_CONTEXT_THRESHOLD）；input >= 阈值才切换整次请求的价格。
 const longContextThreshold int64 = 272_000
 
 var pricingRules = map[string]modelPricing{
@@ -59,17 +60,17 @@ var pricingRules = map[string]modelPricing{
 		longStandard: tokenRates{100_000, 450_000, 10_000}, longFlex: tokenRates{50_000, 225_000, 5_000}, longFast: tokenRates{200_000, 900_000, 20_000}, cacheWritePercent: 125,
 	},
 	// 来源 :319-324。
-	"gpt-5.5-pro": {standard: tokenRates{300_000, 1_800_000, 0}, flex: tokenRates{150_000, 900_000, 0}, longStandard: tokenRates{600_000, 2_700_000, 0}},
+	"gpt-5.5-pro": {standard: tokenRates{300_000, 1_800_000, 0}, flex: tokenRates{150_000, 900_000, 0}, fast: tokenRates{750_000, 4_500_000, 0}, longStandard: tokenRates{600_000, 2_700_000, 0}, longFast: tokenRates{1_500_000, 6_750_000, 0}},
 	// 来源 :325-332。
-	"gpt-5.5": {standard: tokenRates{50_000, 300_000, 5_000}, flex: tokenRates{25_000, 150_000, 2_500}, fast: tokenRates{125_000, 750_000, 12_500}, longStandard: tokenRates{100_000, 450_000, 10_000}, longFlex: tokenRates{50_000, 225_000, 5_000}},
+	"gpt-5.5": {standard: tokenRates{50_000, 300_000, 5_000}, flex: tokenRates{25_000, 150_000, 2_500}, fast: tokenRates{125_000, 750_000, 12_500}, longStandard: tokenRates{100_000, 450_000, 10_000}, longFlex: tokenRates{50_000, 225_000, 5_000}, longFast: tokenRates{250_000, 1_125_000, 25_000}},
 	// 来源 :333-338。
 	"gpt-5.4-mini": {standard: tokenRates{7_500, 45_000, 750}, flex: tokenRates{3_750, 22_500, 375}, fast: tokenRates{15_000, 90_000, 1_500}},
 	// 来源 :339-342。
 	"gpt-5.4-nano": {standard: tokenRates{2_000, 12_500, 200}, flex: tokenRates{1_000, 6_250, 100}},
 	// 来源 :343-349。
-	"gpt-5.4-pro": {standard: tokenRates{300_000, 1_800_000, 0}, flex: tokenRates{150_000, 900_000, 0}, longStandard: tokenRates{600_000, 2_700_000, 0}, longFlex: tokenRates{300_000, 1_350_000, 0}},
+	"gpt-5.4-pro": {standard: tokenRates{300_000, 1_800_000, 0}, flex: tokenRates{150_000, 900_000, 0}, fast: tokenRates{750_000, 4_500_000, 0}, longStandard: tokenRates{600_000, 2_700_000, 0}, longFlex: tokenRates{300_000, 1_350_000, 0}, longFast: tokenRates{1_500_000, 6_750_000, 0}},
 	// 来源 :350-357；flex cached=1300 按原值移植，不用 standard/2 推算。
-	"gpt-5.4": {standard: tokenRates{25_000, 150_000, 2_500}, flex: tokenRates{12_500, 75_000, 1_300}, fast: tokenRates{50_000, 300_000, 5_000}, longStandard: tokenRates{50_000, 225_000, 5_000}, longFlex: tokenRates{25_000, 112_500, 2_500}},
+	"gpt-5.4": {standard: tokenRates{25_000, 150_000, 2_500}, flex: tokenRates{12_500, 75_000, 1_300}, fast: tokenRates{50_000, 300_000, 5_000}, longStandard: tokenRates{50_000, 225_000, 5_000}, longFlex: tokenRates{25_000, 112_500, 2_500}, longFast: tokenRates{100_000, 450_000, 10_000}},
 	// 来源 :358-361。
 	"gpt-5.3-codex": {standard: tokenRates{17_500, 140_000, 1_750}, fast: tokenRates{35_000, 280_000, 3_500}},
 	// 来源 :362-365。

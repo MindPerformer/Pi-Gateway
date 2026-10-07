@@ -19,12 +19,14 @@ func (s *Server) ruleSettings(rt *store.Settings) map[string]any {
 		mapping[k] = v
 	}
 	ua := firstNonEmpty(rt.UserAgent, s.cfg.Upstream.UserAgent, piwire.DefaultUserAgent())
-	return map[string]any{"default_model": rt.DefaultModel, "model_mappings": mapping, "reasoning_effort": rt.ReasoningEffort, "reasoning_summary": rt.ReasoningSummary, "user_agent": ua, "originator": firstNonEmpty(s.cfg.Upstream.Originator, "pi"), "stainless_os": s.cfg.Upstream.StainlessOS, "stainless_arch": s.cfg.Upstream.StainlessArch, "stainless_runtime": s.cfg.Upstream.StainlessRuntime, "stainless_runtime_version": s.cfg.Upstream.StainlessRuntimeVersion, "timeout_seconds": s.cfg.Upstream.RequestTimeoutSeconds}
+	return map[string]any{"compaction_mode": rt.CompactionMode, "compaction_model": rt.CompactionModel, "default_model": rt.DefaultModel, "model_mappings": mapping, "reasoning_effort": rt.ReasoningEffort, "reasoning_summary": rt.ReasoningSummary, "user_agent": ua, "originator": firstNonEmpty(s.cfg.Upstream.Originator, "pi"), "stainless_os": s.cfg.Upstream.StainlessOS, "stainless_arch": s.cfg.Upstream.StainlessArch, "stainless_runtime": s.cfg.Upstream.StainlessRuntime, "stainless_runtime_version": s.cfg.Upstream.StainlessRuntimeVersion, "timeout_seconds": s.cfg.Upstream.RequestTimeoutSeconds}
 }
 
 func (p *prepared) applyPipeline(ctx context.Context, phase string, body any) (rules.Result, error) {
 	input := p.ruleInput(body, "")
-	input.Model = "" // Envelope phases derive routing only after normalization.
+	if phase == rules.PhaseClientRequest || phase == rules.PhaseRequestNormalize {
+		input.Model = ""
+	} // Routing is derived after construction.
 	if p.Recorder != nil {
 		p.Recorder.OnRuleInput(phase, input, false)
 	}
@@ -68,7 +70,6 @@ func (p *prepared) buildRuleHeaders(ctx context.Context, transport, credentialAc
 	facts["credential_account_id"] = credentialAccount
 	input := p.ruleInput(map[string]any{}, "")
 	input.Context = facts
-	input.Model = ""
 	if p.Recorder != nil {
 		p.Recorder.OnRuleInput(rules.PhaseUpstreamHeaders, input, false)
 	}

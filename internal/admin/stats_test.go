@@ -247,6 +247,33 @@ func TestUsageRecordsPaginationAndFilters(t *testing.T) {
 	}
 }
 
+func TestUsageRecordsCompactionAndThroughput(t *testing.T) {
+	db := newAdminTestStore(t)
+	ctx := t.Context()
+	id, err := db.StartUsageRecord(ctx, &store.UsageRecord{RequestID: "compact", RequestKind: "compaction", Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.FinishUsageRecord(ctx, id, &store.UsageRecord{Outcome: "succeeded", OutputTokens: ptr(100), FirstTokenMS: 500, LatencyMS: 2500}); err != nil {
+		t.Fatal(err)
+	}
+	seedUsage(t, db, "missing-output", "failed", 0, 0, 0, 0, 100, nil)
+	code, body := getJSONWindow(t, &Server{store: db}, (&Server{store: db}).handleUsageRecords, "/api/usage/records")
+	if code != 200 {
+		t.Fatalf("status=%d", code)
+	}
+	for _, raw := range body["records"].([]any) {
+		row := raw.(map[string]any)
+		if row["request_id"] == "compact" {
+			if row["request_kind"] != "compaction" || row["output_tps"] != float64(50) {
+				t.Fatalf("compaction or TPS lost: %+v", row)
+			}
+		} else if row["output_tps"] != nil {
+			t.Fatalf("missing output fabricated TPS: %+v", row)
+		}
+	}
+}
+
 func TestAccountGroupsCRUD(t *testing.T) {
 	db := newAdminTestStore(t)
 	ctx := context.Background()

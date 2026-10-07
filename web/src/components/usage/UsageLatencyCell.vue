@@ -6,14 +6,14 @@ import { duration } from './format'
 
 defineProps<{ firstToken: number | null; latency: number | null; throughput?: number | null }>()
 const { locale } = useI18n()
-const labels = computed(() => locale.value === 'zh-CN' ? { first: '首字', total: '耗时', throughput: '吞吐' } : { first: 'TTFT', total: 'Total', throughput: 'TPS' })
+const labels = computed(() => locale.value === 'zh-CN' ? { first: '首字', total: '耗时', throughput: 'TPS 流速', throughputHelp: '输出 Token ÷（总耗时 − 首字耗时），单位 Token/秒' } : { first: 'TTFT', total: 'Total', throughput: 'TPS', throughputHelp: 'Output tokens / (total time − time to first token), in tokens per second' })
 </script>
 
 <template>
 	<div class="latency-cell">
 		<span class="latency-label">{{ labels.first }}</span><span class="latency-first" :title="firstToken == null ? '—' : `${metric(firstToken, 2)} ms`">{{ duration(firstToken) }}</span>
 		<span class="latency-label">{{ labels.total }}</span><span :title="latency == null ? '—' : `${metric(latency, 2)} ms`">{{ duration(latency) }}</span>
-		<template v-if="throughput !== undefined"><span class="latency-label">{{ labels.throughput }}</span><span>{{ throughput == null ? '—' : `${metric(throughput, 2)} /s` }}</span></template>
+		<template v-if="throughput !== undefined"><span class="latency-label" :title="labels.throughputHelp">{{ labels.throughput }}</span><span :title="labels.throughputHelp">{{ throughput == null ? '—' : `${metric(throughput, 2)} token/s` }}</span></template>
 	</div>
 </template>
 

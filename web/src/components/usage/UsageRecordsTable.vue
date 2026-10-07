@@ -2,17 +2,18 @@
 import { computed } from 'vue'
 import { ArrowRight, Eye, FileText, Info } from 'lucide-vue-next'
 import type { UsageRecord } from '../../api/types'
-import { money } from '../../api/stats-format'
 import { formatDateTime, useI18n } from '../../i18n'
 import UsageTokenCell from './UsageTokenCell.vue'
 import UsageLatencyCell from './UsageLatencyCell.vue'
+import UsageCostCell from './UsageCostCell.vue'
+import UsageRequestBadges from './UsageRequestBadges.vue'
 
 defineProps<{ rows: UsageRecord[]; loading?: boolean; error?: string }>()
 const emit = defineEmits<{ detail: [record: UsageRecord] }>()
 const { t, locale } = useI18n()
 const labels = computed(() => locale.value === 'zh-CN'
-	? { tokens: 'TOKEN', cost: '费用', latency: '延迟', time: '时间', status: '状态', actions: '操作' }
-	: { tokens: 'TOKEN', cost: 'Cost', latency: 'Latency', time: 'Time', status: 'Status', actions: 'Actions' })
+	? { tokens: 'TOKEN', cost: '费用', latency: '耗时 / 流速', time: '时间', status: '状态', actions: '操作', compaction: '压缩请求' }
+	: { tokens: 'TOKEN', cost: 'Cost', latency: 'Latency / TPS', time: 'Time', status: 'Status', actions: 'Actions', compaction: 'Compaction request' })
 function statusTone(code: number) {
 	if (!code) return 'neutral'
 	if (code >= 200 && code < 300) return 'success'
@@ -40,12 +41,12 @@ function transport(value: string) { return value ? ({ websocket: 'WS', ws: 'WS',
 				<tr v-for="row in rows" :key="row.id" class="row-hover">
 					<td class="td"><code class="identity-text" :title="row.api_key_name">{{ row.api_key_name || '—' }}</code></td>
 					<td class="td"><code class="identity-text account-text" :title="row.account_name">{{ row.account_name || '—' }}</code></td>
-					<td class="td"><div class="model-cell"><code class="identity-text model-text" :title="row.model">{{ row.model || '—' }}</code><button type="button" class="request-id" :title="`${t('usage.col.requestId')}: ${row.request_id}`" @click="emit('detail', row)">{{ row.request_id || '—' }}</button></div></td>
+					<td class="td"><div class="model-cell"><code class="identity-text model-text" :title="row.model">{{ row.model || '—' }}</code><UsageRequestBadges :record="row" /><span v-if="row.request_kind === 'compaction'" class="compaction-badge">{{ labels.compaction }}</span><button type="button" class="request-id" :title="`${t('usage.col.requestId')}: ${row.request_id}`" @click="emit('detail', row)">{{ row.request_id || '—' }}</button></div></td>
 					<td class="td"><div class="transport-cell"><span class="transport-badge">{{ transport(row.client_transport) }}</span><ArrowRight :size="12" aria-hidden="true" /><span class="transport-badge">{{ transport(row.upstream_transport) }}</span></div></td>
 					<td class="td"><div class="status-cell"><span class="status-code" :class="`status-${statusTone(row.status_code)}`">{{ row.status_code || '—' }}</span><span class="outcome-label" :class="`outcome-${row.outcome}`">{{ t(`usage.outcome.${row.outcome}`) }}</span><span v-if="row.error_code" class="error-code" :title="row.error_code">{{ row.error_code }}</span></div></td>
 					<td class="td numeric"><div class="metrics-with-detail"><UsageTokenCell :record="row" /><button type="button" class="cell-info" :aria-label="`${t('common.viewDetails')}: ${t('stats.totalTokens')}`" @click="emit('detail', row)"><Info :size="13" /></button></div></td>
-					<td class="td numeric"><span class="cost-value">{{ money(row.cost_usd) }}</span></td>
-					<td class="td numeric"><UsageLatencyCell :first-token="row.first_token_ms" :latency="row.latency_ms" /></td>
+					<td class="td numeric"><UsageCostCell :record="row" /></td>
+					<td class="td numeric"><UsageLatencyCell :first-token="row.first_token_ms" :latency="row.latency_ms" :throughput="row.output_tps ?? null" /></td>
 					<td class="td"><time class="record-time" :datetime="new Date(row.started_at).toISOString()" :title="formatDateTime(row.started_at)"><span>{{ datePart(row.started_at, 'time') }}</span><small>{{ datePart(row.started_at, 'date') }}</small></time></td>
 					<td class="td"><button type="button" class="btn btn-ghost btn-icon detail-button" :aria-label="t('common.viewDetails')" :title="t('common.viewDetails')" @click="emit('detail', row)"><Eye :size="14" /></button></td>
 				</tr>
@@ -65,6 +66,7 @@ function transport(value: string) { return value ? ({ websocket: 'WS', ws: 'WS',
 .account-text { max-width: 190px; }
 .model-cell { display: grid; gap: 5px; }
 .model-text { font-weight: 750; }
+.compaction-badge { justify-self: start; padding: 3px 6px; border-radius: 5px; background: var(--color-accent-soft); color: var(--color-accent); font-size: 10px; font-weight: 650; }
 .request-id { display: block; max-width: 155px; overflow: hidden; padding: 0; background: transparent; color: var(--color-ink-faint); text-align: left; font-family: var(--font-mono); font-size: 10px; font-weight: 600; line-height: 1.2; text-overflow: ellipsis; }
 .request-id:hover { color: var(--color-info); }
 .transport-cell { display: inline-flex; align-items: center; gap: 5px; color: var(--color-ink-faint); }

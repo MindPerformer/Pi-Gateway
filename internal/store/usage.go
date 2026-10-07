@@ -11,43 +11,76 @@ import (
 
 // Nullable token counts distinguish missing upstream usage from measured zeroes.
 type UsageRecord struct {
-	ID                int64
-	RequestID         string
-	APIKeyID          int64
-	APIKeyName        string
-	AccountID         int64
-	AccountName       string
-	Model             string
-	ClientTransport   string
-	UpstreamTransport string
-	AttemptIndex      int
-	Outcome           string
-	StatusCode        int
-	ErrorCode         string
-	ErrorMessage      string
-	UpstreamSendState string
-	InputTokens       *int64
-	CachedTokens      *int64
-	CacheWriteTokens  *int64
-	OutputTokens      *int64
-	ReasoningTokens   *int64
-	TotalTokens       *int64
-	ConnectMS         int64
-	HeadersMS         int64
-	FirstEventMS      int64
-	FirstTokenMS      int64
-	LatencyMS         int64
-	CostMicros        *int64
-	CostSource        string
-	PriceVersion      string
-	SessionID         string
-	StartedAt         int64
-	CompletedAt       int64
+	ID                   int64
+	RequestID            string
+	APIKeyID             int64
+	APIKeyName           string
+	AccountID            int64
+	AccountName          string
+	Model                string
+	ClientTransport      string
+	RequestKind          string
+	ReasoningEffort      string
+	RequestedServiceTier string
+	ServiceTier          string
+	BillingDetails       string
+	UpstreamTransport    string
+	AttemptIndex         int
+	Outcome              string
+	StatusCode           int
+	ErrorCode            string
+	ErrorMessage         string
+	UpstreamSendState    string
+	InputTokens          *int64
+	CachedTokens         *int64
+	CacheWriteTokens     *int64
+	OutputTokens         *int64
+	ReasoningTokens      *int64
+	TotalTokens          *int64
+	ConnectMS            int64
+	HeadersMS            int64
+	FirstEventMS         int64
+	FirstTokenMS         int64
+	LatencyMS            int64
+	CostMicros           *int64
+	CostSource           string
+	PriceVersion         string
+	SessionID            string
+	StartedAt            int64
+	CompletedAt          int64
 }
 
 // UsageRange uses Unix milliseconds and the half-open interval [Start, End).
 // A zero bound is omitted, allowing callers to query all retained history.
 type UsageRange struct{ Start, End int64 }
+
+// UsageCost summarizes retained, settled requests. Unknown prices are counted
+// separately so callers never mistake a partial sum for a complete bill.
+type UsageCost struct {
+	CostMicros       int64 `json:"cost_micros"`
+	PricedRequests   int64 `json:"priced_requests"`
+	UnpricedRequests int64 `json:"unpriced_requests"`
+}
+
+func (s *Store) AccountUsageCost(ctx context.Context, accountID int64, interval UsageRange, settledBefore int64) (*UsageCost, error) {
+	if accountID <= 0 {
+		return nil, errors.New("store: account usage cost requires a positive account ID")
+	}
+	where, args := usageWhere(UsageFilter{UsageRange: interval, AccountID: accountID})
+	// Failed attempts that never reached upstream do not represent consumption.
+	where += ` AND outcome<>'running' AND (outcome='succeeded' OR upstream_send_state='sent' OR cost_micros IS NOT NULL OR input_tokens IS NOT NULL OR output_tokens IS NOT NULL)`
+	if settledBefore > 0 {
+		where += " AND completed_at<=?"
+		args = append(args, settledBefore)
+	}
+	var cost UsageCost
+	err := s.QueryRowContext(ctx, `SELECT coalesce(sum(cost_micros),0),count(cost_micros),count(*)-count(cost_micros) FROM usage_records WHERE `+where, args...).Scan(&cost.CostMicros, &cost.PricedRequests, &cost.UnpricedRequests)
+	if err != nil {
+		return nil, err
+	}
+	return &cost, nil
+}
+
 type UsageFilter struct {
 	UsageRange
 	APIKeyID  int64
@@ -91,7 +124,7 @@ type UsageDimension struct {
 const usageColumns = `id,request_id,api_key_id,api_key_name,account_id,account_name,model,
  client_transport,upstream_transport,attempt_index,outcome,status_code,error_code,error_message,upstream_send_state,
  input_tokens,cached_tokens,cache_write_tokens,output_tokens,reasoning_tokens,total_tokens,
- connect_ms,headers_ms,first_event_ms,first_token_ms,latency_ms,cost_micros,cost_source,price_version,session_id,started_at,completed_at`
+ connect_ms,headers_ms,first_event_ms,first_token_ms,latency_ms,cost_micros,cost_source,price_version,session_id,started_at,completed_at,request_kind,reasoning_effort,requested_service_tier,service_tier,billing_details`
 
 func (s *Store) StartUsageRecord(ctx context.Context, r *UsageRecord) (int64, error) {
 	if r == nil {
@@ -101,8 +134,8 @@ func (s *Store) StartUsageRecord(ctx context.Context, r *UsageRecord) (int64, er
 		r.StartedAt = NowMS()
 	}
 	id, err := s.insertID(ctx, s, `INSERT INTO usage_records
- (request_id,api_key_id,api_key_name,account_id,account_name,model,client_transport,upstream_transport,attempt_index,outcome,upstream_send_state,session_id,started_at)
- VALUES (?,?,?,?,?,?,?,?,?,'running',?,?,?)`, r.RequestID, r.APIKeyID, r.APIKeyName, r.AccountID, r.AccountName, r.Model, r.ClientTransport, r.UpstreamTransport, r.AttemptIndex, r.UpstreamSendState, r.SessionID, r.StartedAt)
+ (request_id,api_key_id,api_key_name,account_id,account_name,model,client_transport,upstream_transport,attempt_index,outcome,upstream_send_state,session_id,started_at,request_kind,reasoning_effort,requested_service_tier)
+ VALUES (?,?,?,?,?,?,?,?,?,'running',?,?,?,?,?,?)`, r.RequestID, r.APIKeyID, r.APIKeyName, r.AccountID, r.AccountName, r.Model, r.ClientTransport, r.UpstreamTransport, r.AttemptIndex, r.UpstreamSendState, r.SessionID, r.StartedAt, r.RequestKind, r.ReasoningEffort, r.RequestedServiceTier)
 	if err != nil {
 		return 0, fmt.Errorf("store: start usage: %w", err)
 	}
@@ -126,9 +159,9 @@ func (s *Store) FinishUsageRecord(ctx context.Context, id int64, r *UsageRecord)
  input_tokens=?,cached_tokens=?,cache_write_tokens=?,output_tokens=?,reasoning_tokens=?,total_tokens=?,
  connect_ms=?,headers_ms=?,first_event_ms=?,first_token_ms=?,latency_ms=?,cost_micros=?,cost_source=?,price_version=?,completed_at=?,
 	 upstream_transport=CASE WHEN ?='' THEN upstream_transport ELSE ? END,
-	 model=CASE WHEN ?='' THEN model ELSE ? END WHERE id=?`,
+ model=CASE WHEN ?='' THEN model ELSE ? END,reasoning_effort=?,requested_service_tier=?,service_tier=?,billing_details=? WHERE id=?`,
 		r.Outcome, r.StatusCode, r.ErrorCode, r.ErrorMessage, r.UpstreamSendState, r.InputTokens, r.CachedTokens, r.CacheWriteTokens, r.OutputTokens, r.ReasoningTokens, r.TotalTokens,
-		r.ConnectMS, r.HeadersMS, r.FirstEventMS, r.FirstTokenMS, r.LatencyMS, r.CostMicros, r.CostSource, r.PriceVersion, r.CompletedAt, r.UpstreamTransport, r.UpstreamTransport, r.Model, r.Model, id)
+		r.ConnectMS, r.HeadersMS, r.FirstEventMS, r.FirstTokenMS, r.LatencyMS, r.CostMicros, r.CostSource, r.PriceVersion, r.CompletedAt, r.UpstreamTransport, r.UpstreamTransport, r.Model, r.Model, r.ReasoningEffort, r.RequestedServiceTier, r.ServiceTier, r.BillingDetails, id)
 	if err != nil {
 		return err
 	}
@@ -226,7 +259,7 @@ func scanUsage(row interface{ Scan(...any) error }) (UsageRecord, error) {
 	err := row.Scan(&r.ID, &r.RequestID, &r.APIKeyID, &r.APIKeyName, &r.AccountID, &r.AccountName, &r.Model,
 		&r.ClientTransport, &r.UpstreamTransport, &r.AttemptIndex, &r.Outcome, &r.StatusCode, &r.ErrorCode, &r.ErrorMessage, &r.UpstreamSendState,
 		&r.InputTokens, &r.CachedTokens, &r.CacheWriteTokens, &r.OutputTokens, &r.ReasoningTokens, &r.TotalTokens,
-		&r.ConnectMS, &r.HeadersMS, &r.FirstEventMS, &r.FirstTokenMS, &r.LatencyMS, &r.CostMicros, &r.CostSource, &r.PriceVersion, &r.SessionID, &r.StartedAt, &r.CompletedAt)
+		&r.ConnectMS, &r.HeadersMS, &r.FirstEventMS, &r.FirstTokenMS, &r.LatencyMS, &r.CostMicros, &r.CostSource, &r.PriceVersion, &r.SessionID, &r.StartedAt, &r.CompletedAt, &r.RequestKind, &r.ReasoningEffort, &r.RequestedServiceTier, &r.ServiceTier, &r.BillingDetails)
 	return r, err
 }
 
@@ -271,6 +304,15 @@ func (s *Store) ListUsageRecords(ctx context.Context, f UsageFilter) (records []
 // latency<=TTFT are NULL, not zero samples in averages or percentiles.
 const outputTPSExpr = `CASE WHEN output_tokens>0 AND latency_ms>first_token_ms
  THEN output_tokens*1000.0/max(latency_ms-first_token_ms,1) END`
+
+// OutputTPS uses the same generation interval as aggregate throughput metrics.
+func (r UsageRecord) OutputTPS() *float64 {
+	if r.OutputTokens == nil || *r.OutputTokens <= 0 || r.LatencyMS <= r.FirstTokenMS {
+		return nil
+	}
+	value := float64(*r.OutputTokens) * 1000 / float64(r.LatencyMS-r.FirstTokenMS)
+	return &value
+}
 
 func percentileSQL(table, ratio string) string {
 	// This is the frozen SQLite order statistic, not interpolation/nearest rank.

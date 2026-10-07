@@ -4,6 +4,7 @@ import type { QuotaView, QuotaWindow } from '../api/types'
 import { useI18n, formatNumber } from '../i18n'
 import { formatRelative, formatTime, formatUntil } from '../stores/ui'
 import Badge from './Badge.vue'
+import QuotaCostSummary from './QuotaCostSummary.vue'
 import { Infinity as InfinityIcon, Link2, RotateCcw } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -42,6 +43,10 @@ const resetCredits = computed(() => props.quota?.reset_credits ?? null)
 const availableResets = computed(() => resetCredits.value?.available_count ?? 0)
 
 const expanded = ref(false)
+
+function costFor(window: QuotaWindow) {
+	return props.quota?.window_costs?.find((cost) => cost.limit_id === window.limit_id && cost.role === window.role)
+}
 
 function barTone(window: QuotaWindow): string {
 	if (window.limit_reached || window.used_percent >= 100) return 'bg-cp-error'
@@ -121,6 +126,10 @@ function confirmConsume() {
 		</p>
 
 		<!-- Windows -->
+		<div class="inset-panel space-y-1.5">
+			<QuotaCostSummary :usage="quota?.cost" />
+			<p class="text-[10px] text-cp-text-secondary">{{ t('quota.costHint') }}</p>
+		</div>
 		<div v-if="hasCodex && (primaryWindows.length || extraWindows.length)" class="grid gap-3" :class="compact ? '' : 'sm:grid-cols-2'">
 			<div v-for="window in [...primaryWindows, ...(expanded ? extraWindows : [])]" :key="`${window.limit_id}:${window.role}`" class="rounded-cp bg-cp-fill-quaternary p-3">
 				<div class="flex items-center justify-between text-[12px]">
@@ -143,6 +152,7 @@ function confirmConsume() {
 				<div v-if="window.reset_at" class="mt-0.5 text-[10px] text-[color:var(--color-ink-faint)]">
 					{{ t('quota.resetsAt', { time: formatTime(window.reset_at) }) }}
 				</div>
+				<QuotaCostSummary v-if="costFor(window)" class="mt-2" :usage="costFor(window)?.usage" :window-cost="costFor(window)" />
 			</div>
 
 			<button v-if="extraWindows.length" class="text-[11px] text-[color:var(--color-info)] hover:underline" @click="expanded = !expanded">

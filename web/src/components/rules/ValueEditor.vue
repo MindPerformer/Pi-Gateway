@@ -19,7 +19,10 @@ const literalValue = computed<JsonValue>(() => {
   if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && '$literal' in value) return (value as { $literal: JsonValue }).$literal
   return value as JsonValue
 })
-function setLiteral(value: JsonValue) { emit('update:modelValue', value) }
+function setLiteral(value: JsonValue) {
+  if (value && typeof value==='object' && !Array.isArray(value) && ('$expr' in value || '$ref' in value || '$literal' in value)) emit('update:modelValue',{$literal:value})
+  else emit('update:modelValue', value)
+}
 function setReference() { emit('update:modelValue', { $ref: { source: 'current', path: '', encoding: 'value' } }) }
 function setLiteralEscape(value: JsonValue) { emit('update:modelValue', { $literal: value }) }
 function updateReference(key: string, value: JsonValue) {
@@ -49,10 +52,10 @@ const sources = computed(() => schema.value?.sources ?? ['current', 'client', 'c
       </select>
     </div>
     <div v-if="mode==='computed' && computedValue" class="space-y-2">
-      <RuleField v-for="field in schema?.value_expressions?.find(c=>c.id==='computed')?.fields ?? []" :key="field.name" :field="field" :model-value="computedValue[field.name]" :schema="schema!" :path="`/$expr/${field.name}`" @update:model-value="updateComputed(field.name,$event)" />
+      <RuleField v-for="field in schema?.value_expressions?.find(c=>c.id==='computed')?.fields ?? []" :key="field.name" :field="field" :model-value="computedValue[field.name]" :schema="schema!" :path="`/$expr/${field.name}`" :id-prefix="idPrefix" @update:model-value="updateComputed(field.name,$event)" />
     </div>
     <div v-else-if="mode==='reference' && reference" class="space-y-2">
-      <RuleField v-for="field in schema?.value_fields ?? []" :key="field.name" :field="field" :model-value="reference[field.name]" :schema="schema!" :path="`/$ref/${field.name}`" :compact="compact" @update:model-value="updateReference(field.name,$event as JsonValue)" />
+      <RuleField v-for="field in schema?.value_fields ?? []" :key="field.name" :field="field" :model-value="reference[field.name]" :schema="schema!" :path="`/$ref/${field.name}`" :compact="compact" :id-prefix="idPrefix" @update:model-value="updateReference(field.name,$event as JsonValue)" />
     </div>
     <JsonValueEditor v-else :model-value="literalValue" :compact="compact" :id-prefix="idPrefix ? `${idPrefix}-literal` : undefined" @update:model-value="mode === 'escape' ? setLiteralEscape($event) : setLiteral($event)" />
   </div>

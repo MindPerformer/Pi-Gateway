@@ -135,6 +135,10 @@ func (s *Server) streamWith429Retry(ctx context.Context, p *prepared, req *upstr
 			p.Recorder.SetRoute(next.ID, next.Name, p.Built.Model, p.SessionID, p.Transport)
 		}
 		p.Usage = s.newUsageTracker(p.Key, next, p.Built.Model, clientTransport, p.Transport, p.SessionID, stringField(p.ClientBody, "service_tier"))
+		p.Usage.noteRequestMetadata(p.Built.JSON)
+		if p.Compact {
+			p.Usage.requestKind = "compaction"
+		}
 		s.startUsage(ctx, p.Usage)
 		req, err = s.newUpstreamRequest(ctx, p)
 		if err != nil {

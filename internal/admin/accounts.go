@@ -34,7 +34,7 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]accountView, 0, len(accounts))
 	for _, a := range accounts {
-		out = append(out, s.viewAccount(a))
+		out = append(out, s.viewAccount(r.Context(), a))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": out})
 }
@@ -64,10 +64,10 @@ func (s *Server) handleUnlinkCodex(w http.ResponseWriter, r *http.Request) {
 	if err != nil || updated == nil {
 		updated = account
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(updated)})
+	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(r.Context(), updated)})
 }
 
-func (s *Server) viewAccount(a *store.Account) accountView {
+func (s *Server) viewAccount(ctx context.Context, a *store.Account) accountView {
 	var expiresIn int64
 	if a.ExpiresAt > 0 {
 		expiresIn = a.ExpiresAt - store.NowMS()
@@ -96,7 +96,7 @@ func (s *Server) viewAccount(a *store.Account) accountView {
 		HasRefreshToken:  a.RefreshToken != "",
 		TokenExpiresInMS: expiresIn,
 		ProxyDisplay:     proxyDisplay,
-		Quota:            s.buildQuotaView(a),
+		Quota:            s.buildQuotaView(ctx, a),
 		CodexLinked:      a.CodexLinked(),
 	}
 }
@@ -207,7 +207,7 @@ func (s *Server) handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"flow": flow}
 	// Once authorized, surface the persisted account so the UI can show it.
 	if acc := s.flowAccount(r.Context(), flow); acc != nil {
-		resp["account"] = s.viewAccount(acc)
+		resp["account"] = s.viewAccount(r.Context(), acc)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -253,7 +253,7 @@ func (s *Server) handleOAuthComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{"flow": flow}
 	if acc := s.flowAccount(ctx, flow); acc != nil {
-		resp["account"] = s.viewAccount(acc)
+		resp["account"] = s.viewAccount(r.Context(), acc)
 		_ = s.store.RecordAudit(r.Context(), "account.oauth_completed", acc.Name)
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -345,7 +345,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = s.store.RecordAudit(r.Context(), "account.created", acc.Name)
-	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(acc)})
+	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(r.Context(), acc)})
 }
 
 func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
@@ -469,7 +469,7 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	acc = fresh
 	_ = s.store.RecordAudit(r.Context(), "account.updated", acc.Name)
-	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(acc)})
+	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(r.Context(), acc)})
 }
 
 func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
@@ -520,7 +520,7 @@ func (s *Server) handleRecoverAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.RecordAudit(r.Context(), "account.recovered", acc.Name)
-	writeJSON(w, 200, map[string]any{"account": s.viewAccount(updated)})
+	writeJSON(w, 200, map[string]any{"account": s.viewAccount(r.Context(), updated)})
 }
 
 func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
@@ -551,7 +551,7 @@ func (s *Server) handleRefreshAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, _ := s.store.GetAccount(r.Context(), id)
 	_ = s.store.RecordAudit(r.Context(), "account.refreshed", acc.Name)
-	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(updated)})
+	writeJSON(w, http.StatusOK, map[string]any{"account": s.viewAccount(r.Context(), updated)})
 }
 
 // handleTestProxy verifies that an account's egress proxy can reach the upstream.

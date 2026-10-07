@@ -73,7 +73,12 @@ func expandLegacyAction(a Action) ([]Action, error) {
 			if p["target"] == "text" {
 				c.Source = "vars"
 				c.Path = "/visible"
-				steps = append(steps, step("visible-init", "let", map[string]any{"name": "visible", "value": ""}), branch("visible-string", cond("type", "", "string"), []Action{step("visible-root", "let", map[string]any{"name": "visible", "value": refExpr("current", "")})}, branch("visible-content", cond("type", "/content", "string"), []Action{step("visible-content-value", "let", map[string]any{"name": "visible", "value": refExpr("current", "/content")})}, branch("visible-content-array", cond("type", "/content", "array"), []Action{step("visible-parts", "let", map[string]any{"name": "visible", "value": expr("json_stringify", refExpr("current", "/content"))})}))))
+				steps = append(steps, step("save-item", "let", map[string]any{"name": "saved_item", "value": refExpr("current", "")}),
+					step("visible-walk", "walk", map[string]any{"path": "", "steps": []Action{
+						branch("visible-object", cond("type", "", "object"), []Action{setStep("object-text", "", expr("coalesce", refExpr("current", "/text"), refExpr("current", "/content"), ""))}),
+						branch("visible-array", cond("type", "", "array"), []Action{setStep("joined-parts", "", expr("join", refExpr("current", ""), "\n"))}),
+						branch("visible-scalar", Condition{Op: "not", Conditions: []Condition{cond("type", "", "string")}}, []Action{setStep("empty-text", "", "")}),
+					}}), step("visible-value", "let", map[string]any{"name": "visible", "value": refExpr("current", "")}), setStep("restore-item", "", refExpr("vars", "/saved_item")))
 			} else {
 				c.Encoding = "json"
 				steps = append(steps, branch("raw-string", cond("type", "", "string"), []Action{step("raw-value", "let", map[string]any{"name": "raw", "value": refExpr("current", "")})}, step("json-value", "let", map[string]any{"name": "raw", "value": expr("json_stringify", refExpr("current", ""))})))
@@ -112,7 +117,7 @@ func environmentRecipe(id string, p map[string]any) []Action {
 		return branch("clean-"+key, all(cond("type", path, "string"), cond("regex", path, "(?is)<environment_context>.*?</environment_context>")), []Action{setStep("replace-"+key, path, cleanText(refExpr("current", path)))})
 	}
 	meta := "/internal_chat_message_metadata_passthrough/content_item_kinds"
-	keepPart := testExpr(expr("and", expr("ne", expr("coalesce", expr("index", refExpr("vars", "/kinds"), refExpr("context", "/item_index")), ""), kind), expr("ne", expr("coalesce", refExpr("current", "/text"), "nontext"), "")))
+	keepPart := testExpr(expr("and", expr("ne", expr("coalesce", expr("index", refExpr("vars", "/kinds"), refExpr("context", "/item_index")), ""), kind), expr("not", expr("and", expr("eq", expr("type", refExpr("original", "/text")), "string"), expr("contains", expr("coalesce", refExpr("original", "/text"), ""), "<environment_context>"), expr("eq", expr("coalesce", refExpr("current", "/text"), "nontext"), "")))))
 	arraySteps := []Action{
 		step("kinds", "let", map[string]any{"name": "kinds", "value": expr("coalesce", refExpr("current", meta), []any{})}),
 		step("original-count", "let", map[string]any{"name": "original_count", "value": expr("length", refExpr("current", "/content"))}),
@@ -120,7 +125,7 @@ func environmentRecipe(id string, p map[string]any) []Action {
 		branch("metadata-alignment", testExpr(expr("and", expr("exists", refExpr("current", meta)), expr("ne", expr("length", refExpr("current", meta)), expr("length", refExpr("current", "/content"))))), []Action{removeStep("remove-misaligned", "/internal_chat_message_metadata_passthrough")}),
 	}
 	messageSteps := []Action{branch("content-array", cond("type", "/content", "array"), arraySteps, clean("content"))}
-	keepMessage := testExpr(expr("not", expr("or", emptyValue(expr("coalesce", refExpr("current", "/content"), "absent")), expr("and", expr("ne", expr("coalesce", refExpr("current", meta), []any{}), []any{}), expr("eq", expr("coalesce", refExpr("current", meta), []any{}), expr("array", kind))))))
+	keepMessage := testExpr(expr("not", expr("or", expr("or", expr("eq", expr("coalesce", refExpr("current", "/content"), "absent"), []any{}), expr("and", expr("eq", expr("coalesce", refExpr("current", "/content"), "absent"), ""), expr("ne", expr("coalesce", refExpr("original", "/content"), ""), ""))), expr("and", expr("ne", expr("coalesce", refExpr("current", meta), []any{}), []any{}), expr("eq", expr("coalesce", refExpr("current", meta), []any{}), expr("array", kind))))))
 	out := []Action{branch(id+"-input", cond("type", "/input", "array"), []Action{step("messages", "for_each", map[string]any{"path": "/input", "steps": messageSteps, "keep": keepMessage})}, clean("input"))}
 	if strip {
 		out = append(out, clean("instructions"))
@@ -177,6 +182,21 @@ func ExpandRule(r Rule) (Rule, error) {
 						a.Params[key] = steps
 					}
 				}
+				if a.Type == "scope" {
+					if functions, ok := a.Params["functions"].(map[string]any); ok {
+						for name, value := range functions {
+							body, err := decodeActions(value, joinPointer("/params/functions", name))
+							if err != nil {
+								return nil, err
+							}
+							body, err = expand(body)
+							if err != nil {
+								return nil, err
+							}
+							functions[name] = body
+						}
+					}
+				}
 			}
 			out = append(out, a)
 		}
@@ -187,5 +207,3 @@ func ExpandRule(r Rule) (Rule, error) {
 	r.SchemaVersion = SchemaVersion
 	return r, err
 }
-
-func nonemptyTrim(v any) any { return expr("ne", expr("trim", v), "") }

@@ -295,5 +295,5 @@ export function moveItem<T>(items: T[], index: number, delta: number): T[] {
 }
 
 export function expressionLiteral(value: JsonValue): ValueExpr {
-    return value && typeof value === 'object' && !Array.isArray(value) && ('$ref' in value || '$literal' in value) ? {$literal: value} : value
+    return value && typeof value === 'object' && !Array.isArray(value) && ('$ref' in value || '$literal' in value || '$expr' in value) ? {$literal: value} : value
 }

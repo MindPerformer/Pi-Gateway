@@ -194,7 +194,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		WireSessionID: promptCacheKey, PoolSessionID: poolSessionID(ctx, sessionID),
 		WantsStream: wantsStream(clientBody), RawRequestBody: rawBody,
 		RuleContext: map[string]any{"original_model": clientBody["model"], "model": clientBody["model"], "settings": s.ruleSettings(rt), "wire_session_id": promptCacheKey, "client_headers": rules.RedactedHeaders(r.Header),
-			"api_key_id": key.ID, "client_protocol": clientTransport,
+			"compact": compact, "api_key_id": key.ID, "client_protocol": clientTransport,
 			"request_path": r.URL.Path, "request_method": r.Method},
 	}
 	if compactDirect {
@@ -234,7 +234,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		}
 		p.Built = built
 	}
-	if compact {
+	if compact && engine == nil {
 		for _, field := range []string{"instructions", "prompt_cache_options"} {
 			if value, ok := normalizeBody[field]; ok {
 				built.Body.Set(field, value)
@@ -242,7 +242,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		}
 		built.JSON, _ = json.Marshal(built.Body)
 	}
-	if compact && p.CompactionMode == "on" {
+	if compact && engine == nil && p.CompactionMode == "on" {
 		before, _ := json.Marshal(built.Body)
 		built.Body.Set("model", p.CompactionModel)
 		built.Model = p.CompactionModel
@@ -253,12 +253,17 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	if apiErr := s.applyRequestRules(ctx, p); apiErr != nil {
 		return p, apiErr
 	}
-	if compact && p.CompactionMode == "on" {
-		p.CompactionModel = built.Model
-	}
-
 	beforeShape, _ := json.Marshal(built.Body)
-	if p.Compact {
+	if engine != nil {
+		if p.Compact {
+			if _, err := compactRequestBody(built.Body); err != nil {
+				return p, compactInputError(err.Error())
+			}
+		}
+		if err := p.finalizeRules(ctx); err != nil {
+			return p, pipelineAPIError(err)
+		}
+	} else if p.Compact {
 		built.Body, err = compactRequestBody(built.Body)
 		if err != nil {
 			return p, compactInputError(err.Error())
@@ -267,16 +272,15 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		if err != nil {
 			return p, ruleAPIError(err.Error())
 		}
-	} else if engine != nil {
-		if err := p.finalizeRules(ctx); err != nil {
-			return p, pipelineAPIError(err)
-		}
 	} else {
 		piwire.EnforcePiShape(built.Body)
 		built.JSON, err = json.Marshal(built.Body)
 		if err != nil {
 			return p, ruleAPIError(err.Error())
 		}
+	}
+	if compact && p.CompactionMode == "on" {
+		p.CompactionModel = built.Model
 	}
 	if p.Compact {
 		name := "Native compaction request"
@@ -348,6 +352,10 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 		p.Recorder.SetRoute(account.ID, account.Name, built.Model, sessionID, transport)
 	}
 	p.Usage = s.newUsageTracker(key, account, built.Model, clientTransport, transport, sessionID, stringField(clientBody, "service_tier"))
+	p.Usage.noteRequestMetadata(built.JSON)
+	if p.Compact {
+		p.Usage.requestKind = "compaction"
+	}
 	s.startUsage(ctx, p.Usage)
 	return p, nil
 }

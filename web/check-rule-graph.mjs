@@ -65,8 +65,25 @@ export async function checkRuleGraph(schema, backend) {
         if (cap.id === 'rewrite_model') action.params.model = 'test'
         if (cap.id === 'text_replace') action.params.pattern = 'test'
         if (cap.id === 'json_merge') action.params.value = {a: null}
+        if (cap.id === 'scope') action.params.functions = {}
+        if (cap.id === 'call') continue // A call requires its enclosing scope; tested below through nested fixtures
         fixtures.push({...m.newRule(), name: cap.id, phase: cap.phases[0], actions: [action]})
     }
+    fixtures.push({
+        ...m.newRule(), name: 'nested-fragment', phase: 'upstream_headers', actions: [{
+            id: 'scope',
+            type: 'scope',
+            params: {
+                functions: {
+                    metadata: [{
+                        id: 'agent',
+                        type: 'json_set',
+                        params: {path: '/user-agent', value: ['example']}
+                    }]
+                }, steps: [{id: 'invoke', type: 'call', params: {name: 'metadata'}}]
+            }
+        }]
+    })
     for (const rule of fixtures) {
         const graph = m.ruleToGraph(rule)
         assert.deepEqual(m.graphToRule(graph, schema), rule, `${rule.name}: graph changed wire AST`)
@@ -248,7 +265,7 @@ export async function checkRuleGraph(schema, backend) {
     const pathField = schema.conditions.find(c => c.id === 'exists').fields.find(f => f.name === 'path')
     for (const source of [undefined, 'current']) assert.equal(m.currentSamplePathField(pathField, source), true)
     for (const source of ['item', 'client', 'context', null]) assert.equal(m.currentSamplePathField(pathField, source), false)
-    assert.equal(m.currentSamplePathField(schema.actions.find(c => c.id === 'rewrite_model').fields[0], 'current'), false)
+    assert.equal(m.currentSamplePathField(schema.actions.find(c => c.id === 'let').fields.find(f => f.name === 'name'), 'current'), false)
     for (const locale of ['en', 'zh-CN']) {
         const legacy = {name: 'drop_environment_context', legacy_name: 'drop_environment_context', source: 'legacy'}
         assert.equal(m.ruleDisplayName(legacy, locale), m.ruleLabel('action', 'drop_environment_context', locale))
@@ -541,7 +558,7 @@ function checkQuickAdd(m, schema) {
         }, 'graph.orphan')
     }
     rejected(empty, {kind: 'action', type: 'drop_event'}, 'graph.phase')
-    rejected(make(undefined, [], {phase: 'response_body'}), {kind: 'action', type: 'rewrite_model'}, 'graph.phase')
+    rejected(make(undefined, [], {phase: 'response_body'}), {kind: 'action', type: 'reject_request'}, 'graph.phase')
     rejected(empty, {kind: 'action', type: 'drop_event', mode: 'detached'}, 'graph.phase')
     for (const kind of ['action', 'condition']) {
         rejected(empty, {kind, type: 'unknown'}, 'graph.capability')
@@ -568,6 +585,7 @@ function checkQuickAdd(m, schema) {
     cyclic.edges.push(m.graphEdge(oldNodes[1].id, oldNodes[0].id, 'action-in'))
     rejected(cyclic, {kind: 'action', type: 'json_set'}, 'graph.cycle')
     const unfinished = add(empty, {kind: 'action', type: 'text_replace'})
+    selected(unfinished).data.params.pattern = ''
     assert.ok(m.graphErrors(unfinished, schema).some(error => error.path === '/actions/0/params/pattern'), 'empty required default remains editable instead of blocking creation')
     const unfinishedAgain = add(unfinished, {kind: 'action', type: 'json_set'})
     assert.equal(m.graphToRule(unfinishedAgain, schema, false).actions.length, 2)

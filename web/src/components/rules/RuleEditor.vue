@@ -9,6 +9,7 @@ import {useToastStore} from '../../stores/ui'
 import {clone, parseRule, RuleInputError, stringifyRule, validateRule, type RuleDraft} from '../../utils/ruleEditor'
 import {graphErrors, graphNodeValue, graphPathMap, graphSignature, graphToRule, persistGraphLayout, replaceGraphNode, ruleToGraph, type RuleGraph} from '../../utils/ruleGraph'
 import {readonlyRuleFields} from '../../utils/ruleSchemaAdapter'
+import {localHelp} from '../../utils/ruleSchema'
 import {ruleLabel, ruleDisplayName} from '../../utils/ruleLabels'
 import RuleField from './RuleField.vue'
 import ConditionEditor from './ConditionEditor.vue'
@@ -55,6 +56,7 @@ const diagnosticLabels = computed(() => {
 })
 const normalFields = computed(() => props.schema.rule_fields.filter(f => !['when','actions','name','enabled','phase'].includes(f.name) && !readonlyRuleFields.includes(f.name)))
 const topFields = computed(() => props.schema.rule_fields.filter(f => ['name','enabled','phase'].includes(f.name)))
+const phaseHelp = computed(() => props.schema.rule_fields.find(f => f.name === 'phase')?.enum_help ?? {})
 function patch(fields:Partial<RuleDraft>) {emit('update:modelValue',{...props.modelValue,...fields})}
 function updateGraph(next:RuleGraph, history=true) {
     const changed = graphSignature(next) !== graphSignature(graph.value)
@@ -65,7 +67,12 @@ function updateGraph(next:RuleGraph, history=true) {
     try {fields.rule=graphToRule(next,props.schema,false); fields.code=stringifyRule(fields.rule)} catch { /* retain the last representable rule alongside this invalid graph */ }
     diagnostics.value=null; sample.value=undefined; patch(fields)
 }
-function updateRule(next:Rule) {updateGraph(ruleToGraph(next,graph.value))}
+function updateRule(next:Rule) {
+ if(props.modelValue.mode==='steps'){
+ diagnostics.value=null; sample.value=undefined
+ patch({rule:next,code:stringifyRule(next),graph:ruleToGraph(next,graph.value),errors:[]})
+ } else updateGraph(ruleToGraph(next,graph.value))
+}
 function updateField(name:string,value:unknown) {
  if(props.modelValue.mode==='steps'){const next={...rule.value} as unknown as Record<string,unknown>;if(value===undefined)delete next[name];else next[name]=value;updateRule(next as unknown as Rule);return}
     const root = graph.value.nodes.find(n=>n.kind==='rule')!
@@ -155,6 +162,15 @@ const shownErrors=computed(()=>[...props.modelValue.errors,...(props.modelValue.
 </script>
 <template>
   <form ref="form" class="space-y-4 rule-editor" @submit.prevent="save">
+    <details class="rounded-lg border border-[color:var(--color-line)] p-3 text-xs" open data-testid="rule-pipeline">
+      <summary class="cursor-pointer font-medium">{{ locale === 'zh-CN' ? '规则执行流水线' : 'Rule execution pipeline' }}</summary>
+      <ol class="mt-2 flex flex-wrap gap-2">
+        <li v-for="phase in schema.phases" :key="phase" class="rounded border border-[color:var(--color-line)] px-2 py-1" :class="phase === rule.phase ? 'font-semibold ring-1 ring-[color:var(--color-accent)]' : ''" :title="phaseHelp[phase]">
+          <code>{{ phase }}</code><span class="mt-1 block max-w-64 text-[color:var(--color-ink-muted)]">{{ localHelp(phaseHelp[phase], locale) }}</span>
+        </li>
+      </ol>
+      <p class="mt-2 text-[color:var(--color-ink-muted)]">{{ locale === 'zh-CN' ? '请求按上述阶段执行；响应事件逐项处理，响应正文用于非流式聚合结果。同阶段优先级越小越先执行，步骤从上到下读取前一步结果。协议默认规则优先级为 -1000；在它之后的规则可以覆盖结果。' : 'Requests follow these stages. Response events run individually; response body rules process non-streaming aggregates. Lower priority runs first within a stage; steps read the preceding result. Protocol defaults use priority -1000; later rules can override their result.' }}</p>
+    </details>
     <div class="flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-base font-semibold">{{ ruleDisplayName(rule,locale) || t('rules.add') }}</h2>
       <div class="flex flex-wrap gap-2"><button type="button" class="btn" @click="emit('close')">{{ t('rules.cancel') }}</button><button class="btn btn-primary" :disabled="busy" type="submit">{{ t('rules.save') }}</button></div>

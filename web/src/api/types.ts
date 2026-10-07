@@ -184,6 +184,12 @@ export interface UsageRecord {
     api_key_name: string
     account_name: string
     model: string
+    request_kind?: string
+    reasoning_effort?: string
+    requested_service_tier?: string
+    service_tier?: string
+    service_priority?: string
+    billing_details?: BillingDetails | null
     client_transport: string
     upstream_transport: string
     outcome: UsageOutcome
@@ -191,14 +197,41 @@ export interface UsageRecord {
     error_code: string
     input_tokens: NullableMetric
     cached_tokens: NullableMetric
+    cache_write_tokens?: NullableMetric
     output_tokens: NullableMetric
     reasoning_tokens: NullableMetric
     total_tokens: NullableMetric
     first_token_ms: NullableMetric
     latency_ms: NullableMetric
+    output_tps?: NullableMetric
     cost_usd: NullableMetric
     cost_micros?: NullableMetric
     started_at: number
+}
+
+export interface BillingRates {
+    input: number
+    cached_input: number
+    cache_write: number
+    output: number
+}
+
+export interface BillingDetails {
+    version: string
+    tier: string
+    tier_source: string
+    price_source: string
+    unavailable_reason?: string
+    long_context: boolean
+    context_threshold: number
+    base_rates: BillingRates | null
+    context_rates: BillingRates | null
+    effective_rates: BillingRates | null
+    context_multipliers: BillingRates | null
+    tier_multipliers: BillingRates | null
+    base_cost_micros: number | null
+    context_cost_micros: number | null
+    total_cost_micros: number | null
 }
 
 export interface UsageQuery extends StatsRange {
@@ -498,6 +531,8 @@ export interface ResetCredits {
 }
 
 export interface QuotaView {
+    cost: AccountUsageCost | null
+    window_costs: QuotaWindowCost[]
     report: QuotaReport | null
     reset_credits: ResetCredits | null
     windows: QuotaWindow[] | null
@@ -506,6 +541,23 @@ export interface QuotaView {
     updated_at: number
     error?: string
     available: boolean
+}
+
+export interface AccountUsageCost {
+    cost_micros: number
+    priced_requests: number
+    unpriced_requests: number
+}
+
+export interface QuotaWindowCost {
+    limit_id: string
+    role: string
+    start_at: number
+    as_of: number
+    usage: AccountUsageCost | null
+    estimated_total_usd: number | null
+    estimated_remaining_usd: number | null
+    unavailable_reason?: string
 }
 
 export interface ConsumeResetResult {

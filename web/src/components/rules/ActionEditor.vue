@@ -40,7 +40,7 @@ function remove(index: number) { set(props.modelValue.filter((_, i) => i !== ind
       </div>
     </div>
     <div v-if="!compact" class="flex flex-wrap gap-2">
-      <select id="add-rule-action" class="input max-w-xs" @change="add(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''"><option value="">{{ t('rules.addAction') }}</option><option v-for="cap in available" :key="cap.id" :value="cap.id">{{ cap.label?.split(' / ')[locale==='zh-CN'?0:1] ?? ruleLabel('action',cap.id,locale) }}</option></select>
+      <select :id="`add-rule-action${basePath ? `-${basePath}` : ''}`" class="input max-w-xs" @change="add(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''"><option value="">{{ t('rules.addAction') }}</option><option v-for="cap in available" :key="cap.id" :value="cap.id">{{ cap.label?.split(' / ')[locale==='zh-CN'?0:1] ?? ruleLabel('action',cap.id,locale) }}</option></select>
       <span v-if="!modelValue.length" class="text-xs text-[color:var(--color-ink-muted)]">{{ t('rules.noActions') }}</span>
     </div>
   </div>

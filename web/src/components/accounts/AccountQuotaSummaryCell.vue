@@ -4,6 +4,7 @@ import type { Account, QuotaWindow } from '../../api/types'
 import { formatUntil } from '../../stores/ui'
 import { RotateCcw } from 'lucide-vue-next'
 import { useI18n } from '../../i18n'
+import QuotaCostSummary from '../QuotaCostSummary.vue'
 const { t } = useI18n()
 
 const props = defineProps<{ account: Account; onOpen: (account: Account) => void; onLink: (account: Account) => void }>()
@@ -17,6 +18,10 @@ const creditBalance = computed(() => {
 })
 const showCredits = computed(() => Boolean(credits.value?.unlimited || creditBalance.value))
 const resetCount = computed(() => props.account.quota?.reset_credits?.available_count ?? 0)
+const windowCost = computed(() => {
+	const window = props.account.quota?.weekly ?? props.account.quota?.session
+	return props.account.quota?.window_costs?.find((cost) => cost.limit_id === window?.limit_id && cost.role === window?.role)
+})
 function tone(window: QuotaWindow) { return window.limit_reached || window.used_percent >= 100 ? 'danger' : window.used_percent >= 80 ? 'warn' : 'success' }
 function label(window: QuotaWindow) { return window.kind === '5h' ? '5h' : window.kind === '7d' ? '7d' : window.kind }
 </script>
@@ -26,6 +31,7 @@ function label(window: QuotaWindow) { return window.kind === '5h' ? '5h' : windo
 		<template v-if="!account.codex_linked">
 			<span class="quota-muted">—</span>
 			<button class="btn btn-ghost quota-link" type="button" @click="onLink(account)">{{ t('accounts.linkCodex') }}</button>
+			<QuotaCostSummary :usage="account.quota?.cost" compact />
 		</template>
 		<template v-else>
 			<button class="quota-button" type="button" :title="t('quota.viewDetails')" @click="onOpen(account)">
@@ -45,6 +51,8 @@ function label(window: QuotaWindow) { return window.kind === '5h' ? '5h' : windo
 					<span v-if="windows[0]?.reset_at" class="quota-reset" :title="t('quota.resetsIn', { when: formatUntil(windows[0].reset_at - Date.now()) })">{{ formatUntil(windows[0].reset_at - Date.now()) }}</span>
 					<span v-if="resetCount > 0" class="quota-credit" :title="t('quota.resetCreditsAvailable', { count: resetCount })"><RotateCcw :size="10" aria-hidden="true" />{{ t('quota.resetCredits') }}: {{ resetCount }}</span>
 				</span>
+				<QuotaCostSummary :usage="account.quota?.cost" compact />
+				<QuotaCostSummary v-if="windowCost" :usage="windowCost.usage" :window-cost="windowCost" :cycle-label="account.quota?.weekly ? t('quota.window7d') : t('quota.window5h')" compact />
 			</button>
 		</template>
 	</div>

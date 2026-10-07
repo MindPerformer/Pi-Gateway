@@ -50,9 +50,12 @@ type usageTracker struct {
 	keyName           string
 	model             string
 	clientTransport   string
+	requestKind       string
 	upstreamTransport string
 	sessionID         string
 	tier              string
+	actualTier        string
+	reasoningEffort   string
 	overrides         map[string]float64
 }
 
@@ -73,7 +76,10 @@ func (s *usageSink) OnResponseHeaders(status int, h http.Header) {
 }
 
 func (s *usageSink) OnFrame(dir, kind, eventType string, raw []byte, parsed map[string]any) {
-	s.t.noteFrame(eventType, time.Now())
+	if dir == "in" {
+		s.t.noteFrame(eventType, time.Now())
+		s.t.noteResponseMetadata(eventType, parsed)
+	}
 	s.Sink.OnFrame(dir, kind, eventType, raw, parsed)
 }
 
@@ -90,6 +96,7 @@ func (s *Server) newUsageTracker(key *store.APIKey, account *store.Account, mode
 		startedMS:         time.Now().UnixMilli(),
 		model:             model,
 		clientTransport:   clientTransport,
+		requestKind:       "generation",
 		upstreamTransport: upstreamTransport,
 		sessionID:         sessionID,
 		tier:              tier,
@@ -113,18 +120,21 @@ func (s *Server) startUsage(ctx context.Context, t *usageTracker) {
 		return
 	}
 	rec := &store.UsageRecord{
-		RequestID:         t.requestID,
-		APIKeyID:          t.keyID,
-		APIKeyName:        t.keyName,
-		AccountID:         t.accountID,
-		AccountName:       t.accountName,
-		Model:             t.model,
-		ClientTransport:   t.clientTransport,
-		UpstreamTransport: t.upstreamTransport,
-		Outcome:           "running",
-		UpstreamSendState: "not_sent",
-		SessionID:         t.sessionID,
-		StartedAt:         t.startedMS,
+		RequestID:            t.requestID,
+		APIKeyID:             t.keyID,
+		APIKeyName:           t.keyName,
+		AccountID:            t.accountID,
+		AccountName:          t.accountName,
+		Model:                t.model,
+		ClientTransport:      t.clientTransport,
+		RequestKind:          t.requestKind,
+		ReasoningEffort:      t.reasoningEffort,
+		RequestedServiceTier: t.tier,
+		UpstreamTransport:    t.upstreamTransport,
+		Outcome:              "running",
+		UpstreamSendState:    "not_sent",
+		SessionID:            t.sessionID,
+		StartedAt:            t.startedMS,
 	}
 	insCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
@@ -191,6 +201,38 @@ func isOutputDelta(eventType string) bool {
 func (t *usageTracker) noteUsage(u upstream.Usage) {
 	if u.HasUsage {
 		t.usage = u
+	}
+}
+
+func (t *usageTracker) noteRequestMetadata(raw []byte) {
+	var body map[string]any
+	if json.Unmarshal(raw, &body) != nil {
+		return
+	}
+	t.tier = stringField(body, "service_tier")
+	reasoning, _ := body["reasoning"].(map[string]any)
+	t.reasoningEffort = stringField(reasoning, "effort")
+}
+
+func (t *usageTracker) noteResponseMetadata(eventType string, payload map[string]any) {
+	if !strings.HasPrefix(eventType, "response.") {
+		return
+	}
+	response, nested := payload["response"].(map[string]any)
+	if !nested {
+		response = payload
+	}
+	if tier := stringField(response, "service_tier"); tier != "" {
+		t.actualTier = strings.ToLower(tier)
+	}
+	if reasoning, ok := response["reasoning"].(map[string]any); ok {
+		if effort := stringField(reasoning, "effort"); effort != "" {
+			t.reasoningEffort = effort
+		}
+	}
+	// The observed model supersedes aliases and request-side routing names.
+	if model := stringField(response, "model"); model != "" {
+		t.model = model
 	}
 }
 
@@ -271,18 +313,30 @@ func (s *Server) pricingOverrides() map[string]float64 {
 // cost returns the settled amount and its provenance. A model with no usable
 // price stores NULL rather than a fabricated zero.
 func (t *usageTracker) cost() (*int64, string) {
+	d := t.billingDetails()
+	if d.TotalCostMicros == nil {
+		return nil, "unknown"
+	}
+	return d.TotalCostMicros, d.PriceSource
+}
+
+func (t *usageTracker) billingDetails() pricing.Breakdown {
+	tier := t.actualTier
+	source := "upstream"
+	if tier == "" {
+		// Missing confirmation must never enable a requested Fast surcharge.
+		tier = "standard"
+		source = "default"
+	}
+	d := pricing.Explain(t.model, tier, t.overrides, t.usage.InputTokens, t.usage.CachedTokens, t.usage.CacheWriteTokens, t.usage.OutputTokens)
+	d.TierSource = source
 	if !t.usage.HasUsage {
-		return nil, "unknown"
+		d.BaseCostMicros = nil
+		d.ContextCostMicros = nil
+		d.TotalCostMicros = nil
+		d.UnavailableReason = "missing_usage"
 	}
-	rule, source, ok := pricing.Lookup(t.model, t.tier, t.overrides)
-	if !ok {
-		return nil, "unknown"
-	}
-	micros, ok := pricing.Cost(rule, t.usage.InputTokens, t.usage.CachedTokens, t.usage.CacheWriteTokens, t.usage.OutputTokens)
-	if !ok {
-		return nil, "unknown"
-	}
-	return &micros, source
+	return d
 }
 
 // finalize writes the terminal row and settles the key budget by request id, so
@@ -297,33 +351,44 @@ func (t *usageTracker) finalize(ctx context.Context, outcome string, errText str
 		latency = 0
 	}
 
-	costMicros, costSource := t.cost()
+	details := t.billingDetails()
+	costMicros, costSource := details.TotalCostMicros, details.PriceSource
+	if costMicros == nil {
+		costSource = "unknown"
+	}
+	detailsJSON, _ := json.Marshal(details)
 	sendState := t.sendState
 	if sendState == "" {
 		sendState = "not_sent"
 	}
 
 	rec := &store.UsageRecord{
-		RequestID:         t.requestID,
-		APIKeyID:          t.keyID,
-		APIKeyName:        t.keyName,
-		AccountID:         t.accountID,
-		AccountName:       t.accountName,
-		Model:             t.model,
-		ClientTransport:   t.clientTransport,
-		UpstreamTransport: t.upstreamTransport,
-		Outcome:           usageOutcome(outcome),
-		StatusCode:        t.status,
-		ErrorMessage:      errText,
-		UpstreamSendState: sendState,
-		HeadersMS:         t.headersMS,
-		FirstEventMS:      t.firstEventMS,
-		FirstTokenMS:      t.firstTokenMS,
-		LatencyMS:         latency,
-		CostMicros:        costMicros,
-		CostSource:        costSource,
-		SessionID:         t.sessionID,
-		CompletedAt:       t.completedMS,
+		RequestID:            t.requestID,
+		APIKeyID:             t.keyID,
+		APIKeyName:           t.keyName,
+		AccountID:            t.accountID,
+		AccountName:          t.accountName,
+		Model:                t.model,
+		ClientTransport:      t.clientTransport,
+		RequestKind:          t.requestKind,
+		UpstreamTransport:    t.upstreamTransport,
+		Outcome:              usageOutcome(outcome),
+		StatusCode:           t.status,
+		ErrorMessage:         errText,
+		UpstreamSendState:    sendState,
+		HeadersMS:            t.headersMS,
+		FirstEventMS:         t.firstEventMS,
+		FirstTokenMS:         t.firstTokenMS,
+		LatencyMS:            latency,
+		CostMicros:           costMicros,
+		CostSource:           costSource,
+		ReasoningEffort:      t.reasoningEffort,
+		RequestedServiceTier: t.tier,
+		ServiceTier:          t.actualTier,
+		BillingDetails:       string(detailsJSON),
+		PriceVersion:         pricing.Version,
+		SessionID:            t.sessionID,
+		CompletedAt:          t.completedMS,
 	}
 	if t.usage.HasUsage {
 		rec.InputTokens = ptrInt(t.usage.InputTokens)

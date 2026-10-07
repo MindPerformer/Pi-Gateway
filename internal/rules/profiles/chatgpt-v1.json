@@ -1,0 +1,4264 @@
+{
+  "profile_version": 1,
+  "rules": [
+    {
+      "schema_version": 2,
+      "id": "protocol-request-normalize",
+      "name": "协议：请求构建 / Request construction",
+      "description": "协议默认规则；每一步均可展开编辑。",
+      "enabled": true,
+      "priority": -1000,
+      "order_index": 0,
+      "phase": "request_normalize",
+      "when": {
+        "op": "always"
+      },
+      "actions": [
+        {
+          "id": "new-request",
+          "type": "json_set",
+          "params": {
+            "create_parents": true,
+            "path": "",
+            "value": {
+              "$ref": {
+                "path": "",
+                "source": "original"
+              }
+            }
+          }
+        },
+        {
+          "id": "owned-fields",
+          "type": "json_remove",
+          "params": {
+            "paths": [
+              "/reasoning",
+              "/tools",
+              "/include",
+              "/previous_response_id",
+              "/prompt_cache_key"
+            ]
+          }
+        },
+        {
+          "id": "model",
+          "type": "json_set",
+          "params": {
+            "create_parents": true,
+            "path": "/model",
+            "value": {
+              "$expr": {
+                "args": [
+                  {
+                    "$ref": {
+                      "path": "/model",
+                      "source": "original"
+                    }
+                  },
+                  {
+                    "$ref": {
+                      "path": "/settings/default_model",
+                      "source": "context"
+                    }
+                  }
+                ],
+                "op": "coalesce"
+              }
+            }
+          }
+        },
+        {
+          "id": "default-empty-model",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "op": "test",
+              "value": {
+                "$expr": {
+                  "args": [
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/model",
+                                          "source": "current"
+                                        }
+                                      }
+                                    ],
+                                    "op": "type"
+                                  }
+                                },
+                                "string"
+                              ],
+                              "op": "eq"
+                            }
+                          },
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/model",
+                                    "source": "current"
+                                  }
+                                },
+                                ""
+                              ],
+                              "op": "ne"
+                            }
+                          }
+                        ],
+                        "op": "and"
+                      }
+                    }
+                  ],
+                  "op": "not"
+                }
+              }
+            },
+            "then": [
+              {
+                "id": "default-model",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/model",
+                  "value": {
+                    "$ref": {
+                      "path": "/settings/default_model",
+                      "source": "context"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "remember-model",
+          "type": "let",
+          "params": {
+            "name": "model",
+            "value": {
+              "$ref": {
+                "path": "/model",
+                "source": "current"
+              }
+            }
+          }
+        },
+        {
+          "id": "model-mapping",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "op": "test",
+              "value": {
+                "$expr": {
+                  "args": [
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/settings/model_mappings",
+                                          "source": "context"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            "/",
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/model",
+                                                      "source": "vars"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "pointer_escape"
+                                              }
+                                            }
+                                          ],
+                                          "op": "concat"
+                                        }
+                                      }
+                                    ],
+                                    "op": "get"
+                                  }
+                                }
+                              ],
+                              "op": "type"
+                            }
+                          },
+                          "string"
+                        ],
+                        "op": "eq"
+                      }
+                    },
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/settings/model_mappings",
+                                    "source": "context"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      "/",
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/model",
+                                                "source": "vars"
+                                              }
+                                            }
+                                          ],
+                                          "op": "pointer_escape"
+                                        }
+                                      }
+                                    ],
+                                    "op": "concat"
+                                  }
+                                }
+                              ],
+                              "op": "get"
+                            }
+                          },
+                          ""
+                        ],
+                        "op": "ne"
+                      }
+                    }
+                  ],
+                  "op": "and"
+                }
+              }
+            },
+            "then": [
+              {
+                "id": "mapped-model",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/model",
+                  "value": {
+                    "$expr": {
+                      "args": [
+                        {
+                          "$ref": {
+                            "path": "/settings/model_mappings",
+                            "source": "context"
+                          }
+                        },
+                        {
+                          "$expr": {
+                            "args": [
+                              "/",
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$ref": {
+                                        "path": "/model",
+                                        "source": "vars"
+                                      }
+                                    }
+                                  ],
+                                  "op": "pointer_escape"
+                                }
+                              }
+                            ],
+                            "op": "concat"
+                          }
+                        }
+                      ],
+                      "op": "get"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "input",
+          "type": "json_set",
+          "params": {
+            "create_parents": true,
+            "path": "/input",
+            "value": {
+              "$expr": {
+                "args": [
+                  {
+                    "$ref": {
+                      "path": "/input",
+                      "source": "original"
+                    }
+                  },
+                  []
+                ],
+                "op": "coalesce"
+              }
+            }
+          }
+        },
+        {
+          "id": "string-input",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "op": "type",
+              "path": "/input",
+              "value": "string"
+            },
+            "then": [
+              {
+                "id": "message-input",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/input",
+                  "value": {
+                    "$expr": {
+                      "args": [
+                        {
+                          "$expr": {
+                            "args": [
+                              "role",
+                              "user",
+                              "content",
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          "type",
+                                          "input_text",
+                                          "text",
+                                          {
+                                            "$ref": {
+                                              "path": "/input",
+                                              "source": "current"
+                                            }
+                                          }
+                                        ],
+                                        "op": "object"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            ],
+                            "op": "object"
+                          }
+                        }
+                      ],
+                      "op": "array"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "stream",
+          "type": "json_set",
+          "params": {
+            "create_parents": true,
+            "path": "/stream",
+            "value": true
+          }
+        },
+        {
+          "id": "store",
+          "type": "json_set",
+          "params": {
+            "create_parents": true,
+            "path": "/store",
+            "value": false
+          }
+        },
+        {
+          "id": "cache-hint",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "op": "test",
+              "value": {
+                "$expr": {
+                  "args": [
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/wire_session_id",
+                                    "source": "context"
+                                  }
+                                }
+                              ],
+                              "op": "type"
+                            }
+                          },
+                          "string"
+                        ],
+                        "op": "eq"
+                      }
+                    },
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$ref": {
+                              "path": "/wire_session_id",
+                              "source": "context"
+                            }
+                          },
+                          ""
+                        ],
+                        "op": "ne"
+                      }
+                    }
+                  ],
+                  "op": "and"
+                }
+              }
+            },
+            "then": [
+              {
+                "id": "cache-key",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/prompt_cache_key",
+                  "value": {
+                    "$expr": {
+                      "args": [
+                        {
+                          "$ref": {
+                            "path": "/wire_session_id",
+                            "source": "context"
+                          }
+                        },
+                        0,
+                        64
+                      ],
+                      "op": "slice"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "copy-service_tier",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "conditions": [
+                {
+                  "op": "exists",
+                  "path": "/service_tier",
+                  "source": "original"
+                },
+                {
+                  "op": "ne",
+                  "path": "/service_tier",
+                  "source": "original",
+                  "value": null
+                }
+              ],
+              "op": "all"
+            },
+            "then": [
+              {
+                "id": "set-service_tier",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/service_tier",
+                  "value": {
+                    "$ref": {
+                      "path": "/service_tier",
+                      "source": "original"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "copy-tool_choice",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "conditions": [
+                {
+                  "op": "exists",
+                  "path": "/tool_choice",
+                  "source": "original"
+                },
+                {
+                  "op": "ne",
+                  "path": "/tool_choice",
+                  "source": "original",
+                  "value": null
+                }
+              ],
+              "op": "all"
+            },
+            "then": [
+              {
+                "id": "set-tool_choice",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/tool_choice",
+                  "value": {
+                    "$ref": {
+                      "path": "/tool_choice",
+                      "source": "original"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "copy-include",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "conditions": [
+                {
+                  "op": "exists",
+                  "path": "/include",
+                  "source": "original"
+                },
+                {
+                  "op": "ne",
+                  "path": "/include",
+                  "source": "original",
+                  "value": null
+                }
+              ],
+              "op": "all"
+            },
+            "then": [
+              {
+                "id": "set-include",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/include",
+                  "value": {
+                    "$ref": {
+                      "path": "/include",
+                      "source": "original"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "copy-previous_response_id",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "conditions": [
+                {
+                  "op": "exists",
+                  "path": "/previous_response_id",
+                  "source": "original"
+                },
+                {
+                  "op": "ne",
+                  "path": "/previous_response_id",
+                  "source": "original",
+                  "value": null
+                },
+                {
+                  "op": "ne",
+                  "source": "original",
+                  "path": "/previous_response_id",
+                  "value": ""
+                }
+              ],
+              "op": "all"
+            },
+            "then": [
+              {
+                "id": "set-previous_response_id",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/previous_response_id",
+                  "value": {
+                    "$ref": {
+                      "path": "/previous_response_id",
+                      "source": "original"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "nonempty-tools",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "op": "test",
+              "value": {
+                "$expr": {
+                  "args": [
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/tools",
+                                    "source": "original"
+                                  }
+                                }
+                              ],
+                              "op": "type"
+                            }
+                          },
+                          "array"
+                        ],
+                        "op": "eq"
+                      }
+                    },
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/tools",
+                                    "source": "original"
+                                  }
+                                }
+                              ],
+                              "op": "length"
+                            }
+                          },
+                          0
+                        ],
+                        "op": "gt"
+                      }
+                    }
+                  ],
+                  "op": "and"
+                }
+              }
+            },
+            "then": [
+              {
+                "id": "tools",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/tools",
+                  "value": {
+                    "$ref": {
+                      "path": "/tools",
+                      "source": "original"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "reasoning-config",
+          "type": "if",
+          "params": {
+            "else": [
+              {
+                "id": "reasoning-default",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/reasoning",
+                                    "source": "original"
+                                  }
+                                }
+                              ],
+                              "op": "type"
+                            }
+                          },
+                          "null"
+                        ],
+                        "op": "ne"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "default-effort",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/settings/reasoning_effort",
+                                                "source": "context"
+                                              }
+                                            }
+                                          ],
+                                          "op": "type"
+                                        }
+                                      },
+                                      "string"
+                                    ],
+                                    "op": "eq"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/settings/reasoning_effort",
+                                          "source": "context"
+                                        }
+                                      },
+                                      ""
+                                    ],
+                                    "op": "ne"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "default-reasoning",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/reasoning",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    "effort",
+                                    {
+                                      "$ref": {
+                                        "path": "/settings/reasoning_effort",
+                                        "source": "context"
+                                      }
+                                    }
+                                  ],
+                                  "op": "object"
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "id": "default-summary-present",
+                            "type": "if",
+                            "params": {
+                              "else": [],
+                              "predicate": {
+                                "op": "test",
+                                "value": {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/settings/reasoning_summary",
+                                                      "source": "context"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/settings/reasoning_summary",
+                                                "source": "context"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                }
+                              },
+                              "then": [
+                                {
+                                  "id": "default-summary-value",
+                                  "type": "json_set",
+                                  "params": {
+                                    "create_parents": true,
+                                    "path": "/reasoning/summary",
+                                    "value": {
+                                      "$ref": {
+                                        "path": "/settings/reasoning_summary",
+                                        "source": "context"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "predicate": {
+              "op": "type",
+              "path": "/reasoning",
+              "source": "original",
+              "value": "object"
+            },
+            "then": [
+              {
+                "id": "reasoning-object",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/reasoning",
+                  "value": {
+                    "$ref": {
+                      "path": "/reasoning",
+                      "source": "original"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "default-summary",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "conditions": [
+                      {
+                        "op": "not_exists",
+                        "path": "/reasoning/summary",
+                        "source": "original"
+                      },
+                      {
+                        "op": "test",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/reasoning/effort",
+                                              "source": "original"
+                                            }
+                                          }
+                                        ],
+                                        "op": "type"
+                                      }
+                                    },
+                                    "string"
+                                  ],
+                                  "op": "eq"
+                                }
+                              },
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$ref": {
+                                        "path": "/reasoning/effort",
+                                        "source": "original"
+                                      }
+                                    },
+                                    ""
+                                  ],
+                                  "op": "ne"
+                                }
+                              }
+                            ],
+                            "op": "and"
+                          }
+                        }
+                      },
+                      {
+                        "op": "test",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/settings/reasoning_summary",
+                                              "source": "context"
+                                            }
+                                          }
+                                        ],
+                                        "op": "type"
+                                      }
+                                    },
+                                    "string"
+                                  ],
+                                  "op": "eq"
+                                }
+                              },
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$ref": {
+                                        "path": "/settings/reasoning_summary",
+                                        "source": "context"
+                                      }
+                                    },
+                                    ""
+                                  ],
+                                  "op": "ne"
+                                }
+                              }
+                            ],
+                            "op": "and"
+                          }
+                        }
+                      }
+                    ],
+                    "op": "all"
+                  },
+                  "then": [
+                    {
+                      "id": "summary-default",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/reasoning/summary",
+                        "value": {
+                          "$ref": {
+                            "path": "/settings/reasoning_summary",
+                            "source": "context"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "empty-reasoning",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "eq",
+                    "path": "/reasoning",
+                    "value": {}
+                  },
+                  "then": [
+                    {
+                      "id": "omit-reasoning",
+                      "type": "json_remove",
+                      "params": {
+                        "paths": [
+                          "/reasoning"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "reasoning-include",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "conditions": [
+                {
+                  "op": "exists",
+                  "path": "/reasoning"
+                },
+                {
+                  "op": "not_exists",
+                  "path": "/include"
+                }
+              ],
+              "op": "all"
+            },
+            "then": [
+              {
+                "id": "encrypted-include",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/include",
+                  "value": [
+                    "reasoning.encrypted_content"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "rejected-fields",
+          "type": "json_remove",
+          "params": {
+            "paths": [
+              "/background",
+              "/conversation",
+              "/max_output_tokens",
+              "/max_tool_calls",
+              "/metadata",
+              "/moderation",
+              "/multi_agent",
+              "/prompt",
+              "/prompt_cache_retention",
+              "/safety_identifier",
+              "/temperature",
+              "/top_logprobs",
+              "/top_p",
+              "/truncation",
+              "/user",
+              "/type"
+            ]
+          }
+        },
+        {
+          "id": "compaction-model",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "conditions": [
+                {
+                  "op": "eq",
+                  "path": "/compact",
+                  "source": "context",
+                  "value": true
+                },
+                {
+                  "op": "eq",
+                  "path": "/settings/compaction_mode",
+                  "source": "context",
+                  "value": "on"
+                }
+              ],
+              "op": "all"
+            },
+            "then": [
+              {
+                "id": "summary-model",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/model",
+                  "value": {
+                    "$ref": {
+                      "path": "/settings/compaction_model",
+                      "source": "context"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "stop_after_match": false,
+      "on_error": "abort",
+      "revision": 0,
+      "created_at": "",
+      "updated_at": "",
+      "source": "protocol"
+    },
+    {
+      "schema_version": 2,
+      "id": "protocol-request-finalize",
+      "name": "协议：请求字段 / Request fields",
+      "description": "协议默认规则；每一步均可展开编辑。",
+      "enabled": true,
+      "priority": -1000,
+      "order_index": 0,
+      "phase": "request_finalize",
+      "when": {
+        "op": "always"
+      },
+      "actions": [
+        {
+          "id": "operation",
+          "type": "if",
+          "params": {
+            "else": [
+              {
+                "id": "create-shape",
+                "type": "sequence",
+                "params": {
+                  "steps": [
+                    {
+                      "id": "protocol-fields",
+                      "type": "json_remove",
+                      "params": {
+                        "paths": [
+                          "/background",
+                          "/conversation",
+                          "/max_output_tokens",
+                          "/max_tool_calls",
+                          "/metadata",
+                          "/moderation",
+                          "/multi_agent",
+                          "/prompt",
+                          "/prompt_cache_retention",
+                          "/safety_identifier",
+                          "/temperature",
+                          "/top_logprobs",
+                          "/top_p",
+                          "/truncation",
+                          "/user",
+                          "/type"
+                        ]
+                      }
+                    },
+                    {
+                      "id": "protocol-store",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/store",
+                        "value": false
+                      }
+                    },
+                    {
+                      "id": "protocol-stream",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/stream",
+                        "value": true
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "predicate": {
+              "op": "eq",
+              "path": "/compact",
+              "source": "context",
+              "value": true
+            },
+            "then": [
+              {
+                "id": "compact-history",
+                "type": "array_filter",
+                "params": {
+                  "mode": "remove_matches",
+                  "path": "/input",
+                  "predicate": {
+                    "op": "eq",
+                    "path": "/type",
+                    "value": "compaction_trigger",
+                    "source": "item"
+                  }
+                }
+              },
+              {
+                "id": "remember-compact",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "",
+                  "value": {
+                    "$expr": {
+                      "args": [
+                        "model",
+                        {
+                          "$ref": {
+                            "path": "/model",
+                            "source": "current"
+                          }
+                        },
+                        "input",
+                        {
+                          "$ref": {
+                            "path": "/input",
+                            "source": "current"
+                          }
+                        },
+                        "options",
+                        {
+                          "$ref": {
+                            "path": "",
+                            "source": "current"
+                          }
+                        }
+                      ],
+                      "op": "object"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "compact-instructions",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "conditions": [
+                      {
+                        "op": "exists",
+                        "path": "/options/instructions"
+                      },
+                      {
+                        "op": "ne",
+                        "path": "/options/instructions",
+                        "value": null
+                      }
+                    ],
+                    "op": "all"
+                  },
+                  "then": [
+                    {
+                      "id": "compact-value-instructions",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/instructions",
+                        "value": {
+                          "$ref": {
+                            "path": "/options/instructions",
+                            "source": "current"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "compact-prompt_cache_key",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "conditions": [
+                      {
+                        "op": "exists",
+                        "path": "/options/prompt_cache_key"
+                      },
+                      {
+                        "op": "ne",
+                        "path": "/options/prompt_cache_key",
+                        "value": null
+                      }
+                    ],
+                    "op": "all"
+                  },
+                  "then": [
+                    {
+                      "id": "compact-value-prompt_cache_key",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/prompt_cache_key",
+                        "value": {
+                          "$ref": {
+                            "path": "/options/prompt_cache_key",
+                            "source": "current"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "compact-prompt_cache_options",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "conditions": [
+                      {
+                        "op": "exists",
+                        "path": "/options/prompt_cache_options"
+                      },
+                      {
+                        "op": "ne",
+                        "path": "/options/prompt_cache_options",
+                        "value": null
+                      }
+                    ],
+                    "op": "all"
+                  },
+                  "then": [
+                    {
+                      "id": "compact-value-prompt_cache_options",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/prompt_cache_options",
+                        "value": {
+                          "$ref": {
+                            "path": "/options/prompt_cache_options",
+                            "source": "current"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "remove-options",
+                "type": "json_remove",
+                "params": {
+                  "paths": [
+                    "/options"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "stop_after_match": false,
+      "on_error": "abort",
+      "revision": 0,
+      "created_at": "",
+      "updated_at": "",
+      "source": "protocol"
+    },
+    {
+      "schema_version": 2,
+      "id": "protocol-upstream-headers",
+      "name": "协议：客户端元数据与请求头 / Client metadata and headers",
+      "description": "协议默认规则；每一步均可展开编辑。",
+      "enabled": true,
+      "priority": -1000,
+      "order_index": 0,
+      "phase": "upstream_headers",
+      "when": {
+        "op": "always"
+      },
+      "actions": [
+        {
+          "id": "empty-headers",
+          "type": "json_set",
+          "params": {
+            "create_parents": true,
+            "path": "",
+            "value": {}
+          }
+        },
+        {
+          "id": "user-agent",
+          "type": "json_set",
+          "params": {
+            "create_parents": true,
+            "path": "/user-agent",
+            "value": {
+              "$expr": {
+                "args": [
+                  {
+                    "$expr": {
+                      "args": [
+                        {
+                          "$ref": {
+                            "path": "/settings/user_agent",
+                            "source": "context"
+                          }
+                        },
+                        "pi (linux 6.1.0; x64)"
+                      ],
+                      "op": "coalesce"
+                    }
+                  }
+                ],
+                "op": "array"
+              }
+            }
+          }
+        },
+        {
+          "id": "explicit-session",
+          "type": "if",
+          "params": {
+            "else": [],
+            "predicate": {
+              "op": "test",
+              "value": {
+                "$expr": {
+                  "args": [
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/wire_session_id",
+                                    "source": "context"
+                                  }
+                                }
+                              ],
+                              "op": "type"
+                            }
+                          },
+                          "string"
+                        ],
+                        "op": "eq"
+                      }
+                    },
+                    {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$ref": {
+                              "path": "/wire_session_id",
+                              "source": "context"
+                            }
+                          },
+                          ""
+                        ],
+                        "op": "ne"
+                      }
+                    }
+                  ],
+                  "op": "and"
+                }
+              }
+            },
+            "then": [
+              {
+                "id": "request-id",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/x-client-request-id",
+                  "value": {
+                    "$expr": {
+                      "args": [
+                        {
+                          "$ref": {
+                            "path": "/wire_session_id",
+                            "source": "context"
+                          }
+                        }
+                      ],
+                      "op": "array"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "transport",
+          "type": "if",
+          "params": {
+            "else": [
+              {
+                "id": "websocket-headers",
+                "type": "sequence",
+                "params": {
+                  "steps": [
+                    {
+                      "id": "beta",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/openai-beta",
+                        "value": [
+                          "responses_websockets=2026-02-06"
+                        ]
+                      }
+                    },
+                    {
+                      "id": "originator",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/originator",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$ref": {
+                                        "path": "/settings/originator",
+                                        "source": "context"
+                                      }
+                                    },
+                                    "pi"
+                                  ],
+                                  "op": "coalesce"
+                                }
+                              }
+                            ],
+                            "op": "array"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "id": "account-header",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/credential_account_id",
+                                                "source": "context"
+                                              }
+                                            }
+                                          ],
+                                          "op": "type"
+                                        }
+                                      },
+                                      "string"
+                                    ],
+                                    "op": "eq"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/credential_account_id",
+                                          "source": "context"
+                                        }
+                                      },
+                                      ""
+                                    ],
+                                    "op": "ne"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "account-header-value",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/chatgpt-account-id",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$ref": {
+                                        "path": "/credential_account_id",
+                                        "source": "context"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "session",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/wire_session_id",
+                                                "source": "context"
+                                              }
+                                            }
+                                          ],
+                                          "op": "type"
+                                        }
+                                      },
+                                      "string"
+                                    ],
+                                    "op": "eq"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/wire_session_id",
+                                          "source": "context"
+                                        }
+                                      },
+                                      ""
+                                    ],
+                                    "op": "ne"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "session-value",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/session-id",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$ref": {
+                                        "path": "/wire_session_id",
+                                        "source": "context"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "predicate": {
+              "op": "eq",
+              "path": "/transport",
+              "source": "context",
+              "value": "sse"
+            },
+            "then": [
+              {
+                "id": "accept",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/accept",
+                  "value": [
+                    "application/json"
+                  ]
+                }
+              },
+              {
+                "id": "content-type",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/content-type",
+                  "value": [
+                    "application/json"
+                  ]
+                }
+              },
+              {
+                "id": "lang",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/x-stainless-lang",
+                  "value": [
+                    "js"
+                  ]
+                }
+              },
+              {
+                "id": "sdk-version",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/x-stainless-package-version",
+                  "value": [
+                    "7.19.0"
+                  ]
+                }
+              },
+              {
+                "id": "retry-count",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/x-stainless-retry-count",
+                  "value": [
+                    "0"
+                  ]
+                }
+              },
+              {
+                "id": "encoding",
+                "type": "json_set",
+                "params": {
+                  "create_parents": true,
+                  "path": "/accept-encoding",
+                  "value": [
+                    "gzip, deflate"
+                  ]
+                }
+              },
+              {
+                "id": "platform-os",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/settings/stainless_os",
+                                          "source": "context"
+                                        }
+                                      }
+                                    ],
+                                    "op": "type"
+                                  }
+                                },
+                                "string"
+                              ],
+                              "op": "eq"
+                            }
+                          },
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/settings/stainless_os",
+                                    "source": "context"
+                                  }
+                                },
+                                ""
+                              ],
+                              "op": "ne"
+                            }
+                          }
+                        ],
+                        "op": "and"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "platform-value-os",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/x-stainless-os",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$ref": {
+                                  "path": "/settings/stainless_os",
+                                  "source": "context"
+                                }
+                              }
+                            ],
+                            "op": "array"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "platform-arch",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/settings/stainless_arch",
+                                          "source": "context"
+                                        }
+                                      }
+                                    ],
+                                    "op": "type"
+                                  }
+                                },
+                                "string"
+                              ],
+                              "op": "eq"
+                            }
+                          },
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/settings/stainless_arch",
+                                    "source": "context"
+                                  }
+                                },
+                                ""
+                              ],
+                              "op": "ne"
+                            }
+                          }
+                        ],
+                        "op": "and"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "platform-value-arch",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/x-stainless-arch",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$ref": {
+                                  "path": "/settings/stainless_arch",
+                                  "source": "context"
+                                }
+                              }
+                            ],
+                            "op": "array"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "platform-runtime",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/settings/stainless_runtime",
+                                          "source": "context"
+                                        }
+                                      }
+                                    ],
+                                    "op": "type"
+                                  }
+                                },
+                                "string"
+                              ],
+                              "op": "eq"
+                            }
+                          },
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/settings/stainless_runtime",
+                                    "source": "context"
+                                  }
+                                },
+                                ""
+                              ],
+                              "op": "ne"
+                            }
+                          }
+                        ],
+                        "op": "and"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "platform-value-runtime",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/x-stainless-runtime",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$ref": {
+                                  "path": "/settings/stainless_runtime",
+                                  "source": "context"
+                                }
+                              }
+                            ],
+                            "op": "array"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "platform-runtime-version",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/settings/stainless_runtime_version",
+                                          "source": "context"
+                                        }
+                                      }
+                                    ],
+                                    "op": "type"
+                                  }
+                                },
+                                "string"
+                              ],
+                              "op": "eq"
+                            }
+                          },
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/settings/stainless_runtime_version",
+                                    "source": "context"
+                                  }
+                                },
+                                ""
+                              ],
+                              "op": "ne"
+                            }
+                          }
+                        ],
+                        "op": "and"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "platform-value-runtime-version",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/x-stainless-runtime-version",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$ref": {
+                                  "path": "/settings/stainless_runtime_version",
+                                  "source": "context"
+                                }
+                              }
+                            ],
+                            "op": "array"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "timeout",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$ref": {
+                              "path": "/settings/timeout_seconds",
+                              "source": "context"
+                            }
+                          },
+                          0
+                        ],
+                        "op": "gt"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "timeout-value",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/x-stainless-timeout",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$ref": {
+                                        "path": "/settings/timeout_seconds",
+                                        "source": "context"
+                                      }
+                                    }
+                                  ],
+                                  "op": "string"
+                                }
+                              }
+                            ],
+                            "op": "array"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "session",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$ref": {
+                                          "path": "/wire_session_id",
+                                          "source": "context"
+                                        }
+                                      }
+                                    ],
+                                    "op": "type"
+                                  }
+                                },
+                                "string"
+                              ],
+                              "op": "eq"
+                            }
+                          },
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$ref": {
+                                    "path": "/wire_session_id",
+                                    "source": "context"
+                                  }
+                                },
+                                ""
+                              ],
+                              "op": "ne"
+                            }
+                          }
+                        ],
+                        "op": "and"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "session-value",
+                      "type": "json_set",
+                      "params": {
+                        "create_parents": true,
+                        "path": "/session_id",
+                        "value": {
+                          "$expr": {
+                            "args": [
+                              {
+                                "$ref": {
+                                  "path": "/wire_session_id",
+                                  "source": "context"
+                                }
+                              }
+                            ],
+                            "op": "array"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "pi-client",
+                "type": "if",
+                "params": {
+                  "else": [],
+                  "predicate": {
+                    "op": "test",
+                    "value": {
+                      "$expr": {
+                        "args": [
+                          {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/user-agent",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      },
+                                      ""
+                                    ],
+                                    "op": "coalesce"
+                                  }
+                                },
+                                0,
+                                4
+                              ],
+                              "op": "slice"
+                            }
+                          },
+                          "pi ("
+                        ],
+                        "op": "eq"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "id": "copy-user-agent",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/user-agent",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/user-agent",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/user-agent",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/user-agent",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/user-agent",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/user-agent",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-user-agent",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/user-agent",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/user-agent",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-accept-language",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/accept-language",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/accept-language",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/accept-language",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/accept-language",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/accept-language",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/accept-language",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-accept-language",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/accept-language",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/accept-language",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-x-stainless-lang",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/x-stainless-lang",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/x-stainless-lang",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-lang",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-lang",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-lang",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-lang",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-x-stainless-lang",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/x-stainless-lang",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/x-stainless-lang",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-x-stainless-package-version",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/x-stainless-package-version",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/x-stainless-package-version",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-package-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-package-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-package-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-package-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-x-stainless-package-version",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/x-stainless-package-version",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/x-stainless-package-version",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-x-stainless-os",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/x-stainless-os",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/x-stainless-os",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-os",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-os",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-os",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-os",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-x-stainless-os",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/x-stainless-os",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/x-stainless-os",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-x-stainless-arch",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/x-stainless-arch",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/x-stainless-arch",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-arch",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-arch",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-arch",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-arch",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-x-stainless-arch",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/x-stainless-arch",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/x-stainless-arch",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-x-stainless-runtime",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/x-stainless-runtime",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/x-stainless-runtime",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-x-stainless-runtime",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/x-stainless-runtime",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/x-stainless-runtime",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-x-stainless-runtime-version",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/x-stainless-runtime-version",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/x-stainless-runtime-version",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-runtime-version",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-x-stainless-runtime-version",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/x-stainless-runtime-version",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/x-stainless-runtime-version",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "copy-x-stainless-timeout",
+                      "type": "if",
+                      "params": {
+                        "else": [],
+                        "predicate": {
+                          "op": "test",
+                          "value": {
+                            "$expr": {
+                              "args": [
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$ref": {
+                                                "path": "/client_headers/x-stainless-timeout",
+                                                "source": "context"
+                                              }
+                                            },
+                                            0
+                                          ],
+                                          "op": "index"
+                                        }
+                                      }
+                                    ],
+                                    "op": "exists"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$expr": {
+                                                      "args": [
+                                                        {
+                                                          "$ref": {
+                                                            "path": "/client_headers/x-stainless-timeout",
+                                                            "source": "context"
+                                                          }
+                                                        },
+                                                        0
+                                                      ],
+                                                      "op": "index"
+                                                    }
+                                                  }
+                                                ],
+                                                "op": "type"
+                                              }
+                                            },
+                                            "string"
+                                          ],
+                                          "op": "eq"
+                                        }
+                                      },
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-timeout",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            ""
+                                          ],
+                                          "op": "ne"
+                                        }
+                                      }
+                                    ],
+                                    "op": "and"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-timeout",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            }
+                                          ],
+                                          "op": "length"
+                                        }
+                                      },
+                                      512
+                                    ],
+                                    "op": "lte"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-timeout",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\r"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                },
+                                {
+                                  "$expr": {
+                                    "args": [
+                                      {
+                                        "$expr": {
+                                          "args": [
+                                            {
+                                              "$expr": {
+                                                "args": [
+                                                  {
+                                                    "$ref": {
+                                                      "path": "/client_headers/x-stainless-timeout",
+                                                      "source": "context"
+                                                    }
+                                                  },
+                                                  0
+                                                ],
+                                                "op": "index"
+                                              }
+                                            },
+                                            "\n"
+                                          ],
+                                          "op": "contains"
+                                        }
+                                      }
+                                    ],
+                                    "op": "not"
+                                  }
+                                }
+                              ],
+                              "op": "and"
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "id": "copy-value-x-stainless-timeout",
+                            "type": "json_set",
+                            "params": {
+                              "create_parents": true,
+                              "path": "/x-stainless-timeout",
+                              "value": {
+                                "$expr": {
+                                  "args": [
+                                    {
+                                      "$expr": {
+                                        "args": [
+                                          {
+                                            "$ref": {
+                                              "path": "/client_headers/x-stainless-timeout",
+                                              "source": "context"
+                                            }
+                                          },
+                                          0
+                                        ],
+                                        "op": "index"
+                                      }
+                                    }
+                                  ],
+                                  "op": "array"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "stop_after_match": false,
+      "on_error": "abort",
+      "revision": 0,
+      "created_at": "",
+      "updated_at": "",
+      "source": "protocol"
+    }
+  ],
+  "schema_version": 2
+}

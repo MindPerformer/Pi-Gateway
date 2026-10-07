@@ -1,11 +1,8 @@
 package rules
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
-
-	"pi-gateway/internal/middleware"
 )
 
 type terminal struct {
@@ -14,8 +11,6 @@ type terminal struct {
 	reason  string
 	dropped bool
 }
-
-var oldRegistry = middleware.Registry()
 
 func (a compiledAction) execute(s *evaluation) (terminal, error) {
 	if e := s.ctx.Err(); e != nil {
@@ -192,79 +187,6 @@ func onMissing(p map[string]any) error {
 		return fmt.Errorf("path does not exist")
 	}
 	return nil
-}
-func (a compiledAction) dropInput(s *evaluation) error {
-	p := a.raw.Params
-	v, exists, e := pointerGet(s.body, "/input")
-	if e != nil || !exists {
-		return e
-	}
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	types := p["types"].([]any)
-	kept := make([]any, 0, len(arr))
-	for _, item := range arr {
-		if e := s.ctx.Err(); e != nil {
-			return e
-		}
-		drop := false
-		if m, ok := object(item); ok {
-			typ, _ := m["type"].(string)
-			if typ != "" {
-				for _, t := range types {
-					if typ == t {
-						drop = true
-						break
-					}
-				}
-			}
-			if !drop && a.re != nil {
-				var text string
-				if p["target"] == "text" {
-					text = visibleText(item)
-				} else {
-					b, e := json.Marshal(item)
-					if e != nil {
-						return e
-					}
-					text = string(b)
-				}
-				drop = a.re.MatchString(text)
-			}
-		} else if str, ok := item.(string); ok && a.re != nil {
-			drop = a.re.MatchString(str)
-		}
-		if !drop {
-			kept = append(kept, item)
-		}
-	}
-	if len(kept) != len(arr) {
-		s.body, e = pointerSet(s.body, "/input", kept, false, false)
-	}
-	return e
-}
-func visibleText(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case []any:
-		parts := make([]string, 0, len(x))
-		for _, v := range x {
-			parts = append(parts, visibleText(v))
-		}
-		return strings.Join(parts, "\n")
-	}
-	if m, ok := object(v); ok {
-		if t, ok := m["text"].(string); ok {
-			return t
-		}
-		if c, ok := m["content"]; ok {
-			return visibleText(c)
-		}
-	}
-	return ""
 }
 func mergeObjects(target, incoming any, deep, appendArrays bool) {
 	for _, k := range keys(incoming) {

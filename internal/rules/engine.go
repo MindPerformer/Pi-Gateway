@@ -179,6 +179,7 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 		if !r.raw.Enabled {
 			continue
 		}
+		s.vars = map[string]any{}
 		s.ruleID, s.rulePath = r.raw.ID, r.path
 		start := time.Now()
 		matched, matchErr := r.when.matches(&s)
@@ -231,6 +232,9 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 		var outcome terminal
 		var errorPath string
 		for i, a := range r.actions {
+			if err := candidate.tick(); err != nil {
+				return finish(err)
+			}
 			actionStart := time.Now()
 			var before any
 			beforeModel := candidate.model

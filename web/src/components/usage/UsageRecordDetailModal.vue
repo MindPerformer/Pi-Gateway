@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { UsageRecord } from '../../api/types'
-import { metric, money } from '../../api/stats-format'
+import { metric } from '../../api/stats-format'
 import { formatDateTime, useI18n } from '../../i18n'
 import Modal from '../Modal.vue'
 import UsageLatencyCell from './UsageLatencyCell.vue'
+import UsageBillingDetails from './UsageBillingDetails.vue'
+import UsageRequestBadges from './UsageRequestBadges.vue'
 
 const props = defineProps<{ record: UsageRecord | null }>()
 const open = defineModel<boolean>({ default: false })
@@ -16,6 +18,7 @@ const detailItems = computed(() => {
 	const row = props.record
 	if (!row) return []
 	return [
+		{ label: locale.value === 'zh-CN' ? '请求类型' : 'Request type', value: row.request_kind === 'compaction' ? (locale.value === 'zh-CN' ? '压缩请求' : 'Compaction request') : row.request_kind === 'generation' ? (locale.value === 'zh-CN' ? '生成请求' : 'Generation request') : '—', mono: false },
 		{ label: labels.value.requestId, value: row.request_id || '—', mono: true },
 		{ label: labels.value.startedAt, value: formatDateTime(row.started_at), mono: true },
 		{ label: labels.value.apiKey, value: row.api_key_name || '—', mono: true },
@@ -32,15 +35,16 @@ const detailItems = computed(() => {
 	<Modal :open="open" :title="t('common.viewDetails')" width="max-w-3xl" @close="open = false">
 		<div v-if="record" class="detail-modal-content">
 			<p class="detail-subtitle">{{ labels.subtitle }}</p>
+			<UsageRequestBadges :record="record" />
 			<section class="detail-section">
 				<h3 class="detail-heading">{{ labels.overview }}</h3>
 				<dl class="detail-grid"><div v-for="item in detailItems" :key="item.label" class="detail-field"><dt>{{ item.label }}</dt><dd :class="item.mono ? 'mono' : ''">{{ item.value }}</dd></div></dl>
 			</section>
 			<section class="detail-section detail-two-columns">
 				<div><h3 class="detail-heading">{{ labels.tokens }}</h3><dl class="detail-panel token-detail-panel"><div v-for="item in [{ label: t('stats.inputTokens'), value: record.input_tokens }, { label: t('stats.outputTokens'), value: record.output_tokens }, { label: t('stats.cachedTokens'), value: record.cached_tokens }, { label: labels.reasoning, value: record.reasoning_tokens }, { label: t('stats.totalTokens'), value: record.total_tokens }]" :key="item.label" class="detail-row"><dt>{{ item.label }}</dt><dd>{{ metric(item.value) }}</dd></div></dl></div>
-				<div><h3 class="detail-heading">{{ labels.latency }}</h3><div class="detail-panel"><UsageLatencyCell :first-token="record.first_token_ms" :latency="record.latency_ms" /></div></div>
+				<div><h3 class="detail-heading">{{ labels.latency }}</h3><div class="detail-panel"><UsageLatencyCell :first-token="record.first_token_ms" :latency="record.latency_ms" :throughput="record.output_tps ?? null" /></div></div>
 			</section>
-			<section class="detail-section"><h3 class="detail-heading">{{ labels.billing }}</h3><div class="detail-panel billing-panel"><span>{{ labels.billing }}</span><strong>{{ money(record.cost_usd) }}</strong></div></section>
+			<section class="detail-section"><UsageBillingDetails :record="record" /></section>
 		</div>
 	</Modal>
 </template>

@@ -52,7 +52,7 @@ func DecodeHeaders(v any) (http.Header, error) {
 		out[key] = []string{}
 		for _, item := range values {
 			text, ok := item.(string)
-			if !ok || strings.ContainsAny(text, "\r\n\x00") {
+			if !ok || strings.ContainsFunc(text, func(c rune) bool { return c < 32 && c != '\t' || c == 127 }) {
 				return nil, fmt.Errorf("invalid value for header %q", name)
 			}
 			out[key] = append(out[key], text)

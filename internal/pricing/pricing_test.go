@@ -150,7 +150,7 @@ func TestLookupUnknownModel(t *testing.T) {
 			t.Errorf("unknown model %q matched even though override is only a multiplier", model)
 		}
 	}
-	for _, tc := range []struct{ model, tier string }{{"gpt-5", "invalid"}, {"o1", "flex"}, {"gpt-5.5-pro", "fast"}} {
+	for _, tc := range []struct{ model, tier string }{{"gpt-5", "invalid"}, {"o1", "flex"}, {"gpt-5-nano", "fast"}} {
 		if _, _, ok := Lookup(tc.model, tc.tier, nil); ok {
 			t.Errorf("unknown/unconfigured tier %s/%s matched", tc.model, tc.tier)
 		}
@@ -176,7 +176,8 @@ func TestCostSegmentsSubtractCachedAndCacheWrite(t *testing.T) {
 
 func TestCostLongContextSwitch(t *testing.T) {
 	r, _, _ := Lookup("gpt-5.4", "", nil)
-	requireCost(t, r, 272000, 0, 0, 0, 680000)
+	requireCost(t, r, 271999, 0, 0, 0, 679998)
+	requireCost(t, r, 272000, 0, 0, 0, 1360000)
 	requireCost(t, r, 272001, 0, 0, 0, 1360005)
 	// 阈值使用总 input，不是 uncached；所有分段一起使用长价。
 	r, _, _ = Lookup("gpt-6-astra", "fast", nil)
@@ -196,14 +197,14 @@ func TestCostMissingLongBandRetainsShortPrice(t *testing.T) {
 func TestCostUnpricedLongContext(t *testing.T) {
 	cases := []struct{ model, tier string }{
 		{"gpt-5.6-cyber", ""}, {"gpt-5.5-cyber", ""},
-		{"gpt-5.5-pro", "flex"}, {"gpt-5.5", "fast"}, {"gpt-5.4", "fast"},
+		{"gpt-5.5-pro", "flex"},
 	}
 	for _, tc := range cases {
 		r, _, ok := Lookup(tc.model, tc.tier, nil)
 		if !ok || r.LongContextThreshold != 272000 || r.LongContext != nil || !r.UnpricedLongContext {
 			t.Fatalf("%s/%s must preserve unavailable long band: %+v", tc.model, tc.tier, r)
 		}
-		if _, ok := Cost(r, 272000, 0, 0, 0); !ok {
+		if _, ok := Cost(r, 271999, 0, 0, 0); !ok {
 			t.Errorf("%s must price short context", tc.model)
 		}
 		if got, ok := Cost(r, 272001, 0, 0, 0); ok || got != 0 {

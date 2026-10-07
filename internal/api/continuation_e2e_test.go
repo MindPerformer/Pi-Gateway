@@ -493,8 +493,12 @@ func TestGatewayContinuationDisconnectAndShutdownDoNotCommitCreated(t *testing.T
 			defer memory.Close()
 			h := newGatewayContinuationHarness(t, b, memory)
 			if action == "max-age" {
-				// Leave room for the first turn's database/rule initialization;
-				// expiry must interrupt the created response, not its setup.
+				// Compile/install rules before the short connection timer starts.
+				// Under -race this cold setup can exceed the entire test lifetime;
+				// this case must expire an active created response, not its setup.
+				if _, _, err := h.dataPlane.ruleService.Load(t.Context()); err != nil {
+					t.Fatalf("initialize rules before connection expiry: %v", err)
+				}
 				h.dataPlane.wsMaxAge = time.Second
 			}
 			conn := dialGatewayContinuation(t, h, h.key)
@@ -507,6 +511,12 @@ func TestGatewayContinuationDisconnectAndShutdownDoNotCommitCreated(t *testing.T
 				t.Fatalf("created: %v %v", created, err)
 			}
 			turn := gatewayObservedTurn(t, b)
+			if action == "max-age" {
+				var expired map[string]any
+				if err := conn.ReadJSON(&expired); err != nil || gatewayErrorCode(t, expired) != "websocket_connection_limit_reached" {
+					t.Fatalf("maximum-age notice: %v %v", expired, err)
+				}
+			}
 			if action == "disconnect" {
 				_ = conn.Close()
 			}

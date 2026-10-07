@@ -102,7 +102,7 @@ async function importData() {
             <div class="import-fields">
                 <p class="management-hint">{{ m('importHint') }}</p>
                 <label>{{ m('format') }}<select v-model="format" class="input" :disabled="busy"><option value="auto">{{ m('auto') }}</option><option value="pi-gateway">{{ m('native') }}</option><option value="sub2api">{{ m('sub2api') }}</option><option value="cliproxyapi">{{ m('cliproxyapi') }}</option></select></label>
-                <label>{{ m('files') }}<input class="input" type="file" accept=".json,application/json" multiple :disabled="busy" @change="files = Array.from(($event.target as HTMLInputElement).files ?? [])" /></label>
+                <label>{{ m('files') }}<input class="input import-file" type="file" accept=".json,application/json" multiple :disabled="busy" @change="files = Array.from(($event.target as HTMLInputElement).files ?? [])" /></label>
                 <span class="management-hint">{{ m('importSize') }}</span>
                 <label>{{ m('paste') }}<textarea v-model="pasted" class="input import-json" :disabled="busy" spellcheck="false" placeholder='{"type":"pi-gateway-accounts","version":1,"accounts":[...]}' /></label>
                 <label>{{ m('target') }}<select v-model="targetId" class="input" :disabled="busy || format === 'pi-gateway'"><option value="">{{ m('autoMatch') }}</option><option v-for="account in accounts" :key="account.id" :value="String(account.id)">{{ account.name }} · {{ account.email || account.id }}</option></select></label>
@@ -127,6 +127,11 @@ async function importData() {
 .management-hint { color: var(--color-ink-muted); font-size: 12px; line-height: 1.7; }
 .import-fields { display: grid; gap: 14px; }
 .import-fields label { display: grid; gap: 6px; font-size: 12px; }
+.import-fields label > .input { width: 100%; min-width: 0; box-sizing: border-box; }
+.import-file { min-height: 40px; padding: 0 12px 0 0; line-height: 38px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.import-file::file-selector-button { height: 38px; margin: 0 12px 0 0; padding: 0 14px; border: 0; border-right: 1px solid var(--color-line); background: var(--color-surface-2); color: var(--color-ink); font: inherit; cursor: pointer; vertical-align: top; }
+.import-file:disabled::file-selector-button { cursor: default; }
+.import-file::file-selector-button:hover { background: var(--color-row-hover); }
 .import-json { min-height: 140px; resize: vertical; font-family: monospace; }
 .group-options { display: grid; gap: 12px; margin: 16px 0; }
 .group-options label { display: flex; align-items: center; gap: 8px; }

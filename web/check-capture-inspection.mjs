@@ -26,10 +26,75 @@ const {
     ruleTraces,
     ruleChangeSnapshot,
     lastRuleWriters,
+    groupCaptureRows,
+    groupRuleTraces,
 } = await import(
     moduleURL(compile('captureInspection').replace("from './captureDiff'", `from '${diffURL}'`)),
     )
 const headers = [{name: 'Content-Type', value: 'application/json'}]
+const repeated = Array.from({length: 2000}, (_, i) => ({
+    key: String(i),
+    frame: {
+        seq: i,
+        dir: 'in',
+        kind: 'sse_event',
+        type: 'response.output_text.delta',
+        data: {item_id: 'same', delta: String(i)}
+    }
+}))
+assert.equal(groupCaptureRows(repeated).length, 1)
+assert.equal(groupCaptureRows(repeated)[0].rows.length, 2000)
+assert.equal(groupCaptureRows([...repeated, {
+    key: 'done',
+    frame: {seq: 2000, dir: 'in', kind: 'sse_event', type: 'response.completed'}
+}, ...repeated]).length, 3)
+assert.equal(groupCaptureRows([repeated[0], {
+    key: 'other',
+    frame: {...repeated[1].frame, data: {item_id: 'different'}}
+}]).length, 2)
+const groupedRules = groupRuleTraces({
+    rule_traces: Array.from({length: 2000}, (_, i) => ({
+        rule_id: 'r',
+        phase: 'response_event',
+        action_id: 'a',
+        event_id: String(i),
+        event_type: 'response.output_text.delta',
+        status: 'changed',
+        changes: [{path: `/input/${i}/text`, operation: 'replace'}]
+    }))
+})
+assert.equal(groupedRules.length, 1)
+assert.equal(groupedRules[0].steps.length, 1)
+assert.equal(groupedRules[0].steps[0].count, 2000)
+const varyingChanges = groupRuleTraces({
+    rule_traces: [1, 20, 1000].map(count => ({
+        rule_id: 'r',
+        action_id: 'a',
+        status: 'changed',
+        changes: Array.from({length: count}, (_, i) => ({path: `/input/${i}/text`, operation: 'replace'}))
+    }))
+})
+assert.equal(varyingChanges[0].steps.length, 1)
+assert.equal(varyingChanges[0].steps[0].count, 3)
+assert.equal(varyingChanges[0].changes, 1021)
+assert.equal(groupRuleTraces({
+    rule_traces: [{rule_id: 'r', action_index: 0}, {
+        rule_id: 'r',
+        action_index: 1
+    }]
+})[0].steps.length, 2)
+assert.equal(groupCaptureRows([repeated[0], {key: 'out', frame: {...repeated[1].frame, dir: 'client_out'}}]).length, 2)
+assert.equal(groupCaptureRows([repeated[0], {key: 'ws', frame: {...repeated[1].frame, kind: 'ws_frame'}}]).length, 2)
+assert.equal(groupCaptureRows([{key: 'error-1', frame: {...repeated[0].frame, type: 'error'}}, {
+    key: 'error-2',
+    frame: {...repeated[1].frame, type: 'error'}
+}]).length, 2)
+assert.equal(groupRuleTraces({
+    rule_traces: [{rule_id: 'r', source_kind: 'gateway'}, {
+        rule_id: 'r',
+        source_kind: 'rule'
+    }]
+}).length, 2)
 const event = {type: 'response.completed', response: {id: 'response-local', output: []}}
 const frame = (seq, dir, kind, data, type = '') => ({seq, dir, kind, type, data, at_ms: seq, bytes: 20})
 const capture = (frames = [], extra = {}) => ({

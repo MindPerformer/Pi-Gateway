@@ -213,6 +213,7 @@ export async function checkRuleComponents(schema) {
     for (const cap of schema.actions) {
         const action = components.newAction(cap.id, schema)
         const mounted = mount(components.ActionEditor, [action], {schema, phase: cap.phases[0]})
+        for (const button of walk(mounted.host).filter(n => n.type === 'button' && text(n).startsWith('Options ·'))) await fire(button, 'onClick')
         for (const field of cap.fields) assert.ok(walk(mounted.host).some(n => n.props['data-rule-path'] === `/actions/0/params/${field.name}`), `${cap.id}.${field.name}: not rendered`)
         mounted.unmount();
         capabilitiesRendered++

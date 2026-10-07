@@ -1,6 +1,10 @@
 import {useI18n} from '../../i18n'
 
 const zh = {
+    repeatedEvents: '{type} · {count} 条',
+    traceSummary: '{steps} 种操作 · {count} 次执行 · {changes} 处修改',
+    traceSample: '同类执行已合并 · 共 {count} 次，以下为首条记录样例',
+    changeGroup: '{path} · {count} 处修改',
     timeline: '处理链路',
     request: '请求差异',
     headers: '响应头差异',
@@ -83,6 +87,10 @@ const zh = {
 } as const
 
 const en: Record<keyof typeof zh, string> = {
+    repeatedEvents: '{type} · {count} events',
+    traceSummary: '{steps} operation groups · {count} executions · {changes} changes',
+    traceSample: 'Similar executions grouped · {count} total; first recorded example below',
+    changeGroup: '{path} · {count} changes',
     timeline: 'Processing flow',
     request: 'Request diff',
     headers: 'Response header diff',

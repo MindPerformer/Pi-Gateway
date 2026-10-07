@@ -100,6 +100,36 @@ export async function checkRuleGraph(schema, backend) {
         draft.graph.selected = [draft.graph.nodes[0].id]
         assert.equal(m.draftDirty(draft), false, 'layout does not change persistence')
     }
+    // Black boxes preserve execution AST and map typed boundary ports back to real nodes.
+    const groupingRule = {
+        ...m.newRule(),
+        when: {op: 'always'},
+        actions: [0, 1, 2].map(i => ({id: `group-action-${i}`, type: 'json_set', params: {path: `/x${i}`, value: i}}))
+    }
+    const groupingGraph = m.ruleToGraph(groupingRule)
+    const groupActions = groupingGraph.nodes.filter(n => n.kind === 'action')
+    const boxed = m.groupGraphNodes(groupingGraph, groupActions.slice(0, 2).map(n => n.id), 'Cleanup')
+    const box = boxed.groups[0], ports = m.graphGroupPorts(boxed, box)
+    assert.equal(ports.filter(p => p.direction === 'input').length, 1)
+    assert.equal(ports.filter(p => p.direction === 'output').length, 1)
+    const outer = m.groupedWorkflow(boxed)
+    assert.equal(outer.nodes.filter(n => n.kind === 'action').length, 1)
+    assert.equal(m.groupedWorkflow(boxed, box.id).nodes.filter(n => n.kind === 'action').length, 2)
+    for (const edge of outer.edges) assert.ok(boxed.edges.some(real => {
+        const resolved = m.resolveGroupConnection(boxed, edge);
+        return real.source === resolved.source && real.target === resolved.target && real.sourceHandle === resolved.sourceHandle && real.targetHandle === resolved.targetHandle
+    }))
+    const port = ports[0]
+    box.ports = box.ports.filter(p => p.id !== port.id);
+    box.ports.push({...port, name: 'Request input'})
+    const restoredBox = m.applyGraphLayout(m.ruleToGraph(groupingRule), m.graphLayoutSnapshot(boxed))
+    assert.equal(restoredBox.groups[0].ports.find(p => p.id === port.id).name, 'Request input')
+    assert.deepEqual(m.graphToRule(restoredBox, schema), groupingRule)
+    const removedBox = m.removeGraphNodes(boxed, groupActions.slice(0, 2).map(n => n.id))
+    assert.equal(removedBox.groups.length, 0)
+    assert.doesNotThrow(() => m.graphLayoutSnapshot(removedBox))
+    assert.deepEqual(m.graphToRule({...boxed, groups: []}, schema), groupingRule)
+    console.log('PASS: group boundary inputs/outputs, internal view, external connection mapping, renamed-port layout restore, deletion cleanup and AST preservation')
     const graph = m.ruleToGraph(special)
     const actions = graph.nodes.filter(n => n.kind === 'action'), root = graph.nodes.find(n => n.kind === 'rule'),
         leaf = graph.nodes.find(n => n.kind === 'condition' && n.data.op === 'eq')
@@ -197,6 +227,7 @@ export async function checkRuleGraph(schema, backend) {
     children.forEach((edge, index) => edge.order = children.length - index)
     assert.deepEqual(m.graphToRule(order, schema).when.conditions, [...special.when.conditions].reverse())
     checkQuickAdd(m, schema)
+    checkNestedWorkflow(m, schema)
     // Layout persistence only contains stable AST/action identities and geometry, never rule/sample values.
     const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage'), stored = new Map()
     try {
@@ -311,6 +342,145 @@ export async function checkRuleGraph(schema, backend) {
     for (const source of schema.sources) label('source', source)
     for (const status of Object.keys(m.ruleLabels.status)) label('status', status)
     console.log(`PASS: ${fixtures.length} lossless graph roundtrips, graph invariants/orphans/cycles/ports/phases/order/IDs/dirty state, ${labels} catalog bilingual labels`)
+}
+
+function checkNestedWorkflow(m, schema) {
+    const set = id => ({id, type: 'json_set', params: {path: `/${id}`, value: false}})
+    const branch = {
+        id: 'branch', type: 'if', params: {
+            predicate: {op: 'always'},
+            then: [{id: 'each', type: 'for_each', params: {path: '/input', steps: [set('shared'), set('second')]}}],
+            else: [set('shared')],
+        },
+    }
+    const rule = {...m.newRule(), actions: [set('before'), branch, set('after')]}
+    const graph = m.ruleToGraph(rule), owner = graph.nodes.find(node => node.data.id === 'branch')
+    assert.deepEqual(m.graphToRule(graph, schema), rule)
+    assert.deepEqual(m.graphNodeValue(graph, owner.id), branch)
+    assert.equal(new Set(graph.nodes.map(node => m.graphLayoutNodeKey(node, graph))).size, graph.nodes.length, 'same action ID in separate branches has distinct layout identity')
+    const edited = m.replaceGraphNode(graph, owner.id, {
+        ...m.graphNodeValue(graph, owner.id),
+        params: {...branch.params, predicate: {op: 'exists', path: '/input'}}
+    })
+    assert.deepEqual(edited.nodes.map(node => node.id), graph.nodes.map(node => node.id), 'editing a parent retains every branch node identity')
+    assert.deepEqual(m.graphToRule(edited, schema).actions[1].params.then, branch.params.then)
+    const inserted = m.addGraphModule(graph, {
+        kind: 'action',
+        type: 'json_set',
+        targetId: owner.id,
+        sourceHandle: 'flow:else'
+    }, schema)
+    const insertion = inserted.nodes.find(node => node.id === inserted.selected[0])
+    assert.deepEqual(m.graphToRule(inserted, schema).actions[1].params.else.map(action => action.id), [insertion.data.id, 'shared'])
+    const thenTail = graph.nodes.find(node => node.data.id === 'each')
+    const appended = m.addGraphModule(graph, {kind: 'action', type: 'json_set', targetId: thenTail.id}, schema)
+    assert.equal(m.graphToRule(appended, schema).actions[1].params.then.length, 2)
+    assert.deepEqual(m.graphToRule(m.removeGraphNodes(graph, [owner.id]), schema).actions, [rule.actions[0], rule.actions[2]], 'deleting parent removes all bodies and closes the chain')
+    const second = graph.nodes.find(node => node.data.id === 'second')
+    const each = graph.nodes.find(node => node.data.id === 'each')
+    const copied = m.duplicateGraphNodes(graph, [owner.id, each.id])
+    assert.equal(copied.nodes.length - graph.nodes.length, m.graphNodeClosure(graph, [owner.id]).size, 'copy includes every child even when a child is also selected')
+    assert.ok(copied.selected.every(id => !graph.nodes.some(node => node.id === id)))
+    assert.equal(new Set(copied.nodes.filter(node => copied.selected.includes(node.id) && node.kind === 'action').map(node => node.data.id)).size, 5)
+    const copiedOwner = copied.nodes.find(node => copied.selected.includes(node.id) && node.data.type === 'if')
+    const after = graph.nodes.find(node => node.data.id === 'after')
+    const connected = m.connectGraph(copied, {
+        source: after.id,
+        target: copiedOwner.id,
+        sourceHandle: 'action-out',
+        targetHandle: 'action-in'
+    }, schema)
+    const copiedRule = m.graphToRule(connected, schema)
+    assert.equal(copiedRule.actions.length, 4)
+    assert.deepEqual(copiedRule.actions[3].params.then[0].params.steps.map(action => action.params), branch.params.then[0].params.steps.map(action => action.params))
+    const withoutHead = m.removeGraphNodes(graph, [graph.nodes.find(node => node.data.id === 'shared' && node.path.includes('/then/')).id])
+    assert.deepEqual(m.graphToRule(withoutHead, schema).actions[1].params.then[0].params.steps, [set('second')])
+    assert.equal(m.graphPathMap(withoutHead)[second.id], '/actions/1/params/then/0/params/steps/0')
+    for (const type of ['walk', 'scope']) {
+        const action = type === 'walk' ? {id: type, type, params: {path: '/input', steps: [branch]}} : {
+            id: type,
+            type,
+            params: {functions: {'a/b~c': [set('function')]}, steps: [branch]}
+        }
+        const nested = {...m.newRule(), actions: [action]}, built = m.ruleToGraph(nested)
+        assert.deepEqual(m.graphToRule(built, schema), nested)
+        assert.deepEqual(m.graphNodeValue(built, built.nodes.find(node => node.data.id === type).id), action)
+        assert.deepEqual(m.graphToRule(m.replaceGraphNode(built, built.nodes.find(node => node.data.id === type).id, action), schema), nested)
+    }
+    // Empty and nested legacy containers are transparent, including continuation after their last child.
+    const sequence = (id, steps) => ({id, type: 'sequence', params: {steps}})
+    const old = {
+        ...m.newRule(),
+        actions: [set('a'), sequence('outer', [sequence('empty', []), set('b'), sequence('inner', [set('c'), set('d')]), set('e')]), set('f')]
+    }
+    const built = m.ruleToGraph(old), visible = m.visibleWorkflow(built)
+    assert.ok(visible.nodes.every(node => node.data.type !== 'sequence'))
+    let current = built.nodes.find(node => node.kind === 'rule').id
+    const order = []
+    for (; ;) {
+        const edge = visible.edges.find(edge => edge.source === current && edge.sourceHandle === 'action-out')
+        if (!edge) break
+        current = edge.target
+        order.push(visible.nodes.find(node => node.id === current).data.id)
+        assert.ok(order.length < 10, 'transparent sequence must not loop')
+    }
+    assert.deepEqual(order, ['a', 'b', 'c', 'd', 'e', 'f'])
+    assert.deepEqual(m.graphToRule(built, schema), old, 'transparent presentation preserves legacy AST')
+    console.log('PASS: branch/body/function roundtrips; parent editing; flow insertion; copy/delete closure; transparent legacy sequence order')
+    const expression = {
+        $expr: {
+            op: 'concat',
+            args: ['prefix-', {$expr: {op: 'string', args: [{$ref: {source: 'vars', path: '/message/index'}}]}}]
+        }
+    }
+    const computedRule = {
+        ...m.newRule(),
+        actions: [{
+            id: 'each',
+            type: 'for_each',
+            params: {
+                path: '/input',
+                bind: 'message',
+                steps: [{id: 'set', type: 'json_set', params: {path: '/label', value: expression}}]
+            }
+        }]
+    }
+    const computedGraph = m.ruleToGraph(computedRule)
+    const calculation = computedGraph.nodes.find(node => node.kind === 'value' && node.data.mode === 'computed' && node.data.value.$expr.op === 'concat')
+    assert.deepEqual(m.graphToRule(computedGraph, schema), computedRule, 'expression graph preserves nested reference and argument order')
+    const valuePaths = m.graphPathMap(computedGraph)
+    assert.equal(valuePaths[calculation.id], '/actions/0/params/steps/0/params/value')
+    const first = computedGraph.nodes.find(node => node.kind === 'value' && node.data.mode === 'literal' && node.data.value === 'prefix-')
+    const changed = m.replaceGraphNode(computedGraph, first.id, {mode: 'literal', value: 'edited-'})
+    assert.equal(m.graphToRule(changed, schema).actions[0].params.steps[0].params.value.$expr.args[0], 'edited-')
+    assert.deepEqual(changed.nodes.map(node => node.id), computedGraph.nodes.map(node => node.id), 'operand editing retains graph identities')
+    const reordered = m.replaceGraphNode(computedGraph, calculation.id, {
+        mode: 'computed',
+        value: {$expr: {op: 'concat', args: [...expression.$expr.args].reverse()}}
+    })
+    assert.deepEqual(m.graphToRule(reordered, schema).actions[0].params.steps[0].params.value.$expr.args, [...expression.$expr.args].reverse())
+    const dataEdge = computedGraph.edges.find(edge => edge.source === first.id)
+    const disconnected = structuredClone(computedGraph);
+    disconnected.edges = disconnected.edges.filter(edge => edge.id !== dataEdge.id)
+    assert.ok(m.graphErrors(disconnected, schema).some(error => error.code === 'graph.missingValue'), 'disconnected inputs cannot silently reuse stale operands')
+    assert.throws(() => m.connectGraph(computedGraph, {
+        source: calculation.id,
+        target: calculation.id,
+        sourceHandle: 'value-out',
+        targetHandle: 'value:/value/$expr/args/0'
+    }, schema))
+    const computedCopy = m.duplicateGraphNodes(computedGraph, [computedGraph.nodes.find(node => node.data.id === 'set').id])
+    assert.equal(computedCopy.selected.length, 5, 'copy action includes complete expression dependency tree')
+    const escaped = {
+        ...m.newRule(),
+        actions: [{
+            id: 'literal',
+            type: 'json_set',
+            params: {path: '/literal', value: {$literal: {$expr: {op: 'unknown', args: [false, 0, null]}}}}
+        }]
+    }
+    assert.deepEqual(m.graphToRule(m.ruleToGraph(escaped), schema), escaped, 'escaped objects remain literal and never become expression nodes')
+    console.log('PASS: computed workflow inputs, nested references, operand edits/order, missing-source and cycle rejection, dependency copy, escaped literal preservation')
 }
 
 function checkQuickAdd(m, schema) {

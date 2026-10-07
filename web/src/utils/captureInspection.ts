@@ -13,6 +13,70 @@ export interface CaptureRow {
     after?: CaptureFrame
 }
 
+// Adjacent events share a group only within the same direction and stream item.
+export interface CaptureRowGroup {
+    key: string;
+    type: string;
+    rows: CaptureRow[]
+}
+
+export function groupCaptureRows(rows: CaptureRow[]): CaptureRowGroup[] {
+    const groups: CaptureRowGroup[] = []
+    const signature = (row: CaptureRow) => {
+        const frames = [row.frame, row.before, row.after].filter((frame): frame is CaptureFrame => Boolean(frame))
+        if (!frames.length || frames.some(frame => !['sse_event', 'ws_frame'].includes(frame.kind) || !frame.type || /(?:error|failed|completed|incomplete|response\.create)$/.test(frame.type))) return null
+        return JSON.stringify(frames.map(frame => {
+            const body = payloadObject(frameSnapshot(frame).value)
+            return [frame.dir, frame.kind, frame.type, body?.item_id, body?.output_index, body?.content_index]
+        }))
+    }
+    let previous: string | null = null
+    for (const row of rows) {
+        const key = signature(row), last = groups[groups.length - 1]
+        if (key && key === previous && last) last.rows.push(row)
+        else groups.push({key: row.key, type: (row.before ?? row.frame ?? row.after)?.type ?? '', rows: [row]})
+        previous = key
+    }
+    return groups
+}
+
+export function groupRuleTraces(capture: Capture) {
+    const groups: {
+        key: string;
+        trace: CaptureRuleTrace;
+        count: number;
+        changes: number;
+        steps: { key: string; trace: CaptureRuleTrace; count: number; index: number }[];
+        status: CaptureRuleTrace
+    }[] = []
+    const rules = new Map<string, typeof groups[number]>()
+    const steps = new Map<string, typeof groups[number]['steps'][number]>()
+    const severity = (trace: CaptureRuleTrace) => trace.error || ['error', 'blocked'].includes(trace.status ?? '') ? 4 : trace.rolled_back ? 3 : isRuleChange(trace) ? 2 : 1
+    for (const [index, trace] of ruleTraces(capture).entries()) {
+        const key = JSON.stringify([trace.rule_id ?? trace.rule_name, trace.phase, trace.revision, trace.rules_version, trace.source, trace.source_kind])
+        let group = rules.get(key)
+        if (!group) {
+            group = {key, trace, count: 0, changes: 0, steps: [], status: trace};
+            groups.push(group);
+            rules.set(key, group)
+        }
+        group.count++
+        if (isRuleChange(trace)) group.changes += (trace.changes?.length ?? 0) + (trace.omitted_changes ?? 0)
+        if (severity(trace) > severity(group.status)) group.status = trace
+        // The same action stays one summary even when each event changes a
+        // different number of fields. Its detail is explicitly a first sample.
+        const stepKey = JSON.stringify([key, trace.action_id, trace.action_index, trace.action_type, trace.status, trace.rolled_back, trace.error, trace.event_type])
+        const step = steps.get(stepKey)
+        if (step) step.count++
+        else {
+            const value = {key: stepKey, trace, count: 1, index};
+            group.steps.push(value);
+            steps.set(stepKey, value)
+        }
+    }
+    return groups
+}
+
 // Sources are selected only from stored execution traces, never inferred from a
 // final payload diff. Missing event IDs cannot attribute a particular response.
 export function ruleTraces(capture: Capture, phase?: string, eventID?: string): CaptureRuleTrace[] {

@@ -7,42 +7,41 @@ import { computed } from 'vue'
 
 const props = defineProps<{ usage: AccountUsageCost | null | undefined; windowCost?: QuotaWindowCost; compact?: boolean; cycleLabel?: string }>()
 const { t } = useI18n()
-function costLabel(usage: AccountUsageCost | null | undefined) {
-	return money(usage && (usage.priced_requests > 0 || usage.unpriced_requests === 0) ? usage.cost_micros / 1e6 : null)
+const recorded = computed(() => props.usage ? props.usage.cost_micros / 1e6 : null)
+function shortMoney(value: number | null | undefined) {
+ return money(value == null ? null : Number(value.toFixed(2)))
 }
 const reasons: Record<string, string> = {
-	missing_window: 'quota.costMissingWindow', missing_snapshot: 'quota.costMissingSnapshot',
-	query_failed: 'quota.costQueryFailed', expired: 'quota.costExpired', unpriced: 'quota.costUnpriced',
-	no_usage: 'quota.costNoUsage', no_consumption: 'quota.costNoConsumption',
+ missing_window: 'quota.costMissingWindow', missing_snapshot: 'quota.costMissingSnapshot',
+ query_failed: 'quota.costQueryFailed', expired: 'quota.costExpired',
+ no_consumption: 'quota.costNoConsumption',
 }
 const hint = computed(() => [
-	props.cycleLabel,
-	t('quota.costHint'),
-	props.windowCost ? t('quota.costEstimateHint') : '',
-	props.windowCost?.as_of ? t('quota.costAsOf', { time: formatTime(props.windowCost.as_of) }) : '',
-	props.windowCost?.unavailable_reason ? t(reasons[props.windowCost.unavailable_reason] ?? 'quota.costQueryFailed') : '',
+ props.cycleLabel,
+ `${t(props.windowCost ? 'quota.windowCost' : 'quota.recordedCost')}: ${money(recorded.value)}`,
+ props.windowCost ? `${t('quota.estimatedTotal')}: ${money(props.windowCost.estimated_total_usd)}` : '',
+ props.windowCost ? `${t('quota.estimatedRemaining')}: ${money(props.windowCost.estimated_remaining_usd)}` : '',
+ t('quota.costHint'),
+ props.windowCost ? t('quota.costEstimateHint') : '',
+ props.windowCost?.as_of ? t('quota.costAsOf', { time: formatTime(props.windowCost.as_of) }) : '',
+ props.windowCost?.unavailable_reason && reasons[props.windowCost.unavailable_reason] ? t(reasons[props.windowCost.unavailable_reason]!) : '',
+ props.usage?.unpriced_requests ? t('quota.unpricedRequests', { count: props.usage.unpriced_requests }) : '',
 ].filter(Boolean).join('\n'))
 </script>
 
 <template>
-	<div class="cost-summary" :class="{ compact }" :title="hint">
-		<span v-if="cycleLabel" class="cost-note">{{ cycleLabel }}</span>
-		<div class="cost-row"><span>{{ t(windowCost ? 'quota.windowCost' : 'quota.recordedCost') }}</span><strong>{{ costLabel(usage) }}</strong></div>
-		<template v-if="windowCost">
-			<div class="cost-row" :title="t('quota.costEstimateHint')"><span>{{ t('quota.estimatedTotal') }}</span><strong>{{ money(windowCost.estimated_total_usd) }}</strong></div>
-			<div v-if="!compact" class="cost-row" :title="t('quota.costEstimateHint')"><span>{{ t('quota.estimatedRemaining') }}</span><strong>{{ money(windowCost.estimated_remaining_usd) }}</strong></div>
-			<p v-if="!compact && windowCost.as_of" class="cost-note">{{ t('quota.costAsOf', { time: formatTime(windowCost.as_of) }) }}</p>
-			<p v-if="!compact && windowCost.unavailable_reason" class="cost-note">{{ t(reasons[windowCost.unavailable_reason] ?? 'quota.costQueryFailed') }}</p>
-		</template>
-		<p v-if="!compact && usage?.unpriced_requests" class="cost-note">{{ t('quota.unpricedRequests', { count: usage.unpriced_requests }) }}</p>
-		<span v-else-if="compact && usage?.unpriced_requests" class="cost-note" :title="t('quota.unpricedRequests', { count: usage.unpriced_requests })">{{ t('quota.partialCost') }}</span>
-	</div>
+ <span class="cost-summary" :class="{ compact }" :title="hint">
+  <span class="cost-used">{{ t('quota.usedShort') }} <strong>{{ shortMoney(recorded) }}</strong></span>
+  <span v-if="windowCost" class="cost-estimate">{{ t('quota.estimateShort') }} <strong>{{ shortMoney(windowCost.estimated_total_usd) }}</strong></span>
+ </span>
 </template>
 
 <style scoped>
-.cost-summary { display: grid; gap: 5px; font-size: 11px; color: var(--color-ink-muted); }
-.cost-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
-.cost-row strong { color: var(--color-success); font-family: var(--font-mono); font-weight: 650; overflow-wrap: anywhere; }
-.cost-note { margin: 0; font-size: 10px; color: var(--color-ink-faint); }
-.compact { font-size: 10px; margin-top: 7px; }
+.cost-summary { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 11px; line-height: 1.4; vertical-align: baseline; }
+.cost-summary > span { white-space: nowrap; }
+.cost-summary strong { font-family: var(--font-mono); font-weight: 650; }
+.cost-used { color: var(--color-success); }
+.cost-estimate { color: var(--color-info); }
+.compact { gap: 4px 8px; font-size: 10px; }
+.cost-summary:focus-visible { outline: 1px solid var(--color-accent); outline-offset: 3px; border-radius: 3px; }
 </style>

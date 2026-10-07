@@ -18,6 +18,22 @@ func TestExportCatalog(t *testing.T) {
 		t.Fatal(e)
 	}
 	fmt.Printf("RULES_CATALOG_JSON=%s\n", raw)
+	defaults, err := MigrateLegacy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults = append(defaults, DefaultProfile()...)
+	for i, definition := range defaults {
+		defaults[i], err = ExpandRule(definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err = json.Marshal(defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("RULES_DEFAULTS_JSON=%s\n", raw)
 }
 
 func TestCatalogCompleteAndExamplesExecutable(t *testing.T) {

@@ -3,7 +3,7 @@ import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch} from 'vue'
 import type {RulePhase, RuleSchema} from '../../api/rules'
 import {useI18n} from '../../i18n'
 import {editorId} from '../../utils/editorId'
-import {ruleLabel} from '../../utils/ruleLabels'
+import {ruleLabel, ruleOptionLabel} from '../../utils/ruleLabels'
 import {localHelp} from '../../utils/ruleSchema'
 
 const props = defineProps<{
@@ -11,12 +11,13 @@ const props = defineProps<{
     position: {x: number; y: number}
     schema: RuleSchema
     phase: RulePhase
-    kind?: 'condition' | 'action'
+    kind?: 'condition' | 'action' | 'value'
     wrap?: boolean
     context: string
 }>()
 const emit = defineEmits<{
-    select: [value: {kind: 'condition' | 'action'; type: string}]
+    select: [value: {kind: 'condition' | 'action' | 'value'; type: string}]
+    combination: [value: 'tool' | 'tools' | 'field' | 'model']
     close: []
 }>()
 const {t, locale} = useI18n()
@@ -29,14 +30,22 @@ const listID = `node-search-${editorId()}`
 const viewport = ref({width: 1024, height: 768})
 const entries = computed(() => {
     const text = query.value.trim().toLocaleLowerCase()
-    return ([['condition', props.schema.conditions], ['action', props.schema.actions]] as const).flatMap(([kind, capabilities]) => {
+    if (props.kind==='value') {
+        const computed = props.schema.value_expressions?.find(cap=>cap.id==='computed')?.fields.find(field=>field.name==='op')
+        return ['literal','reference',...(computed?.enum??[])].map(type=>({kind:'value' as const,type,label:['literal','reference'].includes(type)?t(`rules.canvas.value.${type}`):ruleOptionLabel(type,locale.value),help:computed?.enum_help?.[type]??t('rules.canvas.valueHelp')})).filter(entry=>!text||[entry.type,entry.label,entry.help].some(value=>value.toLowerCase().includes(text)))
+    }
+    const modules = ([['condition', props.schema.conditions], ['action', props.schema.actions]] as const).flatMap(([kind, capabilities]) => {
         if ((props.kind && props.kind !== kind) || (filter.value && filter.value !== kind)) return []
         return capabilities.filter(capability => {
+            if (kind === 'action' && capability.id === 'sequence') return false
             if (props.wrap && (kind !== 'condition' || !['all', 'any', 'not'].includes(capability.id))) return false
             if (kind === 'action' && capability.phases?.length && !capability.phases.includes(props.phase)) return false
             return !text || [capability.id, ruleLabel(kind, capability.id, 'zh-CN'), ruleLabel(kind, capability.id, 'en'), localHelp(capability.description, 'zh-CN'), localHelp(capability.description, 'en')].some(value => value.toLocaleLowerCase().includes(text))
         }).map(capability => ({kind, type: capability.id, label: ruleLabel(kind, capability.id, locale.value), help: localHelp(capability.description, locale.value)}))
     })
+    const combinations = !props.wrap && props.kind !== 'condition' && filter.value !== 'condition'
+        ? ([['tool', 'removeTool'], ['tools', 'removeAllTools'], ['field', 'removeField'], ['model', 'setModel']] as const).filter(([, label]) => !text || ['zh-CN', 'en'].some(lang => (lang === 'zh-CN' ? {removeTool:'按名称移除工具',removeAllTools:'移除全部工具',removeField:'移除字段',setModel:'设置模型'} : {removeTool:'Remove tool by name',removeAllTools:'Remove all tools',removeField:'Remove a field',setModel:'Set model'})[label].toLowerCase().includes(text))).map(([type, label]) => ({kind: 'action' as const, type, combination: type, label: t(`rules.canvas.${label}`), help: t('rules.canvas.combinationHint')})) : []
+    return [...combinations, ...modules]
 })
 const positionStyle = computed(() => {
     const width = Math.min(360, viewport.value.width - 24)
@@ -49,7 +58,8 @@ function outside(event: PointerEvent) {
 }
 function choose(index: number) {
     const entry = entries.value[index]
-    if (entry) emit('select', {kind: entry.kind, type: entry.type})
+    if (entry && 'combination' in entry) emit('combination', entry.combination as 'tool' | 'tools' | 'field' | 'model')
+    else if (entry) emit('select', {kind: entry.kind, type: entry.type})
 }
 function keydown(event: KeyboardEvent) {
     if (event.isComposing) return

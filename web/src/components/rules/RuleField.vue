@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { RuleCondition, RuleField, RuleFieldError, RuleSchema, ValueExpr } from '../../api/rules'
 import { useI18n } from '../../i18n'
 import { defaultForField, localHelp } from '../../utils/ruleSchema'
@@ -11,7 +11,7 @@ import ParameterHelp from './ParameterHelp.vue'
 import ActionEditor from './ActionEditor.vue'
 import ConditionEditor from './ConditionEditor.vue'
 
-const props = defineProps<{ field: RuleField; modelValue: unknown; path: string; schema: RuleSchema; errors?: RuleFieldError[]; sample?: unknown; phase?: string; compact?: boolean; idPrefix?: string }>()
+const props = defineProps<{ field: RuleField; modelValue: unknown; path: string; schema: RuleSchema; errors?: RuleFieldError[]; sample?: unknown; phase?: string; compact?: boolean; idPrefix?: string; itemContext?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>()
 const { t, locale } = useI18n()
 const set = (value: unknown) => emit('update:modelValue', value)
@@ -23,6 +23,22 @@ const fieldLabel = computed(() => ruleFieldLabel(props.field, locale.value))
 const selectedHelp = computed(() => props.field.enum_help?.[String(fieldValue.value)])
 // Missing optional fields stay missing until a control is actually changed.
 const fieldValue = computed(() => props.compact && props.modelValue === undefined ? defaultForField(props.field) : props.modelValue)
+const foldOverride = ref<boolean | null>(null)
+const initialLong = ref(isLong(props.modelValue))
+function isLong(value: unknown) {
+  if (typeof value === 'string') return value.length > 180 || value.split('\n').length > 3
+  if (Array.isArray(value) && value.length > 3) return true
+  if (value && typeof value === 'object') return JSON.stringify(value).length > 180
+  return false
+}
+const foldable = computed(() => props.compact && !props.field.enum?.length && !['number', 'boolean'].includes(props.field.type))
+const folded = computed(() => foldable.value && (foldOverride.value ?? initialLong.value) && !fieldErrors.value.length)
+const preview = computed(() => {
+  const value = props.modelValue
+  if (value === undefined) return t('rules.default')
+  const text = typeof value === 'string' ? value : JSON.stringify(value)
+  return (text ?? '').replace(/\s+/g, ' ').slice(0, 96)
+})
 const items = computed<unknown[]>(() => Array.isArray(fieldValue.value) ? fieldValue.value : [])
 const visibleItems = items
 const samplePaths = computed(() => props.sample !== undefined && props.field.type === 'string' && ['path','source_path','target_path'].includes(props.field.name) ? samplePathOptions(props.sample) : [])
@@ -47,11 +63,12 @@ function numberInput(event: Event) {
 }
 </script>
 <template>
-  <div class="space-y-1.5" :class="{'rule-field-compact': compact, 'rule-field-wide': ['value','values','strings','condition','condition_array','action_array'].includes(field.type)}" :data-rule-path="path" :data-renderer="field.type">
+  <div class="space-y-1.5" :class="{'rule-field-compact': compact, 'rule-field-wide': ['value','values','strings','condition','condition_array','action_array'].includes(field.type), 'is-folded': folded}" :data-rule-path="path" :data-renderer="field.type">
     <div class="rule-field-heading flex flex-wrap items-center gap-2">
       <label :id="`${controlId}-label`" :for="controlId" class="text-[12px] font-medium" :title="`${localHelp(field.description, locale)}\n${(field.examples ?? []).map(v=>JSON.stringify(v)).join('\n')}`">{{ fieldLabel }}</label><ParameterHelp :field="field" />
       <span v-if="!compact" class="text-[10px] text-[color:var(--color-ink-faint)]">{{ field.required ? t('rules.required') : t('rules.optional') }} · {{ ruleOptionLabel(field.type, locale) }}</span>
       <button v-if="!field.required && !field.readonly" class="rule-field-presence btn btn-ghost !px-1.5 !py-0.5 text-[10px]" type="button" @click="set(modelValue === undefined ? defaultForField(field) : undefined)">{{ compact ? modelValue === undefined ? t('rules.default') : t('rules.unsetShort') : modelValue === undefined ? t('rules.include') : t('rules.unset') }}</button>
+      <button v-if="foldable" type="button" class="rule-field-fold" :aria-expanded="!folded" :aria-label="t(folded ? 'rules.canvas.expandField' : 'rules.canvas.collapseField', {name: fieldLabel})" @click="foldOverride = !folded">{{ folded ? '▸' : '▾' }}</button>
       <details v-if="!compact" class="text-[11px] text-[color:var(--color-ink-muted)]">
         <summary class="cursor-pointer">{{ t('rules.fieldHelp') }}</summary>
         <div class="my-2 space-y-1 whitespace-normal rounded border border-[color:var(--color-line)] p-2">
@@ -64,7 +81,8 @@ function numberInput(event: Event) {
         </div>
       </details>
     </div>
-    <div class="rule-field-control">
+    <button v-if="folded" type="button" class="rule-field-preview" :title="hoverHelp" :aria-label="t('rules.canvas.expandField', {name: fieldLabel})" @click="foldOverride = false">{{ preview || '…' }}</button>
+    <div :style="folded ? {display: 'none'} : undefined" class="rule-field-control">
     <div v-if="samplePaths.length" data-testid="sample-field-picker" class="space-y-1">
       <label v-if="!compact" :for="samplePathId" class="text-[11px]">{{ t('rules.canvas.samplePaths') }} · {{ ruleLabel('field',field.name,locale) }}</label>
       <select :id="samplePathId" :aria-label="`${t('rules.canvas.samplePaths')} · ${ruleLabel('field', field.name, locale)}`" :data-testid="`sample-path-select-${field.name}`" class="input" value="__sample_path_placeholder__" @change="selectSamplePath">
@@ -80,14 +98,14 @@ function numberInput(event: Event) {
       <input v-else-if="field.type === 'number'" :id="controlId" :title="hoverHelp" class="input" type="number" step="1" :required="!compact || modelValue !== undefined || field.required" :readonly="field.readonly" :min="field.min" :max="field.max" :value="fieldValue ?? 0" :aria-invalid="!!fieldErrors.length" @input="numberInput" />
       <input v-else-if="field.type === 'boolean'" :id="controlId" :title="hoverHelp" type="checkbox" :disabled="field.readonly" :checked="!!fieldValue" @change="set(($event.target as HTMLInputElement).checked)" />
       <ValueEditor v-else-if="field.type === 'value'" :model-value="(fieldValue ?? null) as ValueExpr" :schema="schema" :compact="compact" :id-prefix="controlId" @update:model-value="set" />
-      <ConditionEditor v-else-if="field.type === 'condition'" :model-value="(fieldValue ?? {op:'always'}) as RuleCondition" :schema="schema" :path="path" :errors="errors" :sample="sample" :compact="compact" :id-prefix="idPrefix" @update:model-value="set" />
+      <ConditionEditor v-else-if="field.type === 'condition'" :model-value="(fieldValue ?? {op:'always'}) as RuleCondition" :schema="schema" :path="path" :errors="errors" :sample="sample" :compact="compact" :id-prefix="idPrefix" :item-context="itemContext" @update:model-value="set" />
       <div v-else-if="field.type === 'strings' || field.type === 'values'" :id="controlId" class="space-y-2" role="group" :aria-labelledby="`${controlId}-label`">
-        <div v-for="(item, index) in visibleItems" :key="index" class="flex items-start gap-1">
+        <div v-for="(item, index) in visibleItems" :key="index" class="rule-list-row">
           <input v-if="field.type === 'strings'" :id="idPrefix ? `${controlId}-${index}` : undefined" class="input min-w-0 flex-1" :value="item" :aria-label="`${ruleLabel('field', field.name, locale)} ${index + 1}`" @input="textInput($event, index)" @compositionend="compact && textInput($event, index)" />
           <ValueEditor v-else class="min-w-0 flex-1" :model-value="item as ValueExpr" :schema="schema" :compact="compact" :id-prefix="`${controlId}-${index}`" @update:model-value="updateItem(index, $event)" />
-          <button type="button" class="btn btn-ghost !px-2" :disabled="index === 0" :title="t('rules.up')" @click="set(moveItem(items, index, -1))">↑</button>
+          <div class="rule-list-buttons"><button type="button" class="btn btn-ghost !px-2" :disabled="index === 0" :title="t('rules.up')" @click="set(moveItem(items, index, -1))">↑</button>
           <button type="button" class="btn btn-ghost !px-2" :disabled="index === items.length - 1" :title="t('rules.down')" @click="set(moveItem(items, index, 1))">↓</button>
-          <button type="button" class="btn btn-ghost !px-2" :title="t('rules.remove')" @click="set(items.filter((_, i) => i !== index))">×</button>
+          <button type="button" class="btn btn-ghost !px-2" :title="t('rules.remove')" @click="set(items.filter((_, i) => i !== index))">×</button></div>
         </div>
         <button type="button" class="btn btn-ghost" @click="set([...items, field.type === 'strings' ? '' : null])">{{ t('rules.addItem') }}</button>
       </div>
@@ -110,18 +128,29 @@ function numberInput(event: Event) {
   </div>
 </template>
 <style scoped>
-.rule-field-compact { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); align-items: start; column-gap: 10px; row-gap: 4px; min-width: 0; padding: 5px 0; border-bottom: 1px solid var(--color-line); }
+.rule-field-compact { display: grid; grid-template-columns: 118px minmax(0, 1fr); align-items: center; column-gap: 10px; row-gap: 4px; min-width: 0; padding: 5px 0; border-bottom: 1px solid var(--color-line); writing-mode: horizontal-tb; }
 .rule-field-compact:last-child { border-bottom: 0; }
 .rule-field-compact > * { min-width: 0; margin-top: 0 !important; }
 .rule-field-heading { gap: 4px; align-items: center; }
-.rule-field-compact .rule-field-heading > label { font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
-.rule-field-compact .rule-field-presence { padding: 1px 4px !important; font-size: 9px; min-height: 18px; color: var(--color-ink-faint); }
+.rule-field-compact .rule-field-heading { flex-wrap: nowrap; }
+.rule-field-compact .rule-field-heading > label { flex: 1; min-width: 0; font-size: 11px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rule-field-compact .rule-field-heading :deep(.parameter-help) { flex-shrink: 0; }
+.rule-field-compact .rule-field-presence { flex-shrink: 0; padding: 1px 4px !important; font-size: 9px; min-height: 18px; color: var(--color-ink-faint); white-space: nowrap; }
+.rule-field-compact .rule-field-presence { display: none; }
+.rule-field-compact .rule-field-heading:hover .rule-field-presence, .rule-field-compact .rule-field-heading:focus-within .rule-field-presence { display: inline-flex; }
 .rule-field-compact.rule-field-wide { grid-template-columns: minmax(0, 1fr); }
-.rule-field-wide .rule-field-heading { justify-content: flex-start; }
-.rule-field-compact :deep(.input) { width: 100%; min-width: 0; min-height: 28px; padding: 4px 8px; font-size: 11px; line-height: 18px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-surface-2); box-shadow: none; }
-.rule-field-compact :deep(textarea) { resize: vertical; max-height: 160px; }
-.rule-field-compact :deep(select) { max-width: 100%; }
+.rule-field-compact.rule-field-wide .rule-field-heading > label { flex: 0 1 auto; }
+.rule-field-control { min-width: 0; container-type: inline-size; }
+.rule-list-row {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:6px}
+.rule-list-buttons {display:flex;gap:2px;padding-top:2px}
+.rule-list-buttons .btn {width:26px;height:26px;min-width:26px!important;padding:0!important;display:flex;align-items:center;justify-content:center}
+.rule-field-fold { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 22px; border: 0; border-radius: 4px; color: var(--color-ink-muted); background: var(--color-surface-2); cursor: pointer; }
+.rule-field-preview { display: block; width: 100%; min-height: 28px; text-align: left; padding: 4px 8px; border: 1px solid var(--color-line); border-radius: 5px; background: var(--color-surface-2); color: var(--color-ink-muted); font-family: var(--font-mono); font-size: 11px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.rule-field-compact :deep(.input) { width: 100%; min-width: 0; min-height: 30px; padding: 5px 8px; font-size: 11px; line-height: 18px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-surface-2); box-shadow: none; }
+.rule-field-compact :deep(textarea) { resize: vertical; max-height: 200px; }
+.rule-field-compact :deep(select) { max-width: 100%; text-overflow: ellipsis; }
 .rule-field-compact :deep(input[type='checkbox']) { display: block; margin: 6px 0 6px auto; width: 16px; height: 16px; }
-.rule-field-compact :deep(.btn) { font-size: 10px; min-width: 0; min-height: 24px; padding: 3px 6px; }
+.rule-field-compact :deep(.btn) { font-size: 10px; min-width: 0; min-height: 24px; padding: 3px 6px; white-space: nowrap; }
 .rule-field-compact [role='alert'] { grid-column: 1 / -1; overflow-wrap: anywhere; font-size: 10px; }
+@container (max-width: 290px) { .rule-field-compact { grid-template-columns: minmax(0, 1fr); } .rule-field-compact .rule-field-heading > label { flex: 0 1 auto; } }
 </style>

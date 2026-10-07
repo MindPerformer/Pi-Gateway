@@ -72,8 +72,8 @@ func TestQuotaCostUnavailableAndZero(t *testing.T) {
 	}{
 		{"zero cost", "", 25, ptr(0), true, asOf, asOf, start + 18_000_000, 18000},
 		{"exhausted", "", 100, ptr(10_000_000), true, asOf, asOf, start + 18_000_000, 18000},
-		{"unknown price", "unpriced", 25, nil, true, asOf, asOf, start + 18_000_000, 18000},
-		{"no history", "no_usage", 25, nil, false, asOf, asOf, start + 18_000_000, 18000},
+		{"unknown price", "", 25, nil, true, asOf, asOf, start + 18_000_000, 18000},
+		{"no history", "", 25, nil, false, asOf, asOf, start + 18_000_000, 18000},
 		{"zero percent", "no_consumption", 0, ptr(10), true, asOf, asOf, start + 18_000_000, 18000},
 		{"invalid percent", "no_consumption", math.NaN(), ptr(10), true, asOf, asOf, start + 18_000_000, 18000},
 		{"expired", "expired", 25, ptr(10), true, asOf, start + 18_000_000, start + 18_000_000, 18000},
@@ -96,13 +96,26 @@ func TestQuotaCostUnavailableAndZero(t *testing.T) {
 			if tc.want != "" && (got.EstimatedTotalUSD != nil || got.EstimatedRemainingUSD != nil) {
 				t.Fatalf("unexpected estimate: %+v", got)
 			}
-			if tc.name == "zero cost" && (got.EstimatedTotalUSD == nil || *got.EstimatedTotalUSD != 0) {
+			if (tc.name == "zero cost" || tc.name == "unknown price" || tc.name == "no history") && (got.EstimatedTotalUSD == nil || *got.EstimatedTotalUSD != 0) {
 				t.Fatal("measured zero must remain zero")
 			}
 			if tc.name == "exhausted" && (got.EstimatedRemainingUSD == nil || *got.EstimatedRemainingUSD != 0) {
 				t.Fatal("exhausted quota must have zero remaining value")
 			}
 		})
+	}
+}
+
+func TestQuotaCostProjectsPartialUsage(t *testing.T) {
+	db := newAdminTestStore(t)
+	const start int64 = 1_800_000_000_000
+	const asOf = start + 3_600_000
+	seedAccountCost(t, db, 1, start, start+100, ptr(10_000_000), "succeeded", "sent")
+	seedAccountCost(t, db, 1, start+200, start+300, nil, "succeeded", "sent")
+	s := &Server{store: db}
+	got := s.buildQuotaWindowCost(t.Context(), 1, quota.Window{LimitID: "codex", Role: "secondary", UsedPercent: 25, ResetAt: start + 604800000, WindowSeconds: 604800}, asOf, asOf+1000)
+	if got.UnavailableReason != "" || got.Usage.UnpricedRequests != 1 || got.EstimatedTotalUSD == nil || *got.EstimatedTotalUSD != 40 || got.EstimatedRemainingUSD == nil || *got.EstimatedRemainingUSD != 30 {
+		t.Fatalf("partial usage must still project known cost: %+v", got)
 	}
 }
 

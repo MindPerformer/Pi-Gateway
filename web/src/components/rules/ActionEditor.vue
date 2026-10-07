@@ -1,22 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ruleLabel, ruleLabels } from '../../utils/ruleLabels'
-import { currentSamplePathField } from '../../utils/samplePaths'
 import type { RuleAction, RuleFieldError, RuleSchema } from '../../api/rules'
 import { useI18n } from '../../i18n'
 import { localHelp, newAction } from '../../utils/ruleSchema'
 import { moveItem } from '../../utils/ruleEditor'
-import RuleField from './RuleField.vue'
+import RuleNodeFields from './RuleNodeFields.vue'
 const props = withDefaults(defineProps<{ modelValue: RuleAction[]; schema: RuleSchema; phase: string; errors?: RuleFieldError[]; compact?: boolean; pathOffset?: number; sample?: unknown; basePath?: string; idPrefix?: string }>(), {pathOffset: 0})
 const emit = defineEmits<{ 'update:modelValue': [value: RuleAction[]] }>()
 const { t, locale } = useI18n()
 const actionPath=(index:number)=>`${props.basePath ?? '/actions'}/${index+props.pathOffset}`
-const available = computed(() => props.schema.actions.filter(c => !c.phases?.length || c.phases.includes(props.phase as never)))
-const visibleFields = (type: string) => props.schema.actions.find(c => c.id === type)?.fields ?? []
+const available = computed(() => props.schema.actions.filter(c => c.id !== 'sequence' && (!c.phases?.length || c.phases.includes(props.phase as never))))
 function set(value: RuleAction[]) { emit('update:modelValue', value) }
 function update(index: number, key: string, value: unknown) { set(props.modelValue.map((a, i) => i === index ? {...a, [key]: value} as RuleAction : a)) }
 function changeType(index: number, type: string) { set(props.modelValue.map((a, i) => i === index ? {...newAction(type, props.schema), id: a.id} : a)) }
-function updateParam(index: number, name: string, value: unknown) { const action = props.modelValue[index]!; const params = {...action.params}; if (value === undefined) delete params[name]; else params[name] = value; update(index, 'params', params) }
 function add(type: string) { set([...props.modelValue, newAction(type, props.schema)]) }
 function remove(index: number) { set(props.modelValue.filter((_, i) => i !== index)) }
 </script>
@@ -30,11 +27,11 @@ function remove(index: number) { set(props.modelValue.filter((_, i) => i !== ind
         <button class="btn btn-ghost !px-2" type="button" :disabled="index === modelValue.length - 1" :title="t('rules.down')" @click="set(moveItem(modelValue, index, 1))">↓</button>
         <button class="btn btn-ghost !px-2" type="button" :title="t('rules.remove')" @click="remove(index)">×</button>
       </div>
-      <label class="mt-2 block text-[11px]">{{ t('rules.actionID') }}<input class="input mt-1 font-mono" :value="action.id" required @change="update(index, 'id', ($event.target as HTMLInputElement).value)" /></label>
+      <details class="mt-2 text-[11px]"><summary>{{ t('rules.canvas.details') }}</summary><label class="mt-2 block">{{ t('rules.actionID') }}<input class="input mt-1 font-mono" :value="action.id" required @change="update(index, 'id', ($event.target as HTMLInputElement).value)" /></label></details>
       <p v-for="error in (errors ?? []).filter(e => e.path === `${actionPath(index)}/id` || e.path === `${actionPath(index)}/type` || e.path === `${actionPath(index)}/params`)" :key="error.path" role="alert" class="text-xs text-red-500">{{ error.path }}: {{ error.message }}</p>
       <p class="mt-2 text-[11px] text-[color:var(--color-ink-muted)]">{{ localHelp(schema.actions.find(c => c.id === action.type)?.description, locale) }}</p>
       <div class="rule-action-fields">
-        <RuleField v-for="field in visibleFields(action.type)" :key="field.name" :compact="compact" :id-prefix="idPrefix" :field="field" :phase="phase" :model-value="action.params[field.name]" :schema="schema" :path="`${actionPath(index)}/params/${field.name}`" :errors="errors" :sample="field.type === 'condition' || currentSamplePathField(field, field.name === 'target_path' ? 'current' : action.params.source) ? sample : undefined" @update:model-value="updateParam(index, field.name, $event)" />
+        <RuleNodeFields :node-id="`${idPrefix ?? 'step'}-${action.id}`" kind="action" :model-value="action" :schema="schema" :phase="phase as import('../../api/rules').RulePhase" :path="actionPath(index)" :errors="errors" :sample="sample" @update:model-value="update(index, 'params', ($event as RuleAction).params)" />
       </div>
     </div>
     <div class="flex flex-wrap gap-2">

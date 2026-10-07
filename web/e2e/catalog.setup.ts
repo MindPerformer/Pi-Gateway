@@ -22,5 +22,10 @@ export default function setup() {
     const path = join(directory, 'catalog.json')
     writeFileSync(path, JSON.stringify(catalog))
     process.env.RULES_E2E_CATALOG = path
+    const defaultsLine = exported.stdout.split(/\r?\n/).find(value => value.startsWith('RULES_DEFAULTS_JSON='))
+    if (!defaultsLine) throw new Error('TestExportCatalog did not emit RULES_DEFAULTS_JSON')
+    const defaultsPath = join(directory, 'defaults.json')
+    writeFileSync(defaultsPath, JSON.stringify(JSON.parse(defaultsLine.slice('RULES_DEFAULTS_JSON='.length))))
+    process.env.RULES_E2E_DEFAULTS = defaultsPath
     return () => rmSync(directory, {recursive: true, force: true})
 }

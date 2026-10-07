@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { copyText } from "../../utils/clipboard"
-import {computed, ref, shallowRef, watch, onBeforeUnmount} from 'vue'
+import {computed, ref, shallowRef, toRaw, watch, onBeforeUnmount} from 'vue'
 import {api, ApiError} from '../../api/client'
 import type {Rule, RuleAction, RuleCondition, RuleFieldError, RuleSchema} from '../../api/rules'
 import type {RuleCanvasDiagnostics, RuleDebugFocus} from '../../api/ruleSimulation'
@@ -24,7 +24,7 @@ const toast = useToastStore()
 const form = ref<HTMLFormElement>()
 const canvas = ref<InstanceType<typeof RuleCanvas>>()
 const rule = computed(() => props.modelValue.rule)
-const graph = computed(() => props.modelValue.graph ?? ruleToGraph(rule.value))
+const graph = computed(() => toRaw(props.modelValue.graph) ?? ruleToGraph(rule.value))
 const paths = computed(() => graphPathMap(graph.value))
 const graphProblems = computed(() => graphErrors(graph.value, props.schema))
 const debuggerDisabled = computed(() => !!props.busy || graphProblems.value.length > 0 || props.modelValue.mode === 'code')
@@ -83,7 +83,7 @@ function endNodeEdit(id?:string) {
     if(id!==undefined&&editingNode!==id)return
     editingNode=undefined;inlineHistoryRecorded=false
 }
-function updateNodeById(id:string,data:Rule|RuleCondition|RuleAction) {
+function updateNodeById(id:string,data:import('../../utils/ruleGraph').RuleGraphNode['data']) {
     if(!graph.value.nodes.some(node=>node.id===id))return
     const next=replaceGraphNode(graph.value,id,data)
     const changed=graphSignature(next)!==graphSignature(graph.value)

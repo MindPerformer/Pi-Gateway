@@ -6,7 +6,7 @@ import { api } from '../api/client'
 import type { Capture, CaptureFrame, CaptureRuleTrace } from '../api/types'
 import { useToastStore, formatBytes, formatDuration, formatTime } from '../stores/ui'
 import { useI18n } from '../i18n'
-import { captureRows, frameSnapshot, hopProtocol, payloadPreview, requestSnapshots, responseHeaderSnapshots, ruleSources } from '../utils/captureInspection'
+import { captureRows, groupCaptureRows, frameSnapshot, hopProtocol, payloadPreview, requestSnapshots, responseHeaderSnapshots, ruleSources } from '../utils/captureInspection'
 import Badge from '../components/Badge.vue'
 import JsonViewer from '../components/JsonViewer.vue'
 import CaptureDiff from '../components/capture/CaptureDiff.vue'
@@ -27,13 +27,17 @@ const capture = ref<Capture | null>(null)
 const loading = ref(true)
 const tab = ref<'timeline' | 'request' | 'response' | 'raw'>('timeline')
 const compact = ref(true)
-const rowLimit = ref(100)
+const rowLimit = ref(50)
+const expandedGroups = ref(new Set<string>())
+const groupLimits = ref<Record<string, number>>({})
 let version = 0
 async function load() {
 	const current = ++version
 	loading.value = true
 	capture.value = null
-	rowLimit.value = 100
+	rowLimit.value = 50
+	expandedGroups.value.clear()
+	groupLimits.value = {}
 	try {
 		const id = Number(route.params.id)
 		const result = await api.getCapture(id)
@@ -47,7 +51,8 @@ onBeforeUnmount(() => { version++ })
 const request = computed(() => capture.value ? requestSnapshots(capture.value) : null)
 const responseHeaders = computed(() => capture.value ? responseHeaderSnapshots(capture.value) : null)
 const rows = computed(() => capture.value ? captureRows(capture.value, compact.value) : [])
-const visibleRows = computed(() => rows.value.slice(0, rowLimit.value))
+const rowGroups = computed(() => groupCaptureRows(rows.value))
+const visibleGroups = computed(() => rowGroups.value.slice(0, rowLimit.value))
 const tabs = computed(() => [
 	{ key: 'timeline', label: c('timeline') }, { key: 'request', label: c('request') },
 	{ key: 'response', label: c('headers') }, { key: 'raw', label: c('streams') },
@@ -88,7 +93,7 @@ function sourceLabel(trace: CaptureRuleTrace) {
 }
 function sourceLabels(phase?: string, eventID?: string) {
 	if (!capture.value) return []
-	return ruleSources(capture.value, phase, eventID).map(sourceLabel)
+    return [...new Set(ruleSources(capture.value, phase, eventID).map(sourceLabel))]
 }
 function sourceNote() {
 	if (capture.value?.rules_trace_truncated || capture.value?.rules_trace_omitted) return t('capture.rules.truncated', { count: capture.value.rules_trace_omitted ?? 0 })
@@ -147,17 +152,23 @@ function downloadJson() {
 					<p class="capture-hint">{{ c('localOnly') }}</p>
 				</section>
 				<div v-if="compact" class="flow-stage-heading response-stage"><h2>{{ c('responseStage') }}</h2><span>{{ c('responseRoute') }}</span></div>
-				<div v-for="(row, index) in visibleRows" :key="`${compact}:${row.key}`" class="flow-row" :data-paired="Boolean(row.before && row.after)">
+                <details v-for="group in visibleGroups" :key="`${compact}:${group.key}`" class="response-event-group" :class="{'card': group.rows.length > 1}" :open="group.rows.length === 1" @toggle="($event.target as HTMLDetailsElement).open ? expandedGroups.add(group.key) : expandedGroups.delete(group.key)">
+                    <summary v-if="group.rows.length > 1" class="event-group-summary" data-testid="response-event-group"><code>{{ c('repeatedEvents', {type: group.type, count: group.rows.length}) }}</code><span>+{{ (group.rows[0]?.before ?? group.rows[0]?.frame)?.at_ms }} → +{{ (group.rows.at(-1)?.after ?? group.rows.at(-1)?.frame)?.at_ms }} ms</span></summary>
+                    <div v-if="group.rows.length === 1 || expandedGroups.has(group.key)" class="event-group-body">
+				<div v-for="(row, index) in group.rows.slice(0, groupLimits[group.key] ?? 20)" :key="`${compact}:${row.key}`" class="flow-row" :data-paired="Boolean(row.before && row.after)">
 					<template v-if="row.before && row.after">
 						<div class="flow-event-meta"><span>{{ c('protocolChange', { before: frameProtocol(row.before), after: frameProtocol(row.after) }) }}</span><span>+{{ row.before.at_ms }} → +{{ row.after.at_ms }} ms</span><button v-if="row.before.dir === 'in' && ['sse_event', 'ws_frame'].includes(row.before.kind)" type="button" class="btn" @click="router.push({name:'rules', query:{capture:capture.id, frame:row.before.seq}})">{{ c('debugRules') }}</button></div>
-						<CaptureDiff :title="row.before.type === row.after.type ? row.before.type || c('responsePayload') : `${row.before.type || frameLabel(row.before)} → ${row.after.type || frameLabel(row.after)}`" :before="frameSnapshot(row.before)" :after="frameSnapshot(row.after)" :before-label="c('upstreamIn')" :after-label="c('clientOut')" :partial="capture.truncated" :sources="rowSources(row.before, row.after)" :source-note="sourceNote()" :initial-open="index < 2" />
+						<CaptureDiff :title="row.before.type === row.after.type ? row.before.type || c('responsePayload') : `${row.before.type || frameLabel(row.before)} → ${row.after.type || frameLabel(row.after)}`" :before="frameSnapshot(row.before)" :after="frameSnapshot(row.after)" :before-label="c('upstreamIn')" :after-label="c('clientOut')" :partial="capture.truncated" :sources="rowSources(row.before, row.after)" :source-note="sourceNote()" :initial-open="group.rows.length === 1 && index < 2" />
 					</template>
-					<details v-else-if="row.frame" class="card individual-frame" :open="index < 2" :data-direction="row.frame.dir" :data-kind="row.frame.kind">
+					<details v-else-if="row.frame" class="card individual-frame" :open="group.rows.length === 1 && index < 2" :data-direction="row.frame.dir" :data-kind="row.frame.kind">
 						<summary><component :is="row.frame.kind === 'note' ? Info : row.frame.dir === 'out' || row.frame.dir === 'client_out' ? ArrowUpRight : ArrowDownLeft" :size="15" /><strong class="frame-direction">{{ direction(row.frame) }}</strong><Badge :tone="frameTone(row.frame)">{{ frameLabel(row.frame) }}</Badge><code>{{ row.frame.type || '' }}</code><span class="frame-meta">+{{ row.frame.at_ms }} ms · {{ formatBytes(row.frame.bytes) }}</span></summary>
 						<div class="frame-content"><button v-if="row.frame.dir === 'in' && ['sse_event', 'ws_frame'].includes(row.frame.kind)" type="button" class="btn" @click="router.push({name:'rules', query:{capture:capture.id, frame:row.frame.seq}})">{{ c('debugRules') }}</button><JsonViewer v-if="frameSnapshot(row.frame).available" :value="preview(row.frame).text" :label="direction(row.frame)" max-height="28rem" /><p v-else class="capture-hint">{{ c('noPayload') }}</p><p v-if="preview(row.frame).limited" class="capture-hint">{{ c('limited') }}</p></div>
 					</details>
 				</div>
-				<button v-if="rows.length > rowLimit" type="button" class="btn" @click="rowLimit += 100">{{ c('showMore', { count: rows.length - rowLimit }) }}</button>
+                    <button v-if="group.rows.length > (groupLimits[group.key] ?? 20)" type="button" class="btn" @click="groupLimits[group.key] = (groupLimits[group.key] ?? 20) + 20">{{ c('showMore', {count: group.rows.length - (groupLimits[group.key] ?? 20)}) }}</button>
+                    </div>
+                </details>
+				<button v-if="rowGroups.length > rowLimit" type="button" class="btn" @click="rowLimit += 50">{{ c('showMore', { count: rowGroups.length - rowLimit }) }}</button>
 				<p v-if="!rows.length" class="card capture-empty">{{ c('noMessages') }}</p>
 			</section>
 
@@ -181,6 +192,11 @@ function downloadJson() {
 </template>
 
 <style scoped>
+.event-group-summary { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; padding:12px; font-size:12px; cursor:pointer; }
+.event-group-summary span { color:var(--color-ink-muted); font-size:11px; }
+.event-group-body { display:grid; gap:10px; }
+.response-event-group.card > .event-group-body { padding:12px; border-top:1px solid var(--color-line); }
+
 .capture-content { display: grid; align-content: start; gap: 16px; min-width: 0; }.capture-back { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: var(--color-ink-muted); font-size: 12px; }.capture-back:hover { color: var(--color-ink); }.capture-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .capture-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }.summary-item { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 12px; }.summary-item > span { color: var(--color-ink-faint); font-size: 11px; }.summary-item > strong { font-size: 15px; font-weight: 600; }.summary-item > small { font-size: 10px; color: var(--color-ink-muted); overflow-wrap: anywhere; }
 .capture-error { display: flex; align-items: flex-start; gap: 8px; }.capture-error svg { flex-shrink: 0; margin-top: 2px; }.capture-error p { margin: 0; overflow-wrap: anywhere; min-width: 0; }

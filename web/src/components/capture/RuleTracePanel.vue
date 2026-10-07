@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { Capture, CaptureRuleTrace } from '../../api/types'
 import { useI18n } from '../../i18n'
-import { isRuleChange, lastRuleWriters, ruleChangeSnapshot, ruleTraces } from '../../utils/captureInspection'
+import { isRuleChange, lastRuleWriters, ruleChangeSnapshot, groupRuleTraces } from '../../utils/captureInspection'
 import { useCaptureLocale } from './captureLocale'
 import CaptureDiff from './CaptureDiff.vue'
 import Badge from '../Badge.vue'
@@ -13,8 +13,9 @@ const props = defineProps<{ capture: Capture }>()
 const { t, locale } = useI18n()
 const { c } = useCaptureLocale()
 const limit = ref(50)
-const expanded = ref(new Set<number>())
-const traces = computed(() => ruleTraces(props.capture))
+const expanded = ref(new Set<string>())
+const openRules = ref(new Set<string>())
+const traces = computed(() => groupRuleTraces(props.capture))
 const visible = computed(() => traces.value.slice(0, limit.value))
 const finalWriters = computed(() => lastRuleWriters(props.capture))
 const eventFrames = computed(() => {
@@ -46,9 +47,22 @@ function tone(trace: CaptureRuleTrace) {
     return trace.error || trace.status === 'error' || trace.status === 'blocked' ? 'danger'
         : trace.rolled_back || trace.status === 'dropped' ? 'warn' : trace.status === 'changed' ? 'info' : 'neutral'
 }
-function toggle(index: number, event: Event) {
+function toggle(index: string, event: Event) {
     if ((event.target as HTMLDetailsElement).open) expanded.value.add(index)
     else expanded.value.delete(index)
+}
+// Show one representative per array collection/path instead of hundreds of leaf edits.
+function summarizedChanges(trace: CaptureRuleTrace) {
+    const groups: {change: NonNullable<CaptureRuleTrace['changes']>[number]; index: number; count: number; path: string}[] = []
+    const seen = new Map<string, typeof groups[number]>()
+    for (const [index, change] of (trace.changes ?? []).entries()) {
+        const path = change.path.replace(/\/(?:0|[1-9]\d*)(?=\/|$).*/, '/*')
+        const key = `${change.operation}:${path}`
+        const previous = seen.get(key)
+        if (previous) previous.count++
+        else { const group = {change, index, count: 1, path}; seen.set(key, group); groups.push(group) }
+    }
+    return groups
 }
 </script>
 
@@ -58,13 +72,13 @@ function toggle(index: number, event: Event) {
         <p v-if="capture.rules_trace_truncated || capture.rules_trace_omitted" class="notice notice-warning" role="status">{{ t('capture.rules.truncated', { count: capture.rules_trace_omitted ?? 0 }) }}</p>
         <p v-if="!traces.length" class="trace-hint">{{ !capture.rules_version && !capture.rules_trace_truncated ? t('capture.rules.legacy') : t('capture.rules.noChanges') }}</p>
         <p v-else class="trace-hint">{{ t('capture.rules.imprecise') }}</p>
-        <details v-for="(trace, index) in visible" :key="index" class="card trace-step" :data-rule-status="trace.status" @toggle="toggle(index, $event)">
-            <summary>
-                <span class="trace-order">{{ index + 1 }}.</span><strong>{{ traceRuleName(trace, locale) }}</strong>
-                <Badge :tone="tone(trace)">{{ statusLabel(trace) }}</Badge>
-                <span>{{ phaseLabel(trace.phase) }}</span><code>{{ actionLabel(trace.action_type) }}</code>
-            </summary>
-            <div v-if="expanded.has(index)" class="trace-body">
+        <details v-for="group in visible" :key="group.key" class="card trace-step" data-testid="trace-rule-group" @toggle="($event.target as HTMLDetailsElement).open ? openRules.add(group.key) : openRules.delete(group.key)">
+            <summary><strong>{{ traceRuleName(group.trace, locale) }}</strong><Badge :tone="tone(group.status)">{{ statusLabel(group.status) }}</Badge><span>{{ phaseLabel(group.trace.phase) }}</span><span>{{ c('traceSummary', {steps: group.steps.length, count: group.count, changes: group.changes}) }}</span></summary>
+            <div v-if="openRules.has(group.key)" class="trace-body">
+            <details v-for="({trace, index, count, key}, stepIndex) in group.steps.slice(0, limit)" :key="key" class="trace-step" :data-rule-status="trace.status" @toggle="toggle(key, $event)">
+                <summary><span class="trace-order">{{ stepIndex + 1 }}.</span><code>{{ actionLabel(trace.action_type) || t('rules.when') }}</code><Badge :tone="tone(trace)">{{ statusLabel(trace) }}</Badge><span v-if="count > 1">× {{ count }}</span><span>{{ trace.event_type }}</span></summary>
+            <div v-if="expanded.has(key)" class="trace-body">
+                <p v-if="count > 1" class="trace-hint">{{ c('traceSample', {count}) }}</p>
                 <div class="trace-meta">
                     <code v-if="trace.rule_id">{{ trace.rule_id }}</code>
                     <span v-if="trace.revision !== undefined">{{ t('capture.rules.revision', { value: trace.revision }) }}</span>
@@ -78,10 +92,15 @@ function toggle(index: number, event: Event) {
                 <p v-if="trace.status === 'blocked'" class="notice notice-error">{{ t('capture.rules.blocked') }}</p>
                 <p v-if="trace.error" class="notice notice-error">{{ trace.error }}</p>
                 <p v-if="trace.trace_truncated || trace.omitted_changes" class="notice notice-warning">{{ t('capture.rules.omittedChanges', { count: trace.omitted_changes ?? 0 }) }}</p>
-                <div v-for="(change, changeIndex) in isRuleChange(trace) ? trace.changes ?? [] : []" :key="changeIndex" class="trace-change">
-                    <div class="trace-meta"><code>{{ change.operation }} {{ change.path || '/' }}</code><span v-if="finalWriters.has(`${index}:${changeIndex}`)">{{ t('capture.rules.finalWriter') }}</span></div>
-                    <CaptureDiff :title="change.path || '/'" :before="ruleChangeSnapshot(change, 'before')" :after="ruleChangeSnapshot(change, 'after')" :before-label="change.before_exists === false ? t('capture.rules.missing') : c('before')" :after-label="change.after_exists === false ? t('capture.rules.missing') : c('after')" :partial="Boolean(change.truncated || trace.trace_truncated)" initial-open />
+                <div v-for="({change, index: changeIndex, count: changeCount, path}) in isRuleChange(trace) ? summarizedChanges(trace).slice(0, limit) : []" :key="changeIndex" class="trace-change">
+                    <div class="trace-meta"><code>{{ change.operation }} {{ c('changeGroup', {path: path || '/', count: changeCount}) }}</code><span v-if="count === 1 && changeCount === 1 && finalWriters.has(`${index}:${changeIndex}`)">{{ t('capture.rules.finalWriter') }}</span></div>
+                    <p v-if="changeCount > 1" class="trace-hint">{{ c('traceSample', {count: changeCount}) }}</p>
+                    <CaptureDiff :title="change.path || '/'" :before="ruleChangeSnapshot(change, 'before')" :after="ruleChangeSnapshot(change, 'after')" :before-label="change.before_exists === false ? t('capture.rules.missing') : c('before')" :after-label="change.after_exists === false ? t('capture.rules.missing') : c('after')" :partial="Boolean(change.truncated || trace.trace_truncated)" />
                 </div>
+                <button v-if="isRuleChange(trace) && summarizedChanges(trace).length > limit" type="button" class="btn" @click="limit += 50">{{ c('showMore', {count: summarizedChanges(trace).length - limit}) }}</button>
+            </div>
+            </details>
+            <button v-if="group.steps.length > limit" type="button" class="btn" @click="limit += 50">{{ c('showMore', {count: group.steps.length - limit}) }}</button>
             </div>
         </details>
         <button v-if="traces.length > limit" type="button" class="btn" @click="limit += 50">{{ c('showMore', { count: traces.length - limit }) }}</button>
@@ -89,5 +108,9 @@ function toggle(index: number, event: Event) {
 </template>
 
 <style scoped>
+.trace-step > summary { list-style: none; }
+.trace-step > summary::-webkit-details-marker { display: none; }
+.trace-step > summary::before { content: '›'; color: var(--color-ink-muted); font-size: 16px; line-height: 1; flex-shrink: 0; transition: transform .15s; }
+.trace-step[open] > summary::before { transform: rotate(90deg); }
 .rule-trace-panel { display: grid; gap: 10px; min-width: 0; }.trace-heading, .trace-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }.trace-heading h2 { font-size: 14px; margin: 0; }.trace-heading > span, .trace-meta, .trace-hint { font-size: 11px; color: var(--color-ink-muted); line-height: 1.6; overflow-wrap: anywhere; }.trace-hint { margin: 0; }.trace-step { min-width: 0; overflow: hidden; }.trace-step > summary { padding: 12px; cursor: pointer; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; font-size: 12px; overflow-wrap: anywhere; }.trace-order { color: var(--color-ink-faint); }.trace-body { border-top: 1px solid var(--color-line); padding: 12px; display: grid; gap: 10px; min-width: 0; }.trace-change { display: grid; gap: 6px; min-width: 0; }.trace-body code { overflow-wrap: anywhere; }.notice { margin: 0; overflow-wrap: anywhere; }
 </style>

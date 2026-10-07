@@ -77,25 +77,43 @@ for (const lang of ['en', 'zh-CN']) {
     for (const amount of [10, 40, 30]) assert.ok(html.includes(money.money(amount)), html)
     for (const key of ['quota.windowCost', 'quota.estimatedTotal', 'quota.estimatedRemaining', 'quota.costHint', 'quota.costEstimateHint']) assert.ok(html.includes(t(key)), key)
     assert.ok(html.includes('time:200'))
-    const partial = {...usage, cost_micros: 0, priced_requests: 0, unpriced_requests: 2}
-    const unknown = await render({
+    const partial = {...usage, unpriced_requests: 2}
+    const partialHTML = await render({
         usage: partial,
+        windowCost: {...windowCost, usage: partial},
+        compact: true,
+        cycleLabel: '7d'
+    })
+    const visibleText = partialHTML.replace(/<[^>]*>/g, '')
+    for (const key of ['quota.usedShort', 'quota.estimateShort']) assert.ok(visibleText.includes(t(key)))
+    assert.ok(visibleText.includes(money.money(10)))
+    assert.ok(visibleText.includes(money.money(40)))
+    assert.ok(!visibleText.includes(t('quota.unpricedRequests', {count: 2})))
+    assert.ok(!visibleText.includes(t('quota.costEstimateHint')))
+    assert.ok(partialHTML.includes(t('quota.unpricedRequests', {count: 2})))
+    assert.ok(partialHTML.includes('cost-used') && partialHTML.includes('cost-estimate'))
+    const missing = {...usage, cost_micros: 0, priced_requests: 0, unpriced_requests: 2}
+    const zero = await render({
+        usage: missing,
+        windowCost: {...windowCost, usage: missing, estimated_total_usd: 0, estimated_remaining_usd: 0}
+    })
+    assert.ok(zero.includes(money.money(0)))
+    assert.ok(!zero.includes('—'))
+    const unavailable = await render({
+        usage: null,
         windowCost: {
             ...windowCost,
-            usage: partial,
+            usage: null,
             estimated_total_usd: null,
             estimated_remaining_usd: null,
-            unavailable_reason: 'unpriced'
+            unavailable_reason: 'missing_snapshot'
         }
     })
-    assert.ok(unknown.includes('—'))
-    assert.ok(!unknown.includes(money.money(0)))
-    assert.ok(unknown.includes(t('quota.costUnpriced')))
-    assert.ok(unknown.includes(t('quota.unpricedRequests', {count: 2})))
-    const zero = await render({usage: {cost_micros: 0, priced_requests: 1, unpriced_requests: 0}})
-    assert.ok(zero.includes(money.money(0)))
-    const compact = await render({usage: partial, compact: true, cycleLabel: t('quota.window7d')})
-    assert.ok(compact.includes(t('quota.partialCost')))
-    assert.ok(compact.includes(t('quota.window7d')))
+    assert.ok(unavailable.includes('—'))
+    assert.ok(unavailable.includes(t('quota.costMissingSnapshot')))
+    const precision = await render({usage: {...usage, cost_micros: 1234567}})
+    assert.ok(precision.replace(/<[^>]*>/g, '').includes(money.money(1.23)))
+    assert.ok(precision.includes(money.money(1.234567)))
+
 }
 console.log('PASS: quota USD cost/estimate rendering in both languages, partial/missing/zero costs and day/hour countdown boundaries')

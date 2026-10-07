@@ -126,7 +126,7 @@ function tone(account: Account) { const category = accountCategory(account); ret
 .account-row:hover { background: var(--color-row-hover); }
 .accounts-table .expander-cell { width: 32px; padding-left: 4px; padding-right: 4px; }
 .identity-column { min-width: 250px; max-width: 340px; }
-.quota-column { min-width: 190px; }
+.quota-column { min-width: 270px; }
 .actions-column { position: sticky; right: 0; z-index: 1; min-width: 112px; background: var(--color-surface); }
 .account-row.is-striped .actions-column { background: var(--color-row-stripe); }
 .account-row:hover .actions-column { background: var(--color-row-hover); }

@@ -9,7 +9,8 @@ test('V2 默认步骤模式只提供底层动作，参数悬浮含说明与示�
     await expect(page.getByTestId('rule-canvas')).toHaveCount(0)
     const actions = editor.locator('#add-rule-action option')
     const types = await actions.evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))
-    expect(types).toEqual(expect.arrayContaining(['json_set', 'text_replace', 'sequence', 'if', 'for_each', 'walk', 'scope', 'call']))
+    expect(types).toEqual(expect.arrayContaining(['json_set', 'text_replace', 'if', 'for_each', 'walk', 'scope', 'call']))
+    expect(types).not.toContain('sequence')
     for (const type of ['rewrite_model', 'drop_environment_context', 'drop_input_items', 'drop_tools', 'set_reasoning', 'passthrough_fields']) {
         expect(types).not.toContain(type)
     }
@@ -56,6 +57,9 @@ test('V2 嵌套分支、遍历和计算引用在步骤、画布、代码及保�
     await admin.open()
     await admin.editRule('Fixture request rule', 'steps')
     const editor = ruleEditor(page)
+    for (const path of ['/actions/0/params/then', '/actions/0/params/then/0/params/steps']) {
+        await editor.locator(`[data-rule-path="${path}"]`).first().getByRole('button', {name: /^展开/}).first().click()
+    }
     const nestedPath = editor.locator('[data-rule-path="/actions/0/params/then/0/params/steps/0/params/path"] textarea')
     await nestedPath.fill('/metadata/copied_role')
     const expected = structuredClone(original)
@@ -65,14 +69,26 @@ test('V2 嵌套分支、遍历和计算引用在步骤、画布、代码及保�
     expect(await readCode(page)).toEqual(expected)
     await showCanvas(page)
     const branchNode = page.locator('.rule-graph-action')
-    for (const field of ['predicate', 'then', 'else']) {
-        await expect(branchNode.locator(`[data-rule-path="/actions/0/params/${field}"]`).first()).toBeVisible()
-    }
+    await expect(branchNode).toHaveCount(4)
+    await expect(branchNode.locator('[data-rule-path="/actions/0/params/predicate"]').first()).toBeVisible()
+    await expect(page.getByTestId('flow-add-then')).toBeVisible()
+    await expect(page.getByTestId('flow-add-else')).toBeVisible()
+    await expect(page.getByTestId('flow-add-steps')).toBeVisible()
+    await expect(branchNode.locator('[data-renderer="action_array"]')).toHaveCount(0)
+    await page.getByTestId('canvas-fit').click()
     const canvasPath = branchNode.locator('[data-rule-path="/actions/0/params/then/0/params/steps/0/params/path"] textarea')
+    const copyID = await canvasPath.locator('xpath=ancestor::*[contains(@class,"rule-graph-node")][1]').getAttribute('data-node-id')
+    await page.getByTestId('canvas-node-jump').selectOption(copyID!)
     await canvasPath.fill('/metadata/canvas_role')
     steps[0]!.params.path = '/metadata/canvas_role'
-    await expect(branchNode.locator('[data-rule-path="/$expr/args"]')).toBeVisible()
-    await expect(branchNode.locator('[data-rule-path="/$ref/path"] textarea')).toHaveValue('/message/value/role')
+    const copyNode = page.locator(`[data-node-id="${copyID}"]`)
+    await copyNode.locator('[data-value-input="/params/value"] .value-link').click()
+    const calculation = page.locator('.rule-graph-value').filter({hasText: '拼接字符串'})
+    await expect(calculation).toHaveCount(1)
+    await expect(calculation.locator('.rule-value-input')).toHaveCount(2)
+    await expect(calculation.locator('[data-rule-path="/$expr/args"]')).toHaveCount(0)
+    const buttonColumns = await calculation.locator('.argument-buttons').evaluateAll(rows => rows.map(row => Array.from(row.children).map(button => button.getBoundingClientRect().left)))
+    expect(buttonColumns[0]).toEqual(buttonColumns[1])
     const overflowing = await branchNode.locator('input, textarea, select').evaluateAll(controls => controls.filter(control => {
         const node = control.closest('.rule-graph-node')!.getBoundingClientRect(), r = control.getBoundingClientRect()
         return r.left < node.left - 1 || r.right > node.right + 1

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { Capture } from '../../api/types'
-import { frameSnapshot, payloadObject, payloadPreview as preview, requestSnapshots, responseHeaderSnapshots, streamSnapshot } from '../../utils/captureInspection'
+import { groupCaptureRows, frameSnapshot, payloadObject, payloadPreview as preview, requestSnapshots, responseHeaderSnapshots, streamSnapshot } from '../../utils/captureInspection'
 import JsonViewer from '../JsonViewer.vue'
 import Badge from '../Badge.vue'
 import { useCaptureLocale } from './captureLocale'
@@ -20,6 +20,9 @@ const explanation = computed(() => {
 	if (props.side === 'client' && snapshot.value.http.length && (status.value ?? 0) >= 400) return c('noSseClientError')
 	return c('noSseRecorded')
 })
+const socketGroups = computed(() => groupCaptureRows(snapshot.value.socket.map(frame => ({key:String(frame.seq), frame}))))
+const openGroups = ref(new Set<string>())
+const limits = ref<Record<string, number>>({})
 </script>
 
 <template>
@@ -37,13 +40,24 @@ const explanation = computed(() => {
 		</div>
 		<div v-if="snapshot.socket.length" class="stream-messages">
 			<h4>{{ direction }} · {{ c('capturedWs') }}</h4>
-			<div v-for="frame in snapshot.socket" :key="frame.seq"><JsonViewer :value="preview(frameSnapshot(frame).value).text" :label="`${direction} · ${frame.type || c('wsFrame')}`" max-height="24rem" /><p v-if="preview(frameSnapshot(frame).value).limited" class="stream-hint">{{ c('limited') }}</p></div>
+            <details v-for="group in socketGroups" :key="group.key" :open="group.rows.length === 1" @toggle="($event.target as HTMLDetailsElement).open ? openGroups.add(group.key) : openGroups.delete(group.key)">
+                <summary>{{ c('repeatedEvents', {type:group.type || c('wsFrame'), count:group.rows.length}) }}</summary>
+                <div v-if="group.rows.length === 1 || openGroups.has(group.key)">
+                    <JsonViewer v-for="row in group.rows.slice(0, limits[group.key] ?? 20)" :key="row.key" :value="preview(frameSnapshot(row.frame).value).text" :label="`${direction} · #${row.frame?.seq}`" max-height="24rem" />
+                    <button v-if="group.rows.length > (limits[group.key] ?? 20)" class="btn" @click="limits[group.key] = (limits[group.key] ?? 20) + 20">{{ c('showMore', {count:group.rows.length - (limits[group.key] ?? 20)}) }}</button>
+                </div>
+            </details>
 		</div>
-		<p v-if="snapshot.socket.length > 50 || snapshot.http.length > 50" class="stream-hint">{{ c('limited') }}</p>
 	</section>
 </template>
 
 <style scoped>
+.stream-messages > details { min-width: 0; border: 1px solid var(--color-line); border-radius: 6px; overflow: hidden; }
+.stream-messages > details > summary { display: flex; align-items: center; gap: 8px; padding: 10px; cursor: pointer; font-size: 12px; overflow-wrap: anywhere; list-style: none; }
+.stream-messages > details > summary::-webkit-details-marker { display: none; }
+.stream-messages > details > summary::before { content: '›'; color: var(--color-ink-muted); font-size: 16px; line-height: 1; flex-shrink: 0; transition: transform .15s; }
+.stream-messages > details[open] > summary::before { transform: rotate(90deg); }
+.stream-messages > details > div { display: grid; gap: 10px; padding: 10px; border-top: 1px solid var(--color-line); min-width: 0; }
 .stream-panel { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 12px; padding: 14px; min-width: 0; }
 .stream-panel > header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }.stream-panel h3 { font-size: 13px; font-weight: 650; margin: 0; }.stream-panel small { color: var(--color-ink-faint); }
 .stream-explanation { margin: 0; font-size: 12px; line-height: 1.65; padding: 10px; border-radius: 6px; border: 1px solid var(--color-line); background: var(--color-surface-2); overflow-wrap: anywhere; }

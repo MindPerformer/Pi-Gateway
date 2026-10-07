@@ -55,8 +55,8 @@ function barTone(window: QuotaWindow): string {
 }
 
 function labelFor(window: QuotaWindow): string {
-	if (window.kind === '5h') return t('quota.window5h')
-	if (window.kind === '7d') return t('quota.window7d')
+	if (window.kind === '5h') return '5h'
+	if (window.kind === '7d') return '7d'
 	if (window.window_seconds > 0) {
 		const hours = window.window_seconds / 3600
 		return hours >= 48 ? `${Math.round(hours / 24)}d` : `${Math.round(hours)}h`
@@ -128,13 +128,13 @@ function confirmConsume() {
 		<!-- Windows -->
 		<div class="inset-panel space-y-1.5">
 			<QuotaCostSummary :usage="quota?.cost" />
-			<p class="text-[10px] text-cp-text-secondary">{{ t('quota.costHint') }}</p>
 		</div>
 		<div v-if="hasCodex && (primaryWindows.length || extraWindows.length)" class="grid gap-3" :class="compact ? '' : 'sm:grid-cols-2'">
 			<div v-for="window in [...primaryWindows, ...(expanded ? extraWindows : [])]" :key="`${window.limit_id}:${window.role}`" class="rounded-cp bg-cp-fill-quaternary p-3">
-				<div class="flex items-center justify-between text-[12px]">
-					<span class="flex items-center gap-1.5">
+				<div class="flex flex-wrap items-center justify-between gap-2 text-[12px]">
+					<span class="flex flex-wrap items-baseline gap-2">
 						<span class="text-[color:var(--color-ink-muted)]">{{ labelFor(window) }}</span>
+                        <QuotaCostSummary v-if="costFor(window)" :usage="costFor(window)?.usage" :window-cost="costFor(window)" :cycle-label="labelFor(window)" compact />
 						<span v-if="window.limit_id !== 'codex'" class="text-[color:var(--color-ink-faint)]">
 							· {{ window.limit_name || window.limit_id }}
 						</span>
@@ -152,7 +152,6 @@ function confirmConsume() {
 				<div v-if="window.reset_at" class="mt-0.5 text-[10px] text-[color:var(--color-ink-faint)]">
 					{{ t('quota.resetsAt', { time: formatTime(window.reset_at) }) }}
 				</div>
-				<QuotaCostSummary v-if="costFor(window)" class="mt-2" :usage="costFor(window)?.usage" :window-cost="costFor(window)" />
 			</div>
 
 			<button v-if="extraWindows.length" class="text-[11px] text-[color:var(--color-info)] hover:underline" @click="expanded = !expanded">

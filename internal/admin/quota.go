@@ -107,13 +107,11 @@ func (s *Server) buildQuotaWindowCost(ctx context.Context, accountID int64, wind
 		cost.UnavailableReason = "query_failed"
 	case window.ResetAt <= now:
 		cost.UnavailableReason = "expired"
-	case cost.Usage.UnpricedRequests > 0:
-		cost.UnavailableReason = "unpriced"
-	case cost.Usage.PricedRequests == 0:
-		cost.UnavailableReason = "no_usage"
 	case window.UsedPercent <= 0 || window.UsedPercent > 100 || math.IsNaN(window.UsedPercent) || math.IsInf(window.UsedPercent, 0):
 		cost.UnavailableReason = "no_consumption"
 	default:
+		// Missing prices/tokens do not block projection. Unknown requests add no
+		// recorded cost; their count remains available for the detail tooltip.
 		total := float64(cost.Usage.CostMicros) / 1e6 * 100 / window.UsedPercent
 		remaining := total * (100 - window.UsedPercent) / 100
 		if math.IsInf(total, 0) || math.IsNaN(total) {

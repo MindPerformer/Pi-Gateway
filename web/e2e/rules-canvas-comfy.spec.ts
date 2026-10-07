@@ -21,6 +21,22 @@ const graphNodes = (page: Page) => page.locator('.rule-graph-node')
 const actionNode = (page: Page, title: string) => page.locator('.rule-graph-action').filter({has: page.locator('.rule-graph-node-title', {hasText: title})})
 const conditionNode = (page: Page, title: string) => page.locator('.rule-graph-condition').filter({has: page.locator('.rule-graph-node-title').filter({hasText: new RegExp(`^${title}$`)})})
 
+test('移除工具只需填写名称，快捷组合保存为底层筛选动作', async ({page, admin}) => {
+    await admin.open()
+    await admin.editRule()
+    await page.getByTestId('canvas-add-node').click()
+    await page.getByTestId('node-search-input').fill('移除工具')
+    await page.getByTestId('node-search-action-tool').click()
+    const filter = actionNode(page, '筛选数组')
+    await filter.getByLabel('值', {exact: true}).fill('web_search')
+    const code = await readCode(page)
+    expect(code.actions.at(-1)).toMatchObject({
+        type: 'array_filter',
+        params: {path: '/tools', predicate: {op: 'eq', source: 'item', path: '/name', value: 'web_search'}}
+    })
+    expect(code.actions.slice(0, 2)).toEqual(admin.rules[0]!.actions)
+})
+
 async function canvasBackground(page: Page) {
     await canvas(page).scrollIntoViewIfNeeded()
     const point = await canvas(page).evaluate(element => {
@@ -407,7 +423,11 @@ test('节点内直接编辑嵌套谓词，复杂 JSON、false、零、null 和�
     const filter = actionNode(page, '筛选数组')
     await expect(filter.getByTestId('rule-node-predicate-summary')).toContainText('全部满足')
     await focusNode(page, filter)
-    await inlineNodeControls(page, filter).locator('[data-rule-path="/actions/2/params/predicate/conditions/1/path"] textarea').fill('/content/text')
+    await filter.getByRole('button', {name: '展开／收起条件连线', exact: true}).click()
+    const nested = page.locator('.rule-graph-condition').filter({hasText: '字段存在'}).last()
+    const nestedID = await nested.getAttribute('data-node-id')
+    await page.getByTestId('canvas-node-jump').selectOption(nestedID!)
+    await nested.getByLabel('字段路径', {exact: true}).fill('/content/text')
     const updated = await readCode(page)
     const expected = structuredClone(original)
     const predicate = expected.actions[2]!.params.predicate as { conditions: { path: string }[] }
@@ -445,14 +465,16 @@ test('窄屏新增按钮与搜索浮层不溢出，可直接节点编辑后保�
     await expect.poll(() => admin.rules.find(rule => rule.name === 'Comfy narrow draft')?.actions[0]?.params.replacement).toBe('fixture-mobile-inline')
 })
 
-test('模块全部参数直接显示，复杂字段展开后控件对齐且自动整理无重叠', async ({page, admin}, testInfo) => {
+test('必要参数直接显示，选项与长值可展开且自动整理无重叠', async ({page, admin}, testInfo) => {
     await admin.open()
     await admin.editRule()
     await expect(page.getByTestId('node-advanced')).toHaveCount(0)
     await expect(nodeParameters(page)).toHaveCount(0)
     const cap = admin.rules[0]!.actions[1]!
-    // Optional flags must stay visible without a disclosure.
+    // Default options are folded but remain editable inside the module.
     const replacement = actionNode(page, '替换文本')
+    await expect(replacement.getByRole('button', {name: '选项 · 5', exact: true})).toBeVisible()
+    await replacement.getByRole('button', {name: '选项 · 5', exact: true}).click()
     for (const name of ['path', 'pattern', 'replacement', 'replace_all', 'case_insensitive', 'dot_all', 'multiline', 'on_missing']) {
         await expect(replacement.locator(`[data-rule-path="/actions/1/params/${name}"]`)).toBeVisible()
     }

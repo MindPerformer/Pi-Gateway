@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, type PropType } from 'vue'
 import type { JsonValue, RuleSchema, RuleSource, ValueExpr } from '../../api/rules'
 import { useI18n } from '../../i18n'
 import RuleField from './RuleField.vue'
 import JsonValueEditor from './JsonValueEditor.vue'
 import {ruleLabel, ruleOptionLabel} from '../../utils/ruleLabels'
 
-const props = withDefaults(defineProps<{ modelValue: ValueExpr; schema?: RuleSchema; allowReference?: boolean; compact?: boolean; idPrefix?: string }>(), { allowReference: true })
+// JSON empty strings must not undergo Vue's Boolean-prop coercion.
+const props = defineProps({modelValue: {type: null as unknown as PropType<ValueExpr>, required: true}, schema: Object as PropType<RuleSchema>, allowReference: {type:Boolean, default:true}, compact:Boolean, idPrefix:String})
 const emit = defineEmits<{ 'update:modelValue': [value: ValueExpr] }>()
 const { t, locale } = useI18n()
 const schema = computed(() => props.schema)
@@ -40,12 +41,15 @@ function modeChange(mode: string) {
 }
 const computedValue=computed(()=>{const v=props.modelValue;return v&&typeof v==='object'&&!Array.isArray(v)&&'$expr' in v?v.$expr as Record<string,JsonValue>:null})
 function updateComputed(key:string,value:unknown){const next={...(computedValue.value??{op:'concat',args:[]})};if(value===undefined)delete next[key];else next[key]=value as JsonValue;emit('update:modelValue',{$expr:next})}
+const literalOptions = ref(false)
+const showValueOptions = ref(false)
 const mode = computed(() => computedValue.value?'computed':reference.value ? 'reference' : props.modelValue && typeof props.modelValue === 'object' && !Array.isArray(props.modelValue) && Object.keys(props.modelValue).length === 1 && '$literal' in props.modelValue ? 'escape' : 'literal')
 const sources = computed(() => schema.value?.sources ?? ['current', 'client', 'context', 'item'])
 </script>
 <template>
   <div class="space-y-2" :class="{'value-editor-compact': compact}">
-    <div class="flex flex-wrap items-center gap-2">
+    <button v-if="compact" class="literal-type-toggle" type="button" :aria-expanded="showValueOptions" :title="t('rules.valueKind')" @click="showValueOptions = !showValueOptions">{{ t('rules.valueKind') }}: {{ t(mode === 'literal' ? 'rules.literal' : mode === 'reference' ? 'rules.reference' : 'rules.valueKind') }} {{ showValueOptions ? '▾' : '▸' }}</button>
+    <div v-if="!compact || showValueOptions" class="value-mode-bar flex flex-wrap items-center gap-2">
       <label :for="idPrefix" class="text-[11px] text-[color:var(--color-ink-muted)]">{{ t('rules.valueKind') }}</label>
       <select :id="idPrefix" class="input !w-auto !py-1 text-[12px]" :aria-label="t('rules.valueKind')" :value="mode" @change="modeChange(($event.target as HTMLSelectElement).value)">
         <option value="literal">{{ t('rules.literal') }}</option>
@@ -60,6 +64,16 @@ const sources = computed(() => schema.value?.sources ?? ['current', 'client', 'c
     <div v-else-if="mode==='reference' && reference" class="space-y-2">
       <RuleField v-for="field in schema?.value_fields ?? []" :key="field.name" :field="field" :model-value="reference[field.name]" :schema="schema!" :path="`/$ref/${field.name}`" :compact="compact" :id-prefix="idPrefix" @update:model-value="updateReference(field.name,$event as JsonValue)" />
     </div>
-    <JsonValueEditor v-else :model-value="literalValue" :compact="compact" :id-prefix="idPrefix ? `${idPrefix}-literal` : undefined" @update:model-value="mode === 'escape' ? setLiteralEscape($event) : setLiteral($event)" />
+    <textarea v-else-if="compact && mode === 'literal' && typeof literalValue === 'string' && !literalOptions" :id="idPrefix ? `${idPrefix}-literal-value` : undefined" class="input" rows="1" :aria-label="ruleLabel('field', 'value', locale)" :value="literalValue" @input="!(($event as InputEvent).isComposing) && setLiteral(($event.target as HTMLTextAreaElement).value)" @compositionend="setLiteral(($event.target as HTMLTextAreaElement).value)" />
+    <button v-if="compact && showValueOptions && mode === 'literal' && typeof literalValue === 'string'" class="literal-type-toggle" type="button" :aria-expanded="literalOptions" @click="literalOptions = !literalOptions">{{ t('rules.valueType') }}: {{ ruleOptionLabel('string', locale) }} · {{ literalOptions ? '▾' : '▸' }}</button>
+    <JsonValueEditor v-if="['literal', 'escape'].includes(mode) && (!compact || mode !== 'literal' || typeof literalValue !== 'string' || literalOptions)" :model-value="literalValue" :compact="compact" :id-prefix="idPrefix ? `${idPrefix}-literal` : undefined" @update:model-value="mode === 'escape' ? setLiteralEscape($event) : setLiteral($event)" />
   </div>
 </template>
+
+<style scoped>
+.value-editor-compact { min-width: 0; }
+.value-mode-bar { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); }
+.value-mode-bar label { white-space: nowrap; }
+.value-mode-bar .input { width: 100% !important; }
+.literal-type-toggle { display: block; padding: 0; color: var(--color-ink-faint); background: transparent; border: 0; font-size: 10px; text-align: left; cursor: pointer; }
+</style>

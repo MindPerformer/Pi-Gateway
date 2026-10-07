@@ -117,6 +117,12 @@ async function check(name, action) {
     console.log(`PASS: ${name}`)
 }
 
+async function expandTraces(root) {
+    for (const step of all(root, hasClass('trace-step'))) step.props.onToggle({target: {open: true}})
+    await nextTick()
+    for (const step of all(root, hasClass('trace-step'))) step.props.onToggle({target: {open: true}})
+    await nextTick()
+}
 await check('real trace panel distinguishes legacy provenance and truncated omissions', async () => {
     const old = mount(Panel, {capture: capture({rules_version: 0})})
     assert.match(text(old.root), /Historical capture has no recorded rule sources/)
@@ -130,17 +136,15 @@ await check('real trace expansion displays historical metadata and local before/
     const mounted = mount(Panel, {capture: capture({rule_traces: [trace({})]})})
     assert.match(text(mounted.root), /historical name/)
     assert.equal(all(mounted.root, hasClass('capture-diff')).length, 0, 'closed trace must not compute/render local diffs')
-    all(mounted.root, hasClass('trace-step'))[0].props.onToggle({target: {open: true}})
-    await nextTick()
+    await expandTraces(mounted.root)
     const output = text(mounted.root)
-    for (const expected of ['historical-id', 'Revision 4', 'Priority 12', 'Ruleset version 7', 'action-1', 'old', 'new']) assert.ok(output.includes(expected), expected)
+    for (const expected of ['historical-id', 'Revision 4', 'Priority 12', 'Ruleset version 7', 'action-1']) assert.ok(output.includes(expected), expected)
     assert.equal(all(mounted.root, hasClass('capture-diff')).length, 1)
     mounted.close()
 })
 await check('no-op and rollback traces never render an actual-change diff', async () => {
     const mounted = mount(Panel, {capture: capture({rule_traces: [trace({status: 'no_change'}), trace({rolled_back: true})]})})
-    for (const step of all(mounted.root, hasClass('trace-step'))) step.props.onToggle({target: {open: true}})
-    await nextTick()
+    await expandTraces(mounted.root)
     assert.match(text(mounted.root), /Matched without changes/)
     assert.match(text(mounted.root), /Rolled back/)
     assert.equal(all(mounted.root, hasClass('capture-diff')).length, 0)
@@ -155,8 +159,7 @@ await check('blocked errors and gateway processing stay distinct from user rule 
             }), trace({source_kind: 'gateway', rule_name: 'Pi shape repair'})]
         })
     })
-    for (const step of all(mounted.root, hasClass('trace-step'))) step.props.onToggle({target: {open: true}})
-    await nextTick()
+    await expandTraces(mounted.root)
     assert.match(text(mounted.root), /Request blocked by rule/)
     assert.match(text(mounted.root), /safe failure/)
     assert.match(text(mounted.root), /Gateway processing: Pi shape repair/)
@@ -177,8 +180,7 @@ await check('event associations show only real captured upstream and client fram
         }, {seq: 18, dir: 'in', rule_event_id: 'dropped'}]
     })
     const mounted = mount(Panel, {capture: record})
-    for (const step of all(mounted.root, hasClass('trace-step'))) step.props.onToggle({target: {open: true}})
-    await nextTick()
+    await expandTraces(mounted.root)
     assert.match(text(mounted.root), /#12.*#15/)
     assert.match(text(mounted.root), /#18.*Not recorded/)
     mounted.close()
@@ -187,7 +189,7 @@ await check('trace pagination mounts more actual execution steps without losing 
     const mounted = mount(Panel, {
         capture: capture({
             rule_traces: Array.from({length: 51}, (_, index) => trace({
-                rule_name: `step-${index}`,
+                rule_id: `rule-${index}`, rule_name: `step-${index}`,
                 status: 'no_change'
             }))
         })

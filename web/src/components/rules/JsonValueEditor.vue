@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import type { JsonValue } from '../../api/rules'
 import { useI18n } from '../../i18n'
 import { setObjectProperty } from '../../utils/ruleEditor'
 import {ruleLabel, ruleOptionLabel} from '../../utils/ruleLabels'
 
-const props = withDefaults(defineProps<{ modelValue: JsonValue; path?: string; depth?: number; compact?: boolean; idPrefix?: string }>(), { path: '', depth: 0 })
+const props = defineProps({modelValue: {type: null as unknown as PropType<JsonValue>, required:true}, path:{type:String,default:''}, depth:{type:Number,default:0}, compact:Boolean, idPrefix:String})
 const emit = defineEmits<{ 'update:modelValue': [value: JsonValue] }>()
 const { t, locale } = useI18n()
 const kind = computed(() => props.modelValue === null ? 'null' : Array.isArray(props.modelValue) ? 'array' : typeof props.modelValue)

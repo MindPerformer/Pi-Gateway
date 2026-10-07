@@ -100,6 +100,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     return JSON.parse(text) as T
 }
 
+export interface AccountOperationResult {
+    index: number
+    id?: number
+    name?: string
+    status: 'success' | 'failed' | 'created' | 'linked' | 'skipped'
+    error?: string
+}
+
 export const api = {
     // auth
     async login(username: string, password: string) {
@@ -129,6 +137,19 @@ export const api = {
     // accounts
     async listAccounts() {
         return request<{ accounts: Account[] }>('/api/accounts')
+    },
+    async batchAccounts(ids: number[], action: 'enable' | 'disable' | 'recover' | 'add_groups', groupIds: number[] = []) {
+        return request<{ results: AccountOperationResult[] }>('/api/accounts/batch', {
+            method: 'POST', body: JSON.stringify({ids, action, group_ids: groupIds}),
+        })
+    },
+    async exportAccounts(ids: number[]) {
+        return request<unknown>('/api/accounts/export', {method: 'POST', body: JSON.stringify({ids})})
+    },
+    async importAccounts(format: string, data: unknown, targetAccountId?: number) {
+        return request<{ format: string; results: AccountOperationResult[] }>('/api/accounts/import', {
+            method: 'POST', body: JSON.stringify({format, data, target_account_id: targetAccountId}),
+        })
     },
     async startOAuth(payload: {
         kind: 'chatgpt' | 'codex';

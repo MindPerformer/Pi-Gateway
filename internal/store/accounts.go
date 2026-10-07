@@ -142,7 +142,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 }
 
 // CreateAccount inserts a new account and returns it with the assigned id.
-func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
+func (s *Store) CreateAccount(ctx context.Context, a *Account, cooldownOverride ...int) error {
 	if a == nil {
 		return errors.New("store: nil account")
 	}
@@ -174,6 +174,12 @@ func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
 	}
 	a.UpdatedAt = now
 	a.Cooldown429Seconds = -1
+	if len(cooldownOverride) > 0 {
+		if cooldownOverride[0] < -1 || cooldownOverride[0] > 86400 {
+			return fmt.Errorf("%w: invalid cooldown override", ErrInvalidPolicy)
+		}
+		a.Cooldown429Seconds = cooldownOverride[0]
+	}
 	if a.Concurrency <= 0 {
 		a.Concurrency = 3
 	}
@@ -187,11 +193,13 @@ func (s *Store) CreateAccount(ctx context.Context, a *Account) error {
 	id, err := s.insertID(ctx, tx, `INSERT INTO accounts
 		(name, email, account_id, plan_type, access_token, refresh_token, id_token, expires_at,
 		 enabled, weight, concurrency, proxy_url, proxy_id, status, last_error, created_at, updated_at,
-		 oauth_client_id, upstream_protocol, disabled_models, supplemental_models)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 oauth_client_id, upstream_protocol, disabled_models, supplemental_models,
+		 codex_access_token,codex_refresh_token,codex_id_token,codex_expires_at,codex_account_id,cooldown_429_seconds)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		a.Name, a.Email, a.AccountID, a.PlanType, a.AccessToken, a.RefreshToken, a.IDToken, a.ExpiresAt,
 		boolToInt(a.Enabled), a.Weight, a.Concurrency, a.ProxyURL, a.ProxyID, a.Status, a.LastError, a.CreatedAt, a.UpdatedAt,
-		a.OAuthClientID, a.UpstreamProtocol, string(modelsJSON), string(supplementalJSON))
+		a.OAuthClientID, a.UpstreamProtocol, string(modelsJSON), string(supplementalJSON),
+		a.CodexAccessToken, a.CodexRefreshToken, a.CodexIDToken, a.CodexExpiresAt, a.CodexAccountID, a.Cooldown429Seconds)
 	if err != nil {
 		return fmt.Errorf("store: create account: %w", err)
 	}
@@ -390,6 +398,25 @@ func (s *Store) UpdateAccountCredentials(ctx context.Context, id int64, access, 
 		access, refresh, refresh, expiresAt, status, lastErr, NowMS(), NowMS(), id)
 	if err != nil {
 		return fmt.Errorf("store: update credentials: %w", err)
+	}
+	return nil
+}
+
+// AttachChatGPTCredential preserves management policy, Codex linkage and usage.
+// An explicitly authorized attachment activates a credential-only placeholder.
+func (s *Store) AttachChatGPTCredential(ctx context.Context, id int64, email, plan, access, refresh, idToken, clientID string, expiresAt int64) error {
+	result, err := s.ExecContext(ctx, `UPDATE accounts SET
+	 enabled=CASE WHEN access_token='' THEN 1 ELSE enabled END,
+	 email=?,plan_type=?,access_token=?,refresh_token=?,id_token=?,oauth_client_id=?,
+	 expires_at=?,status=?,last_error='',updated_at=? WHERE id=?`,
+		email, plan, access, refresh, idToken, clientID, expiresAt, AccountStatusReady, NowMS(), id)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
 	}
 	return nil
 }

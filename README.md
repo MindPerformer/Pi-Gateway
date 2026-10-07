@@ -10,7 +10,9 @@
 
 ## 功能概览
 
-- **账号管理**：ChatGPT 登录、凭据导入与刷新、账号分组、代理配置、模型限制和调度策略。
+- **账号管理**：ChatGPT 登录、凭据导入与刷新、账号分组、代理配置、模型限制和调度策略；支持批量启用、禁用、恢复、加入分组以及仅含邮箱与凭证的
+  JSON 导入导出。兼容 sub2api 与 CLIProxyAPI 的 Codex 凭证，标准格式和迁移规则见 [ACCOUNTS_FORMAT.md](ACCOUNTS_FORMAT.md)
+  。管理员登录会话在有效期内跨网关重启保留。
 - **客户端 API Key**：按 Key 管理访问范围、并发、限额及预算；客户端使用网关签发的 Key，而不是管理员密码或账号令牌。
 - **协议转发**：HTTP SSE、非流式 JSON、下游 WebSocket；上游支持 SSE、WebSocket、缓存连接与自动回退。
 - **模型与配额**：账号模型目录同步、模型路由与禁用配置；可关联独立 Codex 凭据查询配额和补充模型目录。
@@ -61,6 +63,23 @@ Codex 在普通 Responses 请求末尾发送 `compaction_trigger` 时，网关�
   明确提示 `This ChatPass credential is not authorized for the requested operation.` 时，
   使用同一账号和所选压缩模型生成续接摘要。模型被该账号或分组禁用时明确返回错误。
 - **关闭（off）**：只调用原生端点，不进行模型摘要回退；仍可读取之前生成的网关摘要。
+
+同一区域可编辑“压缩提示词”（管理 API 字段 `compaction_prompt`），保存后立即生效并持久化。
+默认原样使用 [OpenAI Codex 的 compact/prompt.md](https://github.com/openai/codex/blob/a6baf8867cb4c9726213c0884a5c8b11f0cfd8bf/codex-rs/prompts/templates/compact/prompt.md)，
+留空或点击“恢复 Codex 默认提示词”后保存即可恢复；自定义文本保留换行，最多 64 KiB。
+提示词仅用于开启模式和自动模式的模型摘要回退，不改变原生 compact 请求。
+与 Codex 的普通模型压缩分支一致，网关保留规则处理后的 `instructions`，
+将压缩提示词追加为历史末尾的用户消息，通过普通 `/responses` 流式生成摘要，且不提供工具。
+
+源码核对基于 Codex commit `a6baf8867cb4c9726213c0884a5c8b11f0cfd8bf`：
+[prompts/src/compact.rs](https://github.com/openai/codex/blob/a6baf8867cb4c9726213c0884a5c8b11f0cfd8bf/codex-rs/prompts/src/compact.rs)
+将该 Markdown 编译为 `SUMMARIZATION_PROMPT`；
+[core/src/compact.rs](https://github.com/openai/codex/blob/a6baf8867cb4c9726213c0884a5c8b11f0cfd8bf/codex-rs/core/src/compact.rs)
+在自动压缩时使用 `compact_prompt` 覆盖或上述默认值，并调用普通模型 `stream`；
+[tasks/compact.rs](https://github.com/openai/codex/blob/a6baf8867cb4c9726213c0884a5c8b11f0cfd8bf/codex-rs/core/src/tasks/compact.rs)
+在手动压缩的 `RemoteCompactionSupport::Unsupported` 分支使用相同提示词。
+这指的是模型摘要压缩；该版本的 `TokenBudget` 分支直接开启新上下文窗口，不执行模型摘要，
+因此不能把所有不走远程 compact 的路径都视为使用此提示词。
 
 开启模式在请求规则和账号选择前应用压缩模型，规则可继续改写或拒绝请求；模型禁用策略
 始终生效。自动模式的原生请求保留客户端模型，仅在回退时改用所选压缩模型。

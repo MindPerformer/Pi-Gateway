@@ -13,12 +13,14 @@ import AccountQuotaSummaryCell from './AccountQuotaSummaryCell.vue'
 import AccountTableActions from './AccountTableActions.vue'
 import { accountCategory } from './accountPresentation'
 import { useAccountControls } from './accountControlsLocale'
+import { useAccountManagementLocale } from './accountManagementLocale'
 import { accountStatusLabel, transportLabel } from '../../utils/uiOptions'
 
-const props = defineProps<{ accounts: Account[]; groups: AccountGroup[]; loading: boolean; groupsLoaded: boolean; quotaBusy: boolean; settings: Settings | null }>()
-const emit = defineEmits<{ refresh: []; create: []; edit: [account: Account]; delete: [account: Account]; recover: [account: Account]; refreshToken: [account: Account]; quota: [account: Account]; refreshQuota: [account: Account]; link: [account: Account]; unlink: [account: Account]; toggle: [account: Account]; test: [account: Account]; protocol: [account: Account, value: string] }>()
+const props = defineProps<{ accounts: Account[]; groups: AccountGroup[]; loading: boolean; groupsLoaded: boolean; quotaBusy: boolean; settings: Settings | null; selectedIds?: number[]; batchBusy?: boolean }>()
+const emit = defineEmits<{ refresh: []; create: []; edit: [account: Account]; delete: [account: Account]; recover: [account: Account]; refreshToken: [account: Account]; quota: [account: Account]; refreshQuota: [account: Account]; link: [account: Account]; linkChatgpt: [account: Account]; unlink: [account: Account]; toggle: [account: Account]; test: [account: Account]; protocol: [account: Account, value: string]; 'update:selectedIds': [ids: number[]] }>()
 const { t } = useI18n()
 const { c } = useAccountControls()
+const { m } = useAccountManagementLocale()
 const protocolDefault = computed(() => c('protocolDefault', { value: props.settings?.upstream_transport ? transportLabel(props.settings.upstream_transport) : c('settingsFailed') }))
 const search = ref('')
 const status = ref('')
@@ -46,6 +48,23 @@ const filtered = computed(() => {
 })
 const pages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
 const visible = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+const selected = computed(() => new Set(props.selectedIds ?? []))
+const pageSelected = computed(() => visible.value.length > 0 && visible.value.every(a => selected.value.has(a.id)))
+const pagePartial = computed(() => !pageSelected.value && visible.value.some(a => selected.value.has(a.id)))
+function selectAccount(id: number, checked: boolean) {
+	const ids = new Set(selected.value); checked ? ids.add(id) : ids.delete(id)
+	emit('update:selectedIds', [...ids])
+}
+function selectPage(checked: boolean) {
+	const ids = new Set(selected.value)
+	for (const a of visible.value) checked ? ids.add(a.id) : ids.delete(a.id)
+	emit('update:selectedIds', [...ids])
+}
+watch(() => props.accounts, accounts => {
+	const existing = new Set(accounts.map(a => a.id))
+	const ids = (props.selectedIds ?? []).filter(id => existing.has(id))
+	if (ids.length !== (props.selectedIds ?? []).length) emit('update:selectedIds', ids)
+})
 watch([search, status, group, pageSize], () => { page.value = 1 })
 watch(pages, value => { page.value = Math.min(page.value, value) })
 function toggleDetails(id: number) { const next = new Set(expanded.value); next.has(id) ? next.delete(id) : next.add(id); expanded.value = next }
@@ -55,15 +74,17 @@ function tone(account: Account) { const category = accountCategory(account); ret
 <template>
 	<section class="card accounts-table-card">
 		<AccountFilters v-model:search="search" v-model:status="status" v-model:group="group" :groups="groups" :groups-loaded="groupsLoaded" :statuses="statuses" :loading="loading" @refresh="emit('refresh')" @create="emit('create')" />
+		<div v-if="selected.size" class="filtered-selection"><span>{{ m('selected', {count: selected.size}) }}</span><button class="btn btn-ghost btn-sm" :disabled="batchBusy || filtered.length > 1000" @click="emit('update:selectedIds', filtered.map(a => a.id))">{{ m('selectFiltered', {count: filtered.length}) }}</button></div>
 		<div class="accounts-table-scroll">
 			<table class="accounts-table">
-				<thead><tr><th class="th expander-cell" /><th class="th identity-column">{{ t('accounts.col.account') }}</th><th class="th">{{ t('accounts.credentials') }}</th><th class="th">{{ t('accounts.col.status') }}</th><th class="th">{{ t('accounts.col.plan') }}</th><th class="th quota-column">{{ t('accounts.col.quota') }}</th><th class="th">{{ t('accounts.groups') }}</th><th class="th">{{ t('dashboard.recent') }}</th><th class="th actions-column">{{ t('accounts.col.actions') }}</th></tr></thead>
+				<thead><tr><th class="th selection-cell"><input type="checkbox" :checked="pageSelected" :indeterminate="pagePartial" :disabled="batchBusy || !visible.length" :aria-label="m('selectPage')" @change="selectPage(($event.target as HTMLInputElement).checked)" /></th><th class="th expander-cell" /><th class="th identity-column">{{ t('accounts.col.account') }}</th><th class="th">{{ t('accounts.credentials') }}</th><th class="th">{{ t('accounts.col.status') }}</th><th class="th">{{ t('accounts.col.plan') }}</th><th class="th quota-column">{{ t('accounts.col.quota') }}</th><th class="th">{{ t('accounts.groups') }}</th><th class="th">{{ t('dashboard.recent') }}</th><th class="th actions-column">{{ t('accounts.col.actions') }}</th></tr></thead>
 				<tbody>
 					<template v-for="(account, index) in visible" :key="account.id">
 						<tr class="account-row" :class="{ 'is-striped': index % 2 === 1 }">
+							<td class="td selection-cell"><input type="checkbox" :checked="selected.has(account.id)" :disabled="batchBusy" :aria-label="m('select', {name: account.name})" @change="selectAccount(account.id, ($event.target as HTMLInputElement).checked)" /></td>
 							<td class="td expander-cell"><button type="button" class="detail-toggle" :aria-expanded="expanded.has(account.id)" :aria-label="t(expanded.has(account.id) ? 'accounts.collapse' : 'accounts.details')" @click="toggleDetails(account.id)"><ChevronDown :size="14" :class="{ collapsed: !expanded.has(account.id) }" /></button></td>
 							<td class="td identity-column"><AccountIdentityCell :account="account" /></td>
-							<td class="td"><div class="credential-icons"><span class="credential-chip" title="ChatGPT OAuth">GPT</span><button type="button" class="credential-link" :class="{ linked: account.codex_linked }" :title="account.codex_linked ? t('accounts.codexLinked') : t('accounts.linkCodex')" :aria-label="account.codex_linked ? t('accounts.codexLinked') : t('accounts.linkCodex')" @click="account.codex_linked ? emit('quota', account) : emit('link', account)"><Link2 :size="14" /></button></div></td>
+							<td class="td"><div class="credential-icons"><button v-if="account.has_chatgpt_credential === false" type="button" class="btn btn-sm" :title="m('awaitingChatGPT')" @click="emit('linkChatgpt', account)">{{ m('linkChatGPT') }}</button><span v-else class="credential-chip" title="ChatGPT OAuth">GPT</span><button type="button" class="credential-link" :class="{ linked: account.codex_linked }" :title="account.codex_linked ? t('accounts.codexLinked') : t('accounts.linkCodex')" :aria-label="account.codex_linked ? t('accounts.codexLinked') : t('accounts.linkCodex')" @click="account.codex_linked ? emit('quota', account) : emit('link', account)"><Link2 :size="14" /></button></div></td>
 							<td class="td"><Badge :tone="tone(account)" :title="account.last_error || undefined"><span class="status-dot" />{{ account.enabled ? accountStatusLabel(account.status) : c('disabled') }}</Badge></td>
 							<td class="td"><Badge tone="info">{{ account.plan_type || '—' }}</Badge></td>
 							<td class="td quota-column"><AccountQuotaSummaryCell :account="account" :on-open="account => emit('quota', account)" :on-link="account => emit('link', account)" /></td>
@@ -71,7 +92,7 @@ function tone(account: Account) { const category = accountCategory(account); ret
 							<td class="td last-used"><span :title="formatTime(account.last_used_at)">{{ formatRelative(account.last_used_at) }}</span><small>{{ metric(account.request_count) }} {{ t('accounts.col.requests') }}</small></td>
 							<td class="td actions-column"><AccountTableActions :account="account" :quota-busy="quotaBusy" @recover="emit('recover', $event)" @edit="emit('edit', $event)" @delete="emit('delete', $event)" @refresh="emit('refreshToken', $event)" @quota="emit('quota', $event)" @refresh-quota="emit('refreshQuota', $event)" @link="emit('link', $event)" @unlink="emit('unlink', $event)" @toggle="emit('toggle', $event)" @test="emit('test', $event)" /></td>
 						</tr>
-						<tr v-if="expanded.has(account.id)" class="detail-row"><td colspan="9"><div class="account-detail-grid">
+						<tr v-if="expanded.has(account.id)" class="detail-row"><td colspan="10"><div class="account-detail-grid">
 							<div><label>{{ t('common.enabled') }}</label><Toggle :model-value="account.enabled" :aria-label="c(account.enabled ? 'disableAccount' : 'enableAccount')" @update:modelValue="emit('toggle', account)" /></div>
 							<div><label>{{ t('accounts.col.token') }}</label><span :class="{ 'text-danger': account.token_expires_in_ms <= 0 }">{{ account.token_expires_in_ms > 0 ? formatUntil(account.token_expires_in_ms) : t('accounts.expired') }}</span><small v-if="!account.has_refresh_token">{{ t('accounts.noRefreshToken') }}</small></div>
 							<div><label>{{ t('accounts.col.codex') }}</label><span>{{ t(account.codex_linked ? 'accounts.codexLinked' : 'accounts.codexNotLinked') }}</span><button class="detail-link" @click="account.codex_linked ? emit('unlink', account) : emit('link', account)">{{ t(account.codex_linked ? 'accounts.unlinkCodex' : 'accounts.linkCodex') }}</button></div>
@@ -91,6 +112,9 @@ function tone(account: Account) { const category = accountCategory(account); ret
 </template>
 
 <style scoped>
+.selection-cell { width: 36px; text-align: center; }
+.selection-cell input { width: 15px; height: 15px; vertical-align: middle; accent-color: var(--color-brand); cursor: pointer; }
+.filtered-selection { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 0 24px 12px; font-size: 12px; }
 .accounts-table-card { display: flex; min-width: 0; min-height: 520px; flex-direction: column; padding-bottom: 4px; }
 .accounts-table-scroll { min-width: 0; min-height: 0; overflow: auto; flex: 1; margin: 0 24px; }
 .accounts-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }

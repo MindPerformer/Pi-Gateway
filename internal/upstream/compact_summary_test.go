@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"pi-gateway/internal/compactprompt"
 	"pi-gateway/internal/egress"
 )
 
@@ -29,12 +30,16 @@ func TestSummaryCompactionFallbackAndExpansion(t *testing.T) {
 				if body["model"] != "test" || body["stream"] != true || body["store"] != false || body["tools"] != nil || body["previous_response_id"] != nil {
 					t.Errorf("bad summary request: %+v", body)
 				}
-				if !strings.Contains(body["instructions"].(string), "Do not answer the task") {
-					t.Error("missing summary guard")
+				if body["instructions"] != "task instructions" {
+					t.Error("task instructions not preserved")
 				}
 				items := body["input"].([]any)
 				if len(items) != 3 || items[0].(map[string]any)["role"] != "user" || items[1].(map[string]any)["role"] != "assistant" {
 					t.Error("history not preserved")
+				}
+				last := items[len(items)-1].(map[string]any)
+				if last["role"] != "user" || last["content"].([]any)[0].(map[string]any)["text"] != compactprompt.Default {
+					t.Error("Codex default prompt not appended as user message")
 				}
 				io.WriteString(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Keep the user goal and remaining work."}]}],"usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}`+"\n\n")
 			}))

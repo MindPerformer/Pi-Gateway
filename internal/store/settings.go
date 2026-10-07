@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"pi-gateway/internal/compactprompt"
 )
 
 // Settings holds the runtime-adjustable knobs that override config defaults.
 type Settings struct {
-	SwitchOn429     bool   `json:"switch_on_429"`
-	CompactionMode  string `json:"compaction_mode"`
-	CompactionModel string `json:"compaction_model"`
+	SwitchOn429      bool   `json:"switch_on_429"`
+	CompactionMode   string `json:"compaction_mode"`
+	CompactionModel  string `json:"compaction_model"`
+	CompactionPrompt string `json:"compaction_prompt"`
 
 	UpstreamTransport             string            `json:"upstream_transport"`
 	CaptureEnabled                bool              `json:"capture_enabled"`
@@ -56,6 +59,9 @@ func (s *Store) LoadSettings(ctx context.Context, defaults *Settings) (*Settings
 	}
 	if out.CompactionModel == "" {
 		out.CompactionModel = DefaultCompactionModel
+	}
+	if strings.TrimSpace(out.CompactionPrompt) == "" {
+		out.CompactionPrompt = compactprompt.Default
 	}
 	// New knobs have store-level defaults so older config callers also get the
 	// frozen behavior. Persisted values (including zero) still override these.
@@ -126,6 +132,9 @@ func (s *Store) LoadSettings(ctx context.Context, defaults *Settings) (*Settings
 	if v, ok := getStr("compaction_model"); ok && v != "" {
 		out.CompactionModel = v
 	}
+	if v, ok := getStr("compaction_prompt"); ok && strings.TrimSpace(v) != "" {
+		out.CompactionPrompt = v
+	}
 	getBool("capture_enabled", &out.CaptureEnabled)
 	getInt("capture_limit", &out.CaptureLimit)
 	if v, ok := getStr("default_model"); ok {
@@ -182,6 +191,7 @@ func (s *Store) SaveSettings(ctx context.Context, in *Settings) error {
 	pairs := map[string]string{
 		"compaction_mode":                  in.CompactionMode,
 		"compaction_model":                 in.CompactionModel,
+		"compaction_prompt":                in.CompactionPrompt,
 		"switch_on_429":                    fmt.Sprintf("%t", in.SwitchOn429),
 		"upstream_transport":               in.UpstreamTransport,
 		"capture_enabled":                  fmt.Sprintf("%t", in.CaptureEnabled),

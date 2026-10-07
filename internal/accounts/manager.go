@@ -767,9 +767,35 @@ func (m *Manager) CreateFromToken(ctx context.Context, name string, tok *oauth.T
 	return a, nil
 }
 
-// LinkCodexCredential attaches an optional legacy Codex credential to an existing
-// account. It is used for quota reads and Codex model catalog synchronization,
-// never as a fallback credential for generation.
+// LinkChatGPTCredential attaches verified OAuth output to an explicitly selected
+// account without replacing its Codex credential or management configuration.
+func (m *Manager) LinkChatGPTCredential(ctx context.Context, a *store.Account, tok *oauth.Token) error {
+	if a == nil || tok == nil || tok.Access == "" || tok.Refresh == "" {
+		return errors.New("accounts: missing ChatGPT credential")
+	}
+	if err := oauth.ValidateChatGPTAccessToken(tok.Access); err != nil {
+		return err
+	}
+	if err := oauth.ValidateChatGPTClientID(tok.ClientID); err != nil {
+		return err
+	}
+	if tok.AccountID != "" {
+		return errors.New("accounts: Codex credentials cannot be used as ChatGPT credentials")
+	}
+	if a.Email != "" && tok.Email != "" && !strings.EqualFold(a.Email, tok.Email) {
+		return errors.New("accounts: ChatGPT email does not match the target account")
+	}
+	lock := m.refreshLock(a.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	email := tok.Email
+	if email == "" {
+		email = a.Email
+	}
+	return m.store.AttachChatGPTCredential(ctx, a.ID, email, tok.PlanType, tok.Access, tok.Refresh, tok.IDToken, tok.ClientID, tok.ExpiresAt.UnixMilli())
+}
+
+// LinkCodexCredential attaches the optional quota/catalog credential.
 func (m *Manager) LinkCodexCredential(ctx context.Context, a *store.Account, tok *oauth.Token) error {
 	if a == nil || tok == nil || tok.Access == "" {
 		return errors.New("accounts: missing token")

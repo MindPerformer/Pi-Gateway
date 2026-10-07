@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"pi-gateway/internal/accounts"
+	"pi-gateway/internal/compactprompt"
 	"pi-gateway/internal/config"
 	"pi-gateway/internal/settings"
 	"pi-gateway/internal/store"
@@ -34,7 +35,7 @@ func TestCompactionSettingsValidationAndCatalog(t *testing.T) {
 	if !reflect.DeepEqual(ids, []string{"custom-summary", "gpt-6-luna"}) {
 		t.Fatalf("suggestions=%v", ids)
 	}
-	if holder.Get().CompactionMode != "on" || holder.Get().CompactionModel != "gpt-6-luna" {
+	if holder.Get().CompactionMode != "on" || holder.Get().CompactionModel != "gpt-6-luna" || holder.Get().CompactionPrompt != compactprompt.Default {
 		t.Fatal("wrong defaults")
 	}
 	policyRequest(t, s.handlePutSettings, "PUT", 0, `{"compaction_mode":"auto","compaction_model":" custom-summary "}`, 200)
@@ -53,5 +54,31 @@ func TestCompactionSettingsValidationAndCatalog(t *testing.T) {
 	}
 	if holder.Get().CompactionMode != "off" || holder.Get().CompactionModel != "custom-summary" {
 		t.Fatal("settings did not survive reload")
+	}
+	custom := "  保留任务进度。\n下一步：\n"
+	body, _ := json.Marshal(map[string]any{"compaction_prompt": custom})
+	policyRequest(t, s.handlePutSettings, "PUT", 0, string(body), 200)
+	if err := holder.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if holder.Get().CompactionPrompt != custom {
+		t.Fatal("custom prompt did not survive reload verbatim")
+	}
+	// Older clients omit the new field; updating other settings preserves it.
+	policyRequest(t, s.handlePutSettings, "PUT", 0, `{"compaction_mode":"on"}`, 200)
+	if holder.Get().CompactionPrompt != custom {
+		t.Fatal("partial update lost custom prompt")
+	}
+	body, _ = json.Marshal(map[string]any{"compaction_prompt": strings.Repeat("a", compactprompt.MaxBytes+1)})
+	policyRequest(t, s.handlePutSettings, "PUT", 0, string(body), 400)
+	if holder.Get().CompactionPrompt != custom {
+		t.Fatal("invalid prompt changed settings")
+	}
+	policyRequest(t, s.handlePutSettings, "PUT", 0, `{"compaction_prompt":" \n\t"}`, 200)
+	if err := holder.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if holder.Get().CompactionPrompt != compactprompt.Default {
+		t.Fatal("empty prompt did not restore Codex default")
 	}
 }

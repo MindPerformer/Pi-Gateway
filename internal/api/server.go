@@ -115,6 +115,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 type prepared struct {
 	CompactionMode     string
 	CompactionModel    string
+	CompactionPrompt   string
 	Compact            bool
 	CompactDirect      bool
 	Key                *store.APIKey
@@ -189,7 +190,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request, rawBody []byte, c
 	}
 	built := &piwire.BuiltRequest{}
 	p := &prepared{
-		CompactionMode: rt.CompactionMode, CompactionModel: rt.CompactionModel, Compact: compact, CompactDirect: compactDirect,
+		CompactionMode: rt.CompactionMode, CompactionModel: rt.CompactionModel, CompactionPrompt: rt.CompactionPrompt, Compact: compact, CompactDirect: compactDirect,
 		RuleEngine: engine, RuleVersion: version, Key: key, ClientBody: clientBody, ClientHeaders: r.Header.Clone(), Built: built, SessionID: sessionID,
 		WireSessionID: promptCacheKey, PoolSessionID: poolSessionID(ctx, sessionID),
 		WantsStream: wantsStream(clientBody), RawRequestBody: rawBody,

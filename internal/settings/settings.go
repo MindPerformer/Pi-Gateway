@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 
+	"pi-gateway/internal/compactprompt"
 	"pi-gateway/internal/config"
 	"pi-gateway/internal/store"
 )
@@ -30,7 +31,8 @@ func New(st *store.Store, cfg *config.Config) *Holder {
 func DefaultsFromConfig(cfg *config.Config) store.Settings {
 	return store.Settings{
 		CompactionMode: store.DefaultCompactionMode, CompactionModel: store.DefaultCompactionModel,
-		SwitchOn429: true, AccountCooldownSeconds: 60, MaxAttempts: 2,
+		CompactionPrompt: compactprompt.Default,
+		SwitchOn429:      true, AccountCooldownSeconds: 60, MaxAttempts: 2,
 		UpstreamTransport: cfg.Upstream.Transport,
 		CaptureEnabled:    cfg.Capture.Enabled,
 		CaptureLimit:      cfg.Capture.PerAccountLimit,

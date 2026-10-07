@@ -17,11 +17,12 @@ import (
 // accountView is the API representation of an account (secrets omitted).
 type accountView struct {
 	*store.Account
-	Inflight         int       `json:"inflight"`
-	HasRefreshToken  bool      `json:"has_refresh_token"`
-	TokenExpiresInMS int64     `json:"token_expires_in_ms"`
-	ProxyDisplay     string    `json:"proxy_display"`
-	Quota            quotaView `json:"quota"`
+	Inflight             int       `json:"inflight"`
+	HasRefreshToken      bool      `json:"has_refresh_token"`
+	HasChatGPTCredential bool      `json:"has_chatgpt_credential"`
+	TokenExpiresInMS     int64     `json:"token_expires_in_ms"`
+	ProxyDisplay         string    `json:"proxy_display"`
+	Quota                quotaView `json:"quota"`
 	// CodexLinked reports whether the optional quota credential is attached.
 	CodexLinked bool `json:"codex_linked"`
 }
@@ -91,13 +92,14 @@ func (s *Server) viewAccount(ctx context.Context, a *store.Account) accountView 
 		public.InheritedModelRestrictions = []store.InheritedModelRestriction{}
 	}
 	return accountView{
-		Account:          &public,
-		Inflight:         s.accounts.Inflight(a.ID),
-		HasRefreshToken:  a.RefreshToken != "",
-		TokenExpiresInMS: expiresIn,
-		ProxyDisplay:     proxyDisplay,
-		Quota:            s.buildQuotaView(ctx, a),
-		CodexLinked:      a.CodexLinked(),
+		Account:              &public,
+		Inflight:             s.accounts.Inflight(a.ID),
+		HasRefreshToken:      a.RefreshToken != "",
+		HasChatGPTCredential: a.AccessToken != "",
+		TokenExpiresInMS:     expiresIn,
+		ProxyDisplay:         proxyDisplay,
+		Quota:                s.buildQuotaView(ctx, a),
+		CodexLinked:          a.CodexLinked(),
 	}
 }
 
@@ -386,6 +388,10 @@ func (s *Server) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
 		acc.Name = strings.TrimSpace(*body.Name)
 	}
 	if body.Enabled != nil {
+		if *body.Enabled && acc.AccessToken == "" {
+			writeErr(w, http.StatusBadRequest, "link ChatGPT before enabling this account")
+			return
+		}
 		acc.Enabled = *body.Enabled
 	}
 	var proxyChange []*int64

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"pi-gateway/internal/compactprompt"
 	"pi-gateway/internal/config"
 	"pi-gateway/internal/middleware"
 	"pi-gateway/internal/store"
@@ -118,6 +119,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if body.CompactionModel == "" || len(body.CompactionModel) > 256 || strings.IndexFunc(body.CompactionModel, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		writeErr(w, 400, "compaction_model must be a nonempty model ID of at most 256 bytes without whitespace")
 		return
+	}
+	if len(body.CompactionPrompt) > compactprompt.MaxBytes {
+		writeErr(w, 400, "compaction_prompt must be at most 65536 bytes")
+		return
+	}
+	if strings.TrimSpace(body.CompactionPrompt) == "" {
+		body.CompactionPrompt = compactprompt.Default
 	}
 	if body.UpstreamTransport == "" || !contains(config.ValidTransports, body.UpstreamTransport) {
 		writeErr(w, http.StatusBadRequest, "upstream_transport must be one of: "+strings.Join(config.ValidTransports, ", "))

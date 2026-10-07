@@ -29,7 +29,7 @@ import (
 // adminPasswordHashKey is the settings key holding the admin password hash.
 const adminPasswordHashKey = "admin.password_hash"
 
-// sessionTTL is how long a browser session stays valid.
+// Server serves the admin API. Browser sessions are persisted by Store.
 type Server struct {
 	cfg      *config.Config
 	store    *store.Store
@@ -40,8 +40,7 @@ type Server struct {
 	factory  *egress.Factory
 	logger   *slog.Logger
 
-	mu       sync.Mutex
-	sessions map[string]time.Time
+	mu sync.Mutex
 	// generatedPassword is surfaced once at startup when no password was configured.
 	generatedPassword string
 }
@@ -73,7 +72,6 @@ func New(opts Options) *Server {
 		upstream: opts.Upstream,
 		factory:  opts.Factory,
 		logger:   logger,
-		sessions: map[string]time.Time{},
 	}
 	s.bindOAuthProxy()
 	return s
@@ -166,6 +164,9 @@ func (s *Server) Routes(mux *http.ServeMux, spa http.Handler) {
 	mux.HandleFunc("PUT /api/proxies/{id}/accounts", s.requireAuth(s.handleAssignProxyAccounts))
 
 	mux.HandleFunc("GET /api/accounts", s.requireAuth(s.handleListAccounts))
+	mux.HandleFunc("POST /api/accounts/batch", s.requireAuth(s.handleBatchAccounts))
+	mux.HandleFunc("POST /api/accounts/export", s.requireAuth(s.handleExportAccounts))
+	mux.HandleFunc("POST /api/accounts/import", s.requireAuth(s.handleImportAccounts))
 	// OAuth lives under its own prefix: /api/accounts/{id}/... would otherwise
 	// make "oauth" ambiguous with the {id} wildcard on Go's ServeMux.
 	mux.HandleFunc("POST /api/oauth/start", s.requireAuth(s.handleOAuthStart))
@@ -244,7 +245,12 @@ func (s *Server) Routes(mux *http.ServeMux, spa http.Handler) {
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.sessionValid(r) {
+		valid, err := s.sessionValid(r)
+		if err != nil {
+			writeErr(w, http.StatusServiceUnavailable, "could not validate session; retry shortly")
+			return
+		}
+		if !valid {
 			writeErr(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
@@ -252,25 +258,24 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) sessionValid(r *http.Request) bool {
+func sessionToken(r *http.Request) string {
 	token := bearerToken(r)
 	if token == "" {
 		token = r.URL.Query().Get("token")
 	}
+	return token
+}
+
+func (s *Server) sessionValid(r *http.Request) (bool, error) {
+	token := sessionToken(r)
 	if token == "" {
-		return false
+		return false, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	expiry, ok := s.sessions[token]
-	if !ok {
-		return false
+	hash, err := s.store.GetSecret(r.Context(), adminPasswordHashKey)
+	if err != nil {
+		return false, err
 	}
-	if time.Now().After(expiry) {
-		delete(s.sessions, token)
-		return false
-	}
-	return true
+	return s.store.AdminSessionValid(r.Context(), token, s.cfg.Admin.Username, hash)
 }
 
 func bearerToken(r *http.Request) string {
@@ -309,22 +314,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ttl := time.Duration(s.cfg.Admin.SessionTTLMinute) * time.Minute
-	s.mu.Lock()
-	s.sessions[token] = time.Now().Add(ttl)
-	s.mu.Unlock()
+	expiresAt := time.Now().Add(ttl).UnixMilli()
+	if err := s.store.CreateAdminSession(r.Context(), token, s.cfg.Admin.Username, hash, expiresAt); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not persist login session")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      token,
-		"expires_at": time.Now().Add(ttl).UnixMilli(),
+		"expires_at": expiresAt,
 		"username":   s.cfg.Admin.Username,
 	})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	token := bearerToken(r)
-	s.mu.Lock()
-	delete(s.sessions, token)
-	s.mu.Unlock()
+	if err := s.store.DeleteAdminSession(r.Context(), sessionToken(r)); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not revoke session")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

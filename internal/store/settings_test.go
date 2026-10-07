@@ -4,6 +4,8 @@ import (
 	"context"
 	"reflect"
 	"testing"
+
+	"pi-gateway/internal/compactprompt"
 )
 
 func TestRuntimePoolSettingsDefaultsAndRoundTrip(t *testing.T) {
@@ -20,11 +22,12 @@ func TestRuntimePoolSettingsDefaultsAndRoundTrip(t *testing.T) {
 	if defaults.RotationStrategy != "" || got.DefaultModel != "original" || got.DefaultStrategy != "sticky" {
 		t.Fatalf("caller defaults mutated: %+v %+v", defaults, got)
 	}
-	if got.CompactionMode != "on" || got.CompactionModel != "gpt-6-luna" {
+	if got.CompactionMode != "on" || got.CompactionModel != "gpt-6-luna" || got.CompactionPrompt != compactprompt.Default {
 		t.Fatalf("compaction defaults=%+v", got)
 	}
 	want := *got
 	want.CompactionMode, want.CompactionModel = "off", "custom-summary"
+	want.CompactionPrompt = "  保留用户目标。\n列出未完成事项。\n"
 	want.SwitchOn429 = false
 	want.RotationStrategy = "round_robin"
 	want.RequestIntervalMS = 125

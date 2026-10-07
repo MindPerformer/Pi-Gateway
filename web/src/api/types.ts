@@ -1,6 +1,8 @@
 // Types mirroring the Go API payloads.
 
 export interface Account {
+    /** False for an imported Codex credential awaiting ChatGPT authorization. */
+    has_chatgpt_credential?: boolean
     id: number
     name: string
     email: string
@@ -336,6 +338,7 @@ export interface Capture {
 export interface Settings {
     compaction_mode?: 'auto' | 'on' | 'off'
     compaction_model?: string
+    compaction_prompt?: string
     switch_on_429?: boolean
     account_cooldown_seconds?: number
     max_attempts?: number

@@ -110,7 +110,7 @@ jobs:
           results = Path('test-results.jsonl')
           assert results.is_file(), 'Go test results are missing; inspect the preceding test/build step'
           events = [json.loads(line) for line in results.read_text().splitlines()]
-          required = {'TestPostgresStoreIntegration', 'TestRedisIntegration', 'TestBackendMatrixIntegration', 'TestRulesPostgresPublicationAndUpgrade'}
+          required = {'TestPostgresStoreIntegration', 'TestRedisIntegration', 'TestBackendMatrixIntegration', 'TestRulesPostgresPublicationAndUpgrade', 'TestAccountManagementPostgresIntegration'}
           required.update(f'TestBackendMatrixIntegration/{variant}' for variant in ('sqlite-memory', 'sqlite-redis', 'postgres-memory', 'postgres-redis'))
           for test in sorted(required):
               matches = [event for event in events if event.get('Test') == test]

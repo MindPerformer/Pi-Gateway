@@ -143,9 +143,10 @@ func (c *Client) Close() { c.pool.closeAll() }
 type Request struct {
 	// CompactionMode: on uses model summaries directly, auto tries native first,
 	// off uses native only. Empty keeps auto for internal legacy callers.
-	CompactionMode  string
-	CompactionModel string
-	BeforeSummary   func(context.Context, string) error
+	CompactionMode   string
+	CompactionModel  string
+	CompactionPrompt string // Appended as the final user message for model summaries only.
+	BeforeSummary    func(context.Context, string) error
 	// Compact invokes the native HTTP compaction endpoint. CompactDirect keeps
 	// its JSON response shape; otherwise it is adapted into Responses events.
 	Compact       bool

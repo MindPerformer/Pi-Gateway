@@ -28,7 +28,7 @@ async function load() {
 	try {
 		const result = await api.getSettings()
 		data.value = result
-		form.value = { ...result.current, compaction_mode: result.current.compaction_mode || 'on', compaction_model: result.current.compaction_model || 'gpt-6-luna', switch_on_429: result.current.switch_on_429 ?? true, account_cooldown_seconds: result.current.account_cooldown_seconds ?? 60, max_attempts: result.current.max_attempts ?? 2 }
+		form.value = { ...result.current, compaction_mode: result.current.compaction_mode || 'on', compaction_model: result.current.compaction_model || 'gpt-6-luna', compaction_prompt: result.current.compaction_prompt ?? result.defaults.compaction_prompt ?? '', switch_on_429: result.current.switch_on_429 ?? true, account_cooldown_seconds: result.current.account_cooldown_seconds ?? 60, max_attempts: result.current.max_attempts ?? 2 }
 		mappingText.value = JSON.stringify(result.current.model_mappings ?? {}, null, 2)
 	} catch (err) {
 		toast.error(err instanceof Error ? err.message : 'failed to load settings')
@@ -166,6 +166,12 @@ const compactionModels = computed(() => [...new Set(['gpt-6-luna', form.value?.c
 							<datalist id="compaction-models"><option v-for="model in compactionModels" :key="model" :value="model" /></datalist>
 							<p id="s-compaction-model-hint" class="setting-option-hint">{{ t('settings.compactionModelHint') }}</p>
 							<p v-if="data?.compaction_models_error" class="setting-option-hint">{{ t('settings.compactionCatalogError') }}</p>
+						</div>
+						<div class="sm:col-span-2">
+							<label class="label" for="s-compaction-prompt">{{ t('settings.compactionPrompt') }}</label>
+							<textarea id="s-compaction-prompt" v-model="form.compaction_prompt" class="input font-mono" rows="10" spellcheck="false" :disabled="form.compaction_mode === 'off'" aria-describedby="s-compaction-prompt-hint" />
+							<p id="s-compaction-prompt-hint" class="setting-option-hint">{{ t('settings.compactionPromptHint') }}</p>
+							<button type="button" class="btn mt-2" :disabled="form.compaction_mode === 'off' || saving" @click="form.compaction_prompt = data?.defaults.compaction_prompt ?? ''">{{ t('settings.compactionPromptReset') }}</button>
 						</div>
 						<div>
 							<label class="label" for="s-model">{{ t('settings.defaultModel') }}</label>

@@ -43,8 +43,7 @@ func TestSummaryCompactionHTTPContinuationAndRecompact(t *testing.T) {
 					_, _ = io.WriteString(w, `{"error":{"message":"This ChatPass credential is not authorized for the requested operation."}}`)
 					return
 				}
-				instructions, _ := body["instructions"].(string)
-				if strings.Contains(instructions, "Compress the conversation") {
+				if bytes.Contains(encoded, []byte("CONTEXT CHECKPOINT COMPACTION")) {
 					summaryCalls.Add(1)
 					_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"summary of requirements"}]}],"usage":{"input_tokens":30,"output_tokens":8,"total_tokens":38}}}`+"\n\n")
 					return

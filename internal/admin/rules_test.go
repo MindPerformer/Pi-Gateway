@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"pi-gateway/internal/config"
 	"pi-gateway/internal/rules"
 	"pi-gateway/internal/rulesruntime"
 	"pi-gateway/internal/store"
@@ -58,7 +59,10 @@ func newRulesAdmin(t *testing.T, migrateEmpty bool) (*store.Store, *http.ServeMu
 			t.Fatal(err)
 		}
 	}
-	s := &Server{store: st, sessions: map[string]time.Time{"rules-test": time.Now().Add(time.Hour)}}
+	if err := st.CreateAdminSession(t.Context(), "rules-test", "admin", "", time.Now().Add(time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st, cfg: &config.Config{Admin: config.AdminConfig{Username: "admin"}}}
 	mux := http.NewServeMux()
 	s.Routes(mux, nil)
 	return st, mux

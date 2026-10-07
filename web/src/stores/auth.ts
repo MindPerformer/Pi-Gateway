@@ -1,6 +1,6 @@
 import {defineStore} from 'pinia'
 import {ref} from 'vue'
-import {api, clearToken, getToken, setToken} from '../api/client'
+import {api, ApiError, clearToken, getToken, setToken} from '../api/client'
 
 export const useAuthStore = defineStore('auth', () => {
     const token = ref(getToken())
@@ -8,15 +8,20 @@ export const useAuthStore = defineStore('auth', () => {
     const ready = ref(false)
 
     async function restore() {
+        const restoringToken = token.value
         if (!token.value) {
             ready.value = true
             return
         }
         try {
             const me = await api.me()
-            username.value = me.username
-        } catch {
-            signOut()
+            if (token.value === restoringToken) username.value = me.username
+        } catch (err) {
+            if (err instanceof ApiError && err.status === 401 && token.value === restoringToken) {
+                token.value = ''
+                username.value = ''
+                clearToken()
+            }
         } finally {
             ready.value = true
         }

@@ -11,6 +11,7 @@ import Modal from '../components/Modal.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import AccountOverviewCards from '../components/accounts/AccountOverviewCards.vue'
 import AccountsTable from '../components/accounts/AccountsTable.vue'
+import AccountManagementTools from '../components/accounts/AccountManagementTools.vue'
 import AccountProxyField from '../components/accounts/AccountProxyField.vue'
 import AccountModelTestModal from '../components/accounts/AccountModelTestModal.vue'
 import GroupManagerModal from '../components/accounts/GroupManagerModal.vue'
@@ -31,6 +32,8 @@ function accountProtocolDefaultLabel(globalValue?: string) {
 
 const accounts = ref<Account[]>([])
 const groups = ref<AccountGroup[]>([])
+const selectedIds = ref<number[]>([])
+const batchBusy = ref(false)
 const proxies = ref<SavedProxy[]>([])
 const groupsLoaded = ref(false)
 const proxiesLoaded = ref(false)
@@ -203,6 +206,7 @@ const pastePlaceholderKey = computed(() =>
 
 // openWizard starts a ChatGPT login (kind="chatgpt") or, when an account is
 // given, the Codex quota-credential link for that account (kind="codex").
+function linkChatGPT(account: Account) { openWizard('chatgpt', account) }
 function openWizard(kind: 'chatgpt' | 'codex', account?: Account) {
 	resetFlow()
 	wizardKind.value = kind
@@ -511,9 +515,10 @@ async function copyText(value: string, tag: string) {
 			<AccountOverviewCards :accounts="accounts" :loaded="loaded" />
 			<div v-if="loadError" class="notice notice-error" role="alert">{{ loadError }}</div>
 			<div v-if="groupError" class="notice notice-warning" role="alert">{{ t('accounts.groups') }}: {{ groupError }}</div>
-			<AccountsTable :accounts="accounts" :groups="groups" :groups-loaded="groupsLoaded" :loading="loading" :quota-busy="quotaBusy" :settings="settings"
+			<AccountManagementTools :accounts="accounts" :groups="groups" :groups-loaded="groupsLoaded" :selected-ids="selectedIds" @changed="groupsChanged" @busy="batchBusy = $event" @clear="selectedIds = []" />
+			<AccountsTable v-model:selected-ids="selectedIds" :batch-busy="batchBusy" :accounts="accounts" :groups="groups" :groups-loaded="groupsLoaded" :loading="loading" :quota-busy="quotaBusy" :settings="settings"
 				@refresh="reload" @create="openWizard('chatgpt')" @edit="openEdit" @delete="remove" @refresh-token="refresh" @recover="recover"
-				@quota="openQuota" @refresh-quota="refreshQuota" @link="linkCodex" @unlink="unlinkCodex" @toggle="toggleEnabled" @protocol="setProtocol"
+				@quota="openQuota" @refresh-quota="refreshQuota" @link="linkCodex" @link-chatgpt="linkChatGPT" @unlink="unlinkCodex" @toggle="toggleEnabled" @protocol="setProtocol"
 				@test="account => { modelTestTarget = account }" />
 		</div>
 

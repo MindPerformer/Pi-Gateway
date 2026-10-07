@@ -197,6 +197,21 @@ func run() error {
 				return nil
 			}
 
+			if accountRef != "" {
+				id, err := strconv.ParseInt(accountRef, 10, 64)
+				if err != nil {
+					return errors.New("invalid ChatGPT target account")
+				}
+				acc, err := st.GetAccount(ctx, id)
+				if err != nil || acc == nil {
+					return errors.New("ChatGPT target account not found")
+				}
+				if err := accountsMgr.LinkChatGPTCredential(ctx, acc, tok); err != nil {
+					return err
+				}
+				flow.DBAccountID = acc.ID
+				return nil
+			}
 			acc, err := accountsMgr.CreateFromToken(ctx, name, tok, proxyURL)
 			if err != nil {
 				return fmt.Errorf("persisting the authorized account failed: %w", err)

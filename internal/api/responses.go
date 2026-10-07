@@ -103,6 +103,7 @@ func (s *Server) newUpstreamRequest(ctx context.Context, p *prepared) (*upstream
 	return &upstream.Request{
 		CompactionMode:     p.CompactionMode,
 		CompactionModel:    p.CompactionModel,
+		CompactionPrompt:   p.CompactionPrompt,
 		BeforeSummary:      func(ctx context.Context, model string) error { return s.prepareSummaryModel(ctx, p, model) },
 		Compact:            p.Compact,
 		CompactDirect:      p.CompactDirect,

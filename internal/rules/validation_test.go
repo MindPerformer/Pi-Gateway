@@ -13,7 +13,7 @@ func TestStrictParseErrors(t *testing.T) {
 	tests := []struct{ name, raw, path string }{
 		{"unknown", strings.Replace(base, `"actions":[]`, `"actions":[],"extra":1`, 1), "/extra"},
 		{"duplicate", strings.Replace(base, `"name":"test"`, `"name":"test","name":"other"`, 1), "/name"},
-		{"version", strings.Replace(base, `"schema_version":1`, `"schema_version":2`, 1), "/schema_version"},
+		{"version", strings.Replace(base, `"schema_version":1`, `"schema_version":3`, 1), "/schema_version"},
 		{"phase", strings.Replace(base, `"request"`, `"responses"`, 1), "/phase"},
 		{"null-enabled", strings.Replace(base, `"actions":[]`, `"actions":[],"enabled":null`, 1), "/enabled"},
 		{"float-priority", strings.Replace(base, `"actions":[]`, `"actions":[],"priority":1.5`, 1), "/priority"},

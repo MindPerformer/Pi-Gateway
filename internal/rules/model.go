@@ -4,12 +4,16 @@ package rules
 import "fmt"
 
 const (
-	SchemaVersion      = 1
-	PhaseRequest       = "request"
-	PhaseResponseEvent = "response_event"
-	PhaseResponseBody  = "response_body"
-	OnErrorAbort       = "abort"
-	OnErrorSkipRule    = "skip_rule"
+	SchemaVersion         = 2
+	PhaseClientRequest    = "client_request"
+	PhaseRequestNormalize = "request_normalize"
+	PhaseRequestFinalize  = "request_finalize"
+	PhaseUpstreamHeaders  = "upstream_headers"
+	PhaseRequest          = "request"
+	PhaseResponseEvent    = "response_event"
+	PhaseResponseBody     = "response_body"
+	OnErrorAbort          = "abort"
+	OnErrorSkipRule       = "skip_rule"
 )
 
 // Rule is the shared persistence, API and editor contract. Lower priorities run first.
@@ -137,6 +141,8 @@ type Trace struct {
 	DurationNS     int64    `json:"duration_ns"`
 	Changes        []Change `json:"changes,omitempty"`
 	OmittedChanges int      `json:"omitted_changes,omitempty"`
+	ActionPath     string   `json:"action_path,omitempty"`
+	ItemPath       string   `json:"item_path,omitempty"`
 	EventType      string   `json:"event_type,omitempty"`
 	EventID        string   `json:"event_id,omitempty"`
 	Sequence       any      `json:"sequence,omitempty"`
@@ -157,19 +163,21 @@ func invalid(path, format string, args ...any) error {
 // Type is one of string, boolean, integer, pointer, string_array, pointer_array,
 // value, value_array, condition, condition_array. Value supports all JSON types.
 type FieldSpec struct {
-	Name        string         `json:"name"`
-	Type        string         `json:"type"`
-	Label       string         `json:"label"`
-	Description string         `json:"description"`
-	Default     any            `json:"default"`
-	Required    bool           `json:"required"`
-	Enum        []string       `json:"enum,omitempty"`
-	Minimum     *int64         `json:"minimum,omitempty"`
-	Maximum     *int64         `json:"maximum,omitempty"`
-	NonEmpty    bool           `json:"non_empty,omitempty"`
-	Control     string         `json:"control"`
-	DependsOn   map[string]any `json:"depends_on,omitempty"`
-	Examples    []any          `json:"examples,omitempty"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	Label       string            `json:"label"`
+	Description string            `json:"description"`
+	Default     any               `json:"default"`
+	Required    bool              `json:"required"`
+	Enum        []string          `json:"enum,omitempty"`
+	Minimum     *int64            `json:"minimum,omitempty"`
+	Maximum     *int64            `json:"maximum,omitempty"`
+	NonEmpty    bool              `json:"non_empty,omitempty"`
+	Control     string            `json:"control"`
+	DependsOn   map[string]any    `json:"depends_on,omitempty"`
+	Examples    []any             `json:"examples,omitempty"`
+	Help        map[string]string `json:"help,omitempty"`
+	EnumHelp    map[string]string `json:"enum_help,omitempty"`
 }
 
 type Capability struct {
@@ -178,6 +186,7 @@ type Capability struct {
 	Description string      `json:"description"`
 	Phases      []string    `json:"phases"`
 	Fields      []FieldSpec `json:"fields"`
+	Deprecated  bool        `json:"deprecated,omitempty"`
 }
 
 type CatalogSpec struct {

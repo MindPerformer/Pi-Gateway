@@ -214,7 +214,7 @@ export function ruleToGraph(rule: Rule, previous?: RuleGraph): RuleGraph {
         graph.edges.push(graphEdge(prior.id, current.id, 'action-in', index));
         prior = current
         for (const [key, value] of Object.entries(action.params)) {
-            if (value && typeof value === 'object' && typeof (value as RuleCondition).op === 'string' && key === 'predicate') {
+            if (value && typeof value === 'object' && typeof (value as RuleCondition).op === 'string' && key === 'predicate' && action.type==='array_filter') {
                 const child = condition(value as RuleCondition, `/actions/${index}/params/${key}`, x - 360, predicateRow)
                 graph.edges.push(graphEdge(child.node.id, current.id, `predicate:${key}`))
                 predicateRow = child.bottom

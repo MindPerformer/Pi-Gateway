@@ -68,7 +68,7 @@ func TestBoundaryRegressions(t *testing.T) {
 		c.Conditions[0].Phases[0] = "mutated"
 		c.ValueExpressions[0].Phases[0] = "mutated"
 		compileTest(t, rule("valid", act("json_set", map[string]any{"path": "/v", "value": 1})))
-		if Catalog().Phases[0] != PhaseRequest {
+		if Catalog().Phases[0] != PhaseClientRequest {
 			t.Fatal("catalog mutated validator")
 		}
 	})

@@ -1,7 +1,7 @@
 // JSON-only rule language. Persistence fields round-trip unchanged and are read-only in the visual editor.
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
-export type RulePhase = 'request' | 'response_event' | 'response_body'
-export type RuleSource = 'current' | 'client' | 'context' | 'item'
+export type RulePhase = 'client_request' | 'request_normalize' | 'request' | 'request_finalize' | 'upstream_headers' | 'response_event' | 'response_body'
+export type RuleSource = 'current' | 'original' | 'client' | 'context' | 'vars' | 'item'
 export type RuleEncoding = 'value' | 'json'
 export type ValueExpr = JsonValue
 
@@ -87,6 +87,8 @@ export type RuleRenderer =
 
 export interface RuleField {
     name: string
+    label?: string
+    enum_help?: Record<string,string>
     type: RuleRenderer
     required?: boolean
     default?: unknown
@@ -102,6 +104,7 @@ export interface RuleField {
 
 export interface RuleCapability {
     id: string
+    label?: string
     phases?: RulePhase[]
     fields: RuleField[]
     description: LocalizedHelp

@@ -359,3 +359,14 @@ func ResponseBody(ctx context.Context, c *store.Capture, events *rules.Engine) (
 }
 
 func seqPointer(seq int) *int { return &seq }
+
+func PipelineSample(c *store.Capture, phase string) (*Sample, error) {
+	sample, found, err := checkpoint(c, phase, capture.KindRuleInput)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("no complete %s checkpoint available", phase)
+	}
+	return sample, nil
+}

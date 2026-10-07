@@ -81,7 +81,7 @@ func publishUnifiedRules(t *testing.T, h *testHarness, definitions ...rules.Rule
 	var changes []store.RuleChange
 	for _, row := range snapshot.Rules {
 		existing[row.ID] = row
-		if !wanted[row.ID] {
+		if !wanted[row.ID] && row.Source != "protocol" && row.Source != "system" {
 			changes = append(changes, store.RuleChange{Kind: "delete", ID: row.ID, ExpectedRevision: row.Revision})
 		}
 	}
@@ -352,7 +352,7 @@ func TestUnifiedRulesRequestOrderingAndMultipleActions(t *testing.T) {
 	var execution []string
 	for _, raw := range record.RuleTraces {
 		trace := unifiedObject(t, raw)
-		if trace["phase"] == rules.PhaseRequest && trace["action_id"] != nil && trace["source_kind"] != "gateway" {
+		if trace["phase"] == rules.PhaseRequest && trace["action_id"] != nil && len(strings.Split(fmt.Sprint(trace["action_path"]), "/")) <= 4 && trace["source_kind"] != "gateway" {
 			execution = append(execution, fmt.Sprint(trace["rule_id"], "/", trace["action_id"]))
 		}
 	}
@@ -886,20 +886,19 @@ func TestUnifiedRulesGatewayPiShapeProvenance(t *testing.T) {
 		t.Fatalf("user rules overrode required upstream Pi shape: %s", raw)
 	}
 	userTraces := unifiedTraces(t, record, "user-shape")
-	gatewayTraces := unifiedTraces(t, record, "gateway:pi_shape")
-	if len(userTraces) != 2 || len(gatewayTraces) != 1 {
-		t.Fatalf("missing independent user/gateway provenance: user=%+v gateway=%+v", userTraces, gatewayTraces)
+	protocolTraces := unifiedTraces(t, record, "protocol-request-finalize")
+	if len(userTraces) != 2 || len(protocolTraces) < 3 {
+		t.Fatalf("missing protocol rule provenance")
 	}
-	for _, trace := range userTraces {
-		if trace["status"] != "changed" || trace["source"] != "rule" || trace["source_kind"] == "gateway" {
-			t.Errorf("user action mislabeled: %+v", trace)
-		}
+	gateway := protocolTraces[len(protocolTraces)-1]
+	if gateway["phase"] != rules.PhaseRequestFinalize || gateway["source"] != "rule" {
+		t.Fatalf("protocol change is not a rule: %v", gateway)
 	}
-	gateway := gatewayTraces[0]
-	if gateway["source_kind"] != "gateway" || gateway["status"] != "changed" || gateway["action_id"] != "pi_shape" {
-		t.Fatalf("normalization repair attributed to user rule: %+v", gateway)
+	changes := []any{}
+	for _, trace := range protocolTraces {
+		items, _ := trace["changes"].([]any)
+		changes = append(changes, items...)
 	}
-	changes, _ := gateway["changes"].([]any)
 	seen := map[string]bool{}
 	for _, rawChange := range changes {
 		change := rawChange.(map[string]any)

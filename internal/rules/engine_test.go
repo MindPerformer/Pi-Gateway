@@ -77,7 +77,7 @@ func TestActionsAll(t *testing.T) {
 			res := applyTest(t, r, tt.body)
 			assertJSON(t, res.Body, tt.want)
 			assertJSON(t, tt.body, original)
-			if !res.Changed || len(res.Traces) != 1 || res.Traces[0].Status != "changed" {
+			if !res.Changed || len(res.Traces) == 0 || res.Traces[len(res.Traces)-1].Status != "changed" {
 				t.Fatalf("incorrect change trace %+v", res)
 			}
 			if tt.name == "rewrite_model" && res.Model != "new" {
@@ -180,7 +180,7 @@ func TestNoChangeAndRealDiff(t *testing.T) {
 	if res.Traces[0].Status != "no_change" || len(res.Traces[0].Changes) != 0 {
 		t.Fatal("middleware note became fake diff")
 	}
-	change := res.Traces[1].Changes[0]
+	change := res.Traces[len(res.Traces)-1].Changes[0]
 	if change.Path != "/explicit_null" || change.BeforeExists || !change.AfterExists || change.After != nil {
 		t.Fatalf("null/missing conflated %+v", change)
 	}

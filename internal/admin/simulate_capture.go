@@ -207,7 +207,7 @@ func validateCaptureSimulation(req *captureSimulationRequest) error {
 	if req.CaptureID <= 0 {
 		return bad("/capture_id", "positive capture_id is required")
 	}
-	if req.Phase != rules.PhaseRequest && req.Phase != rules.PhaseResponseEvent && req.Phase != rules.PhaseResponseBody {
+	if !rules.IsPhase(req.Phase) {
 		return bad("/phase", "invalid phase")
 	}
 	if len(req.Rule) == 0 || string(req.Rule) == "null" {
@@ -288,8 +288,10 @@ func selectSimulationSamples(ctx context.Context, c *store.Capture, rt *store.Se
 		var err error
 		if req.Phase == rules.PhaseRequest {
 			sample, err = rulescapture.Request(c, rt)
-		} else {
+		} else if req.Phase == rules.PhaseResponseBody {
 			sample, err = rulescapture.ResponseBody(ctx, c, saved)
+		} else {
+			sample, err = rulescapture.PipelineSample(c, req.Phase)
 		}
 		if err != nil {
 			return nil, 0, false, err

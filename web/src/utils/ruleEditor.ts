@@ -7,7 +7,7 @@ export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 export interface RuleDraft {
     rule: Rule;
     code: string;
-    mode: 'visual' | 'code';
+    mode: 'steps' | 'visual' | 'code';
     base: string;
     revision?: number;
     errors: RuleFieldError[];
@@ -24,7 +24,7 @@ export function createDraft(rule: Rule, isNew = false): RuleDraft {
     return {
         rule: clone(rule),
         code,
-        mode: 'visual',
+        mode: 'steps',
         base: code,
         revision: rule.revision,
         errors: [],
@@ -172,7 +172,12 @@ export function validateRule(value: unknown, schema = ruleSchema): RuleFieldErro
     function expression(v: unknown, path: string) {
         json(v, path)
         if (!object(v)) return
-        if (Object.hasOwn(v, '$ref')) {
+        if (Object.hasOwn(v, '$expr')) {
+            if(Object.keys(v).length!==1 || !object(v.$expr)){error(path,'$expr must be the only key and contain an object');return}
+            keys(v.$expr,['op','args'],`${path}/$expr`)
+            if(typeof v.$expr.op!=='string' || !Array.isArray(v.$expr.args)){error(path,'Expression requires op and args');return}
+            v.$expr.args.forEach((arg,i)=>expression(arg,`${path}/$expr/args/${i}`))
+        } else if (Object.hasOwn(v, '$ref')) {
             if (Object.keys(v).length !== 1 || !object(v.$ref)) {
                 error(path, '$ref must be the only key and contain an object');
                 return
@@ -198,6 +203,7 @@ export function validateRule(value: unknown, schema = ruleSchema): RuleFieldErro
         else if (f.type === 'values') {
             if (!Array.isArray(v)) error(path, 'Expected array'); else v.forEach((x, i) => expression(x, atPath(path, i)))
         } else if (f.type === 'condition') condition(v, path)
+        else if (f.type === 'action_array') { actions(v,path) }
         else if (f.type === 'strings') {
             if (!Array.isArray(v) || v.some(x => typeof x !== 'string')) error(path, 'Expected string array');
             if (f.name === 'paths' && Array.isArray(v)) v.forEach((x, i) => pointer(x, atPath(path, i)))
@@ -229,13 +235,15 @@ export function validateRule(value: unknown, schema = ruleSchema): RuleFieldErro
 
     if (!object(value)) return [{path: '', message: 'Expected rule object'}]
     keys(value, [...schema.rule_fields.map(f => f.name), 'id', 'revision', 'order_index', 'created_at', 'updated_at', 'legacy_name', 'source'], '')
-    if (value.schema_version !== schema.schema_version) error('/schema_version', 'Unsupported schema version')
+    if (![1, schema.schema_version].includes(Number(value.schema_version))) error('/schema_version', 'Unsupported schema version')
     for (const f of schema.rule_fields) if (f.name !== 'actions') field(value[f.name], f, atPath('', f.name))
-    if (!Array.isArray(value.actions)) error('/actions', 'Expected ordered action array')
+    const phase=value.phase
+    function actions(list: unknown,base: string) {
+    if (!Array.isArray(list)) error(base, 'Expected ordered action array')
     else {
         const ids = new Set<string>()
-        value.actions.forEach((a, i) => {
-            const path = `/actions/${i}`
+        list.forEach((a, i) => {
+            const path = `${base}/${i}`
             if (!object(a)) {
                 error(path, 'Expected action');
                 return
@@ -248,7 +256,7 @@ export function validateRule(value: unknown, schema = ruleSchema): RuleFieldErro
                 error(`${path}/type`, 'Unknown action type');
                 return
             }
-            if (!cap.phases?.includes(value.phase as never)) error(`${path}/type`, 'Action not supported in this phase')
+            if (!cap.phases?.includes(phase as never)) error(`${path}/type`, 'Action not supported in this phase')
             if (!object(a.params)) {
                 error(`${path}/params`, 'Expected parameter object');
                 return
@@ -257,6 +265,8 @@ export function validateRule(value: unknown, schema = ruleSchema): RuleFieldErro
             cap.fields.forEach(f => field((a.params as Record<string, unknown>)[f.name], f, `${path}/params/${f.name}`))
         })
     }
+    }
+    actions(value.actions,"/actions")
     return errors
 }
 

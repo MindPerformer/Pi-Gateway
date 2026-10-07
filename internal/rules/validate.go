@@ -20,6 +20,10 @@ type compiledAction struct {
 	path      string
 	re        *regexp.Regexp
 	predicate *compiledCondition
+	children  []compiledAction
+	otherwise []compiledAction
+	functions map[string][]compiledAction
+	keep      *compiledCondition
 }
 type compiledRule struct {
 	raw     Rule
@@ -104,7 +108,7 @@ func compileRule(r Rule, path string) (compiledRule, error) {
 	bad := func(k, msg string) (compiledRule, error) {
 		return compiledRule{}, invalid(joinPointer(path, k), "%s", msg)
 	}
-	if r.SchemaVersion != SchemaVersion {
+	if r.SchemaVersion != 1 && r.SchemaVersion != SchemaVersion {
 		return bad("schema_version", "unsupported schema version")
 	}
 	if strings.TrimSpace(r.Name) == "" {
@@ -160,9 +164,24 @@ func compileRule(r Rule, path string) (compiledRule, error) {
 		}
 		out.actions = append(out.actions, ca)
 	}
+	if err := validateCalls(out.actions, nil, map[string]bool{}, 0); err != nil {
+		return compiledRule{}, err
+	}
 	return out, nil
 }
 func validateFields(params map[string]any, fs []FieldSpec, path string, phase string, item bool) (map[string]any, error) {
+	// Normalize programmatically generated recipe ASTs exactly like submitted JSON.
+	if params != nil {
+		raw, err := json.Marshal(params)
+		if err != nil {
+			return nil, invalid(path, "%v", err)
+		}
+		v, err := decodeAny(raw, path)
+		if err != nil {
+			return nil, err
+		}
+		params = v.(map[string]any)
+	}
 	known := map[string]FieldSpec{}
 	out := make(map[string]any, len(fs))
 	for _, f := range fs {
@@ -259,6 +278,8 @@ func validateFieldValue(v any, f FieldSpec, path, phase string, item bool) error
 	case "condition":
 		_, e := asCondition(v, path)
 		return e
+	case "action_array":
+		return validateLiteral(v, path, 0)
 	case "condition_array":
 		switch v.(type) {
 		case []Condition, []any:
@@ -324,7 +345,16 @@ func validateLiteral(v any, path string, depth int) error {
 	return nil
 }
 func validateExpression(v any, path, phase string, item bool, depth int) error {
+	if depth > MaxDepth {
+		return invalid(path, "maximum expression depth exceeded")
+	}
 	if m, ok := v.(map[string]any); ok {
+		if expr, exists := m["$expr"]; exists {
+			if len(m) != 1 {
+				return invalid(path, "$expr must be the only key")
+			}
+			return validateComputed(expr, path+"/$expr", phase, item, depth+1)
+		}
 		if literal, exists := m["$literal"]; exists {
 			if len(m) != 1 {
 				return invalid(path, "$literal must be the only key")
@@ -361,7 +391,7 @@ func validateSource(source, p, path, phase string, item bool) error {
 		if parts[0] == "item_index" && !item {
 			return invalid(path+"/path", "item_index is only available inside array predicates")
 		}
-		if phase == PhaseRequest && contains([]string{"account_id", "upstream_protocol", "event_type"}, parts[0]) {
+		if phase != PhaseResponseEvent && phase != PhaseResponseBody && phase != PhaseUpstreamHeaders && contains([]string{"account_id", "upstream_protocol", "event_type"}, parts[0]) {
 			return invalid(path+"/path", "%s is unavailable in request phase", parts[0])
 		}
 	}
@@ -430,12 +460,12 @@ func compileCondition(c Condition, path, phase string, item bool, depth int, nod
 		}
 		out.re = re
 	}
-	if contains([]string{"gt", "gte", "lt", "lte"}, c.Op) && !isReference(c.Value) {
+	if contains([]string{"gt", "gte", "lt", "lte"}, c.Op) && !isReference(c.Value) && !isComputed(c.Value) {
 		if _, ok := number(expressionLiteral(c.Value)); !ok {
 			return nil, invalid(path+"/value", "numeric comparison requires a number or reference")
 		}
 	}
-	if (c.Op == "in" || c.Op == "not_in") && !isReference(c.Value) {
+	if (c.Op == "in" || c.Op == "not_in") && !isReference(c.Value) && !isComputed(c.Value) {
 		if _, ok := expressionLiteral(c.Value).([]any); !ok {
 			return nil, invalid(path+"/value", "membership requires an array or reference")
 		}
@@ -459,6 +489,13 @@ func expressionLiteral(v any) any {
 	return v
 }
 func compileAction(a Action, path, phase string, nodes *int) (compiledAction, error) {
+	return compileScopedAction(a, path, phase, nodes, false, 0)
+}
+func compileScopedAction(a Action, path, phase string, nodes *int, item bool, depth int) (compiledAction, error) {
+	if depth > MaxDepth {
+		return compiledAction{}, invalid(path, "maximum flow depth exceeded")
+	}
+
 	cap, ok := lookupCapability(actionSpecs, a.Type)
 	if !ok {
 		return compiledAction{}, invalid(path+"/type", "unknown action %q", a.Type)
@@ -466,12 +503,27 @@ func compileAction(a Action, path, phase string, nodes *int) (compiledAction, er
 	if !contains(cap.Phases, phase) {
 		return compiledAction{}, invalid(path+"/type", "%s is not allowed in %s", a.Type, phase)
 	}
-	p, e := validateFields(a.Params, cap.Fields, path+"/params", phase, false)
+	p, e := validateFields(a.Params, cap.Fields, path+"/params", phase, item)
 	if e != nil {
 		return compiledAction{}, e
 	}
 	a.Params = p
+	if isLegacyAction(a.Type) {
+		expanded, err := expandLegacyAction(a)
+		if err != nil {
+			return compiledAction{}, err
+		}
+		return compileScopedAction(Action{ID: a.ID, Type: "sequence", Params: map[string]any{"steps": expanded}}, path, phase, nodes, item, depth+1)
+	}
 	out := compiledAction{raw: a, path: path}
+	if isFlowAction(a.Type) {
+		if e := compileFlow(&out, phase, nodes, item, depth); e != nil {
+			return out, e
+		}
+	}
+	if a.Type == "let" && !variableName.MatchString(stringParam(p, "name")) {
+		return out, invalid(path+"/params/name", "invalid variable name")
+	}
 	if a.Type == "array_filter" {
 		c, e := asCondition(p["predicate"], path+"/params/predicate")
 		if e != nil {
@@ -537,7 +589,7 @@ func compileAction(a Action, path, phase string, nodes *int) (compiledAction, er
 			}
 		}
 	}
-	if a.Type == "json_merge" && !isReference(p["value"]) {
+	if a.Type == "json_merge" && !isReference(p["value"]) && !isComputed(p["value"]) {
 		if _, ok := object(expressionLiteral(p["value"])); !ok {
 			return out, invalid(path+"/params/value", "merge value must be an object or reference")
 		}

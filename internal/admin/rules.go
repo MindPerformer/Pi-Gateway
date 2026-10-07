@@ -127,7 +127,7 @@ func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
 	if filter.Search == "" {
 		filter.Search = r.URL.Query().Get("q")
 	}
-	if filter.Phase != "" && filter.Phase != rules.PhaseRequest && filter.Phase != rules.PhaseResponseEvent && filter.Phase != rules.PhaseResponseBody {
+	if filter.Phase != "" && !rules.IsPhase(filter.Phase) {
 		writeErr(w, http.StatusBadRequest, "invalid phase")
 		return
 	}
@@ -480,7 +480,7 @@ func (s *Server) handleSimulateRules(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "input is required")
 		return
 	}
-	if body.Phase != rules.PhaseRequest && body.Phase != rules.PhaseResponseEvent && body.Phase != rules.PhaseResponseBody {
+	if !rules.IsPhase(body.Phase) {
 		writeErr(w, http.StatusBadRequest, "invalid phase")
 		return
 	}

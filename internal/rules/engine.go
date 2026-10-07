@@ -116,7 +116,9 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 		}
 		facts = c.(map[string]any)
 	}
-	s := evaluation{ctx: ctx, body: body, client: client, facts: facts, model: in.Model, originalModel: in.Model, eventType: in.EventType, phase: phase, conditions: newConditionCollector(in), unavailable: in.Unavailable}
+	steps := 0
+	original, _ := cloneJSON(body)
+	s := evaluation{original: original, vars: map[string]any{}, steps: &steps, ctx: ctx, body: body, client: client, facts: facts, model: in.Model, originalModel: in.Model, eventType: in.EventType, phase: phase, conditions: newConditionCollector(in), unavailable: in.Unavailable}
 	if phase == PhaseRequest {
 		if _, ok := object(body); !ok {
 			return Result{}, invalid("/body", "request body must be an object")
@@ -214,6 +216,7 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 			continue
 		}
 		candidate := s
+		candidate.vars = map[string]any{}
 		candidate.body, err = cloneJSON(s.body)
 		if err != nil {
 			return finish(err)
@@ -222,6 +225,8 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 		pending.maxBytes = collector.remainingBytes()
 		pending.maxTraces = collector.remainingCount()
 		pending.enabled = collector.enabled
+		candidate.nestedTraces = pending
+		candidate.traceRule = &r
 		var actionErr error
 		var outcome terminal
 		var errorPath string
@@ -251,6 +256,7 @@ func (e *Engine) Apply(ctx context.Context, phase string, in *Input) (Result, er
 				}
 			}
 			t := baseTrace(r, &candidate)
+			t.ActionPath = a.path
 			t.ActionID = a.raw.ID
 			t.ActionType = a.raw.Type
 			t.ActionIndex = i

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"pi-gateway/internal/middleware"
-	"pi-gateway/internal/piwire"
 )
 
 type terminal struct {
@@ -25,10 +24,8 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 	p := a.raw.Params
 	path := stringParam(p, "path")
 	switch a.raw.Type {
-	case "rewrite_model", "drop_environment_context", "drop_tools", "passthrough_fields", "set_reasoning":
-		return terminal{}, applyLegacy(s, a.raw.Type, p)
-	case "drop_input_items":
-		return terminal{}, a.dropInput(s)
+	case "sequence", "if", "for_each", "walk", "scope", "call", "let":
+		return a.executeFlow(s)
 	case "json_set":
 		if p["if_exists"] == "keep" {
 			if _, exists, e := s.selectValue("current", path, ""); e != nil {
@@ -193,48 +190,6 @@ func (a compiledAction) execute(s *evaluation) (terminal, error) {
 func onMissing(p map[string]any) error {
 	if p["on_missing"] == "error" {
 		return fmt.Errorf("path does not exist")
-	}
-	return nil
-}
-func applyLegacy(s *evaluation, name string, p map[string]any) error {
-	m, ok := object(s.body)
-	if !ok {
-		return fmt.Errorf("legacy-compatible request action requires an object body")
-	}
-	ordered, wasOrdered := s.body.(*piwire.OrderedMap)
-	if !wasOrdered {
-		ordered = piwire.NewOrderedMap()
-		for _, k := range keys(m) {
-			ordered.Set(k, m[k])
-		}
-	}
-	req := &middleware.Request{Body: ordered, Model: s.model, Meta: map[string]any{"client_body": s.client}}
-	// PassthroughFields expects a plain map; support immutable ordered client objects too.
-	if c, ok := object(s.client); ok {
-		// The old adapter assigns passthrough values by reference; detach those values
-		// so later actions cannot mutate the read-only original client source.
-		if name == "passthrough_fields" {
-			detached, err := cloneJSON(c)
-			if err != nil {
-				return err
-			}
-			req.Meta["client_body"] = detached
-		} else {
-			req.Meta["client_body"] = c
-		}
-	}
-	if _, e := oldRegistry[name].Apply(s.ctx, req, p); e != nil {
-		return e
-	}
-	s.model = req.Model
-	if wasOrdered {
-		s.body = req.Body
-	} else {
-		out := make(map[string]any)
-		for _, k := range req.Body.Keys() {
-			out[k], _ = req.Body.Get(k)
-		}
-		s.body = out
 	}
 	return nil
 }

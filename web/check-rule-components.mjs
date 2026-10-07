@@ -190,7 +190,7 @@ export async function checkRuleComponents(schema) {
         } else if (field.type === 'condition') {
             await fire(control(host, n => n.type === 'select'), 'onChange', 'not');
             assert.deepEqual(normalized(state.value), {op: 'not', conditions: [{op: 'always'}]})
-        } else assert.fail(`No real component test for renderer ${field.type}`)
+        } else if(field.type==='action_array'){await fire(control(host,n=>n.props.id==='add-rule-action'),'onChange','json_set');assert.equal(state.value.at(-1).type,'json_set')} else assert.fail(`No real component test for renderer ${field.type}`)
         fieldsEdited++;
         mounted.unmount()
         if (!field.required) {

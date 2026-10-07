@@ -3,6 +3,7 @@ import type {Rule, RuleCondition} from '../api/rules'
 type Pair = readonly [string, string]
 export const ruleLabels: Record<string, Record<string, Pair>> = {
     condition: {
+ test:['Expression test','计算条件'],
         always: ['Always match', '始终匹配'],
         all: ['All conditions', '全部满足'],
         any: ['Any condition', '任一满足'],
@@ -26,6 +27,7 @@ export const ruleLabels: Record<string, Record<string, Pair>> = {
         type: ['Value type', '值类型'],
     },
     action: {
+ sequence:['Sequence','顺序执行'],if:['Branch','条件分支'],for_each:['For each','逐项处理'],walk:['Walk subtree','递归遍历'],let:['Variable','保存变量'],scope:['Fragments','规则片段'],call:['Call fragment','调用片段'],
         rewrite_model: ['Change model', '修改模型'],
         drop_environment_context: ['Remove environment context', '清理环境上下文'],
         drop_input_items: ['Remove input items', '删除输入项'],
@@ -43,11 +45,13 @@ export const ruleLabels: Record<string, Record<string, Pair>> = {
         drop_event: ['Drop response event', '丢弃响应事件'],
     },
     phase: {
+ client_request:['Client input','客户端输入'],request_normalize:['Request construction','请求构建'],request_finalize:['Protocol fields','协议字段'],upstream_headers:['Upstream headers','发送前请求头'],
         request: ['Request rule', '请求规则'],
         response_event: ['Response event rule', '响应事件规则'],
         response_body: ['Response body rule', '响应正文规则']
     },
     source: {
+ original:['Stage original','阶段原始输入'],vars:['Local variables','局部变量'],protocol:['Protocol rules','协议规则'],system:['System','系统'],
         current: ['Current payload', '当前载荷'],
         client: ['Original client payload', '客户端原始载荷'],
         context: ['Context facts', '上下文事实'],

@@ -10,7 +10,7 @@ func protectedKey(k, phase string) bool {
 	case "authorization", "proxy-authorization", "api_key", "access_token", "refresh_token", "cookie", "set-cookie":
 		return true
 	}
-	if phase == PhaseRequest {
+	if phase != PhaseResponseEvent && phase != PhaseResponseBody {
 		return false
 	}
 	switch k {
@@ -29,7 +29,7 @@ func protectedPath(path, phase string) bool {
 			return true
 		}
 	}
-	if phase != PhaseRequest && len(parts) > 0 {
+	if (phase == PhaseResponseEvent || phase == PhaseResponseBody) && len(parts) > 0 {
 		if parts[0] == "status" || parts[0] == "error" || parts[0] == "incomplete_details" {
 			return true
 		}
@@ -71,7 +71,7 @@ func validateProtectedAction(a Action, phase, path string) error {
 	}
 	// Known literal assignments can also be rejected before execution. Ancestor replacements
 	// still require runtime projection comparison because references depend on actual input.
-	if phase != PhaseRequest && (a.Type == "json_set" || a.Type == "json_merge") && !isReference(p["value"]) {
+	if (phase == PhaseResponseEvent || phase == PhaseResponseBody) && (a.Type == "json_set" || a.Type == "json_merge") && !isReference(p["value"]) {
 		if containsProtectedLiteral(expressionLiteral(p["value"]), phase) {
 			return invalid(path+"/params/value", "literal value contains protected response fields")
 		}
@@ -106,7 +106,7 @@ func protectedProjection(v any, phase string) map[string]any {
 					out[p] = x
 					continue
 				}
-				if phase != PhaseRequest && k == "name" {
+				if (phase == PhaseResponseEvent || phase == PhaseResponseBody) && k == "name" {
 					typ, _ := m["type"].(string)
 					if strings.Contains(typ, "call") || strings.Contains(typ, "tool") {
 						out[p] = x

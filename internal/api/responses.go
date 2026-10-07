@@ -86,6 +86,20 @@ func (s *Server) newUpstreamRequest(ctx context.Context, p *prepared) (*upstream
 		headerOpts.TimeoutSeconds = s.cfg.Upstream.RequestTimeoutSeconds
 	}
 
+	sseHeaders, wsHeaders := piwire.BuildSSEHeaders(headerOpts), piwire.BuildWSHeaders(headerOpts)
+	if p.RuleEngine != nil {
+		p.RuleContext["settings"] = s.ruleSettings(rt)
+		sseHeaders, err = p.buildRuleHeaders(ctx, "sse", accountID)
+		if err != nil {
+			return nil, pipelineAPIError(err)
+		}
+		wsHeaders, err = p.buildRuleHeaders(ctx, "websocket", accountID)
+		if err != nil {
+			return nil, pipelineAPIError(err)
+		}
+		sseHeaders.Set("Authorization", "Bearer "+accessToken)
+		wsHeaders.Set("Authorization", "Bearer "+accessToken)
+	}
 	return &upstream.Request{
 		CompactionMode:     p.CompactionMode,
 		CompactionModel:    p.CompactionModel,
@@ -93,8 +107,8 @@ func (s *Server) newUpstreamRequest(ctx context.Context, p *prepared) (*upstream
 		Compact:            p.Compact,
 		CompactDirect:      p.CompactDirect,
 		ProxyURL:           p.Account.ProxyURL,
-		SSEHeaders:         piwire.BuildSSEHeaders(headerOpts),
-		WSHeaders:          piwire.BuildWSHeaders(headerOpts),
+		SSEHeaders:         sseHeaders,
+		WSHeaders:          wsHeaders,
 		Body:               p.Built.JSON,
 		SessionID:          p.SessionID,
 		PoolSessionID:      p.PoolSessionID,

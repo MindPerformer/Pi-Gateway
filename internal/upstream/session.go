@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,8 +37,16 @@ func newConnectionID() string {
 // carry a different hint while still addressing the same authenticated socket.
 func (c *Client) identityHash(req *Request) string {
 	identity := []string{c.cfg.WSURL, req.ProxyURL}
-	for _, name := range []string{"Authorization", "Chatgpt-Account-Id", "Openai-Organization", "Openai-Project", "Cookie"} {
-		identity = append(identity, name)
+	names := []string{}
+	for name := range req.WSHeaders {
+		if strings.EqualFold(name, "session-id") || strings.EqualFold(name, "x-client-request-id") {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		identity = append(identity, strings.ToLower(name))
 		identity = append(identity, req.WSHeaders.Values(name)...)
 	}
 	raw, _ := json.Marshal(identity)

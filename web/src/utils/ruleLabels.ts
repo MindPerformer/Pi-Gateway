@@ -1,4 +1,4 @@
-import type {Rule, RuleCondition} from '../api/rules'
+import type {Rule, RuleCondition, RuleField} from '../api/rules'
 
 type Pair = readonly [string, string]
 export const ruleLabels: Record<string, Record<string, Pair>> = {
@@ -237,6 +237,12 @@ export function ruleDisplayName(rule: Pick<Rule, 'name' | 'source' | 'legacy_nam
 
 export function ruleLabel(group: string, value: string, locale: string): string {
     return ruleLabels[group]?.[value]?.[locale === 'zh-CN' ? 1 : 0] ?? value
+}
+
+export function ruleFieldLabel(field: Pick<RuleField, 'name' | 'label'>, locale: string): string {
+    return ruleLabels.field?.[field.name]
+        ? ruleLabel('field', field.name, locale)
+        : field.label?.split(' / ')[locale === 'zh-CN' ? 0 : 1] ?? field.name
 }
 
 export function ruleOptionLabel(value: string, locale: string): string {

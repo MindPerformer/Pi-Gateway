@@ -8,7 +8,7 @@ const clone = <T>(value: T): T => structuredClone(value)
 
 export function fixtureRule(overrides: Partial<Rule> = {}): Rule {
     return {
-        schema_version: 1,
+        schema_version: 2,
         id: 'rule-request',
         name: 'Fixture request rule',
         description: 'Public synthetic browser regression fixture',
@@ -28,7 +28,11 @@ export function fixtureRule(overrides: Partial<Rule> = {}): Rule {
                 type: 'json_set',
                 params: {path: '/metadata/reviewed', value: false, create_parents: true}
             },
-            {id: 'action-model', type: 'rewrite_model', params: {model: 'fixture-new-model'}},
+            {
+                id: 'action-model',
+                type: 'text_replace',
+                params: {path: '/model', pattern: 'fixture-old-model', replacement: 'fixture-new-model'}
+            },
         ],
         stop_after_match: false,
         on_error: 'skip_rule',
@@ -197,9 +201,13 @@ export class AdminFixture {
         await expect.poll(() => this.requests.some(request => request.path === '/api/rules/schema')).toBe(true)
     }
 
-    async editRule(name = 'Fixture request rule') {
+    async editRule(name = 'Fixture request rule', mode: 'visual' | 'steps' = 'visual') {
         await this.page.locator('article').filter({has: this.page.getByRole('heading', {name, exact: true})})
             .getByRole('button', {name: '编辑', exact: true}).click()
+        if (mode === 'visual') {
+            await this.page.locator('form.rule-editor').getByRole('button', {name: /^(图形编辑|Visual editor)$/}).click()
+            await expect(this.page.getByTestId('rule-canvas')).toBeVisible()
+        }
     }
 
     simulationRequests() {

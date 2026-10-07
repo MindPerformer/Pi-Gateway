@@ -384,12 +384,12 @@ function checkQuickAdd(m, schema) {
     const appended = add(chain, {kind: 'action', type: 'json_set'})
     assert.deepEqual(ruleOf(appended).actions.slice(0, 2), oldActions, 'default adds to the unique chain tail')
     assert.equal(appended.edges.find(edge => edge.target === selected(appended).id && edge.targetHandle === 'action-in').source, oldNodes[1].id)
-    assert.equal(selected(appended).position.x, oldNodes[1].position.x + 360)
+    assert.equal(selected(appended).position.x, oldNodes[1].position.x + m.ruleNodeColumnGap)
     const prepended = add(chain, {kind: 'action', type: 'json_set', targetId: rootOf(chain).id})
     assert.deepEqual(ruleOf(prepended).actions.slice(1), oldActions, 'rule target inserts before the first action')
     const empty = make(), firstAction = add(empty, {kind: 'action', type: 'json_set'})
     assert.equal(ruleOf(firstAction).actions.length, 1)
-    assert.equal(selected(firstAction).position.x, rootOf(empty).position.x + 360)
+    assert.equal(selected(firstAction).position.x, rootOf(empty).position.x + m.ruleNodeColumnGap)
 
     for (const op of ['all', 'any']) {
         const group = make({op, conditions: [{op: 'eq', value: 0}, {op: 'eq', value: false}]}),
@@ -502,7 +502,9 @@ function checkQuickAdd(m, schema) {
     const predicateEdge = filterGraph.edges.find(edge => edge.target === filterNode.id && edge.targetHandle === 'predicate:predicate')
     assert.ok(predicateEdge)
     assert.deepEqual(m.graphNodeValue(filterGraph, filterNode.id), ruleOf(filterGraph).actions[0])
-    assert.deepEqual(filterGraph.nodes.find(node => node.id === predicateEdge.source).position, {x: 1640, y: 740})
+    const predicatePosition = filterGraph.nodes.find(node => node.id === predicateEdge.source).position
+    assert.equal(predicatePosition.x, filterNode.position.x - m.ruleNodeColumnGap)
+    assert.ok(predicatePosition.y > filterNode.position.y, 'predicate starts below its owning action')
     const changedPredicate = add(filterGraph, {
         kind: 'condition',
         type: 'eq',

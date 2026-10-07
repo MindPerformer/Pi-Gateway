@@ -8,11 +8,11 @@ export const selectedNode = (page: Page) => page.locator('.vue-flow__node.select
 export const inlineNodeControls = (page: Page, node: Locator = selectedNode(page)) => node.getByTestId('node-inline')
 export const nodeSearch = (page: Page) => page.getByTestId('node-search')
 
-export async function openAdvanced(page: Page, node: Locator = selectedNode(page)) {
-    await closeParameters(page)
+export async function focusNode(page: Page, node: Locator = selectedNode(page)) {
     await page.getByTestId('canvas-fit').click()
-    await node.getByTestId('node-advanced').click()
-    await expect(nodeParameters(page)).toBeVisible()
+    await node.locator('.rule-node-drag-handle').click()
+    await expect(inlineNodeControls(page, node)).toBeVisible()
+    await expect(page.getByTestId('node-advanced')).toHaveCount(0)
 }
 
 export async function closeParameters(page: Page) {
@@ -51,4 +51,17 @@ export async function runSimulation(page: Page) {
     await page.getByTestId('simulate-capture').click()
     await expect(page.getByTestId('simulation-result')).toBeVisible()
     await expect(page.getByTestId('simulation-stale')).toHaveCount(0)
+}
+
+/** Compose a model rewrite from the generic text primitive, never a recipe module. */
+export async function configureModelReplacement(container: Locator, replacement: string, pattern = 'fixture-old-model') {
+    const text = container.getByLabel('替换文本', {exact: true})
+    if (!await text.isVisible()) {
+        const field = container.locator('[data-rule-path$="/replacement"]')
+        const include = field.getByRole('button', {name: '设置可选字段', exact: true})
+        if (await include.isVisible()) await include.click()
+    }
+    await container.getByLabel('字段路径', {exact: true}).fill('/model')
+    await container.getByLabel('匹配模式', {exact: true}).fill(pattern)
+    await text.fill(replacement)
 }

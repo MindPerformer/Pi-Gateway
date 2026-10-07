@@ -55,27 +55,35 @@ function changeKey(oldKey: string, event: Event) {
       <select :id="idPrefix ? `${idPrefix}-type` : undefined" class="input !w-auto !py-1 text-[12px]" :value="kind" :aria-label="t('rules.valueType')" @change="changeKind(($event.target as HTMLSelectElement).value)">
         <option value="null">{{ ruleOptionLabel('null', locale) }}</option><option value="boolean">{{ ruleOptionLabel('boolean', locale) }}</option><option value="number">{{ ruleOptionLabel('number', locale) }}</option><option value="string">{{ ruleOptionLabel('string', locale) }}</option><option value="array">{{ ruleOptionLabel('array', locale) }}</option><option value="object">{{ ruleOptionLabel('object', locale) }}</option>
       </select>
-      <span v-if="!compact && kind === 'array'" class="text-[11px] text-[color:var(--color-ink-muted)]">{{ (modelValue as JsonValue[]).length }} {{ t('rules.addItem') }}</span>
-      <button v-if="!compact && kind === 'array'" type="button" class="btn btn-ghost !px-2 !py-1" @click="addArray">{{ t('rules.addItem') }}</button>
-      <button v-if="!compact && kind === 'object'" type="button" class="btn btn-ghost !px-2 !py-1" @click="addObject">{{ t('rules.addProperty') }}</button>
+      <span v-if="kind === 'array'" class="text-[11px] text-[color:var(--color-ink-muted)]">{{ (modelValue as JsonValue[]).length }} {{ t('rules.addItem') }}</span>
+      <button v-if="kind === 'array'" type="button" class="btn btn-ghost !px-2 !py-1" @click="addArray">{{ t('rules.addItem') }}</button>
+      <button v-if="kind === 'object'" type="button" class="btn btn-ghost !px-2 !py-1" @click="addObject">{{ t('rules.addProperty') }}</button>
     </div>
     <textarea v-if="kind === 'string'" :id="idPrefix ? `${idPrefix}-value` : undefined" class="input" :rows="compact ? 1 : 2" :aria-label="compact ? ruleLabel('field', 'value', locale) : undefined" :value="modelValue as string" @input="updateText" @compositionend="compact && updateText($event)" />
     <input v-else-if="kind === 'number'" :id="idPrefix ? `${idPrefix}-value` : undefined" class="input" type="number" :aria-label="compact ? ruleLabel('field', 'value', locale) : undefined" :value="modelValue as number" step="any" required @input="updateNumber" />
     <label v-else-if="kind === 'boolean'" class="flex items-center gap-2 text-sm"><input :id="idPrefix ? `${idPrefix}-value` : undefined" type="checkbox" :aria-label="compact ? ruleLabel('field', 'value', locale) : undefined" :checked="modelValue as boolean" @change="update(($event.target as HTMLInputElement).checked)" /> {{ String(modelValue) }}</label>
-    <p v-else-if="compact && (kind === 'array' || kind === 'object')" class="text-[11px] text-[color:var(--color-ink-muted)]" data-testid="inline-json-summary">{{ ruleOptionLabel(kind, locale) }}: {{ Array.isArray(modelValue) ? modelValue.length : objectEntries.length }} · {{ t('rules.canvas.inlineAdvanced') }}</p>
     <div v-else-if="kind === 'array'" class="space-y-2">
-      <div v-for="(item, index) in modelValue as JsonValue[]" :key="index" class="flex items-start gap-2">
+      <div v-for="(item, index) in modelValue as JsonValue[]" :key="index" class="json-entry">
         <span class="pt-2 font-mono text-[11px] text-[color:var(--color-ink-faint)]">{{ index }}</span>
-        <div class="min-w-0 flex-1"><JsonValueEditor :model-value="item" :path="`${path}/${index}`" :depth="depth + 1" @update:model-value="updateArray(index, $event)" /></div>
+        <div class="min-w-0 flex-1"><JsonValueEditor :model-value="item" :path="`${path}/${index}`" :depth="depth + 1" :compact="compact" :id-prefix="idPrefix ? `${idPrefix}-${index}` : undefined" @update:model-value="updateArray(index, $event)" /></div>
         <button type="button" class="btn btn-ghost !px-2 !py-1" :title="t('rules.remove')" @click="removeArray(index)">×</button>
       </div>
     </div>
     <div v-else-if="kind === 'object'" class="space-y-2">
-      <div v-for="[key, item] in objectEntries" :key="key" class="flex items-start gap-2">
-        <textarea class="input !w-36 !py-1 font-mono text-[12px]" rows="1" :value="key" :aria-label="t('rules.propertyName')" @change="changeKey(key, $event)" />
-        <div class="min-w-0 flex-1"><JsonValueEditor :model-value="item" :path="`${path}/${key}`" :depth="depth + 1" @update:model-value="updateObject(key, $event)" /></div>
+      <div v-for="[key, item] in objectEntries" :key="key" class="json-entry">
+        <textarea class="input json-key !py-1 font-mono text-[12px]" rows="1" :value="key" :aria-label="t('rules.propertyName')" @change="changeKey(key, $event)" />
+        <div class="min-w-0 flex-1"><JsonValueEditor :model-value="item" :path="`${path}/${key}`" :depth="depth + 1" :compact="compact" :id-prefix="idPrefix ? `${idPrefix}-${encodeURIComponent(key)}` : undefined" @update:model-value="updateObject(key, $event)" /></div>
         <button type="button" class="btn btn-ghost !px-2 !py-1" :title="t('rules.remove')" @click="removeObject(key)">×</button>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.json-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 6px; }
+.json-entry > .json-key, .json-entry > span { grid-column: 1; }
+.json-entry > .min-w-0 { grid-column: 1; }
+.json-entry > button { grid-column: 2; grid-row: 1; }
+.json-key { width: 100%; }
+.json-value-editor-compact { padding: 6px; border-color: var(--color-line); }
+</style>

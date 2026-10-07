@@ -308,8 +308,12 @@ export async function checkRuleComponents(schema) {
         assert.equal(editor.state.value.mode, 'visual', JSON.stringify(editor.state.value.errors))
         assert.deepEqual(normalized(editor.state.value.rule), normalized(fixture))
         const changedDescription = `graph edit ${roundtrips}\nmultiline`
-        assert.ok(!walk(editor.host).some(n => n.props.id === 'rule-field-/description'), 'advanced parameters start closed')
-        await clickLabel(editor.host, 'Node parameters')
+        // Canvas fields are covered by real browser tests; this custom renderer stubs Vue Flow.
+        await clickLabel(editor.host, 'Steps')
+        if (fixture.description === undefined) {
+            const description = control(editor.host, n => n.props['data-rule-path'] === '/description')
+            await clickLabel(description, 'Set optional field')
+        }
         await fire(control(editor.host, n => n.type === 'textarea' && n.props.id === 'rule-field-/description'), 'onInput', changedDescription)
         await clickLabel(editor.host, 'JSON code')
         assert.deepEqual(components.safeParseJSON(editor.state.value.code), normalized({

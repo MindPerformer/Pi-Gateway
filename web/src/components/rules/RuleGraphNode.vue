@@ -22,7 +22,6 @@ const props = defineProps<NodeProps<Data>>()
 const emit = defineEmits<{
     'update:data': [value: RuleGraphNode['data']]
     'quick-add': [value: {kind: 'condition' | 'action'; mode?: 'auto' | 'wrap'}]
-    advanced: []
     'edit-start': []
     'edit-end': []
 }>()
@@ -70,8 +69,15 @@ onBeforeUnmount(endEditing)
     <Handle v-if="data.kind === 'action'" id="action-in" class="action-handle" type="target" :position="Position.Left" :title="t('rules.canvas.actionPort')" />
     <Handle v-if="data.kind === 'condition'" id="boolean-out" type="source" :position="Position.Right" />
     <Handle v-if="data.kind === 'rule' || data.kind === 'action'" id="action-out" type="source" :position="Position.Right" />
-    <div class="rule-graph-node-title rule-node-drag-handle" :title="title">{{ title }}</div>
-    <div class="rule-graph-node-summary">{{ summary }}</div>
+    <div class="rule-node-header rule-node-drag-handle" :title="summary">
+      <span class="rule-node-kind">{{ data.kind === 'rule' ? t('rules.canvas.rule') : data.kind === 'condition' ? t('rules.when') : t('rules.canvas.action') }}</span>
+      <span class="rule-graph-node-title">{{ title }}</span>
+    </div>
+    <div class="rule-node-ports">
+      <span>{{ data.kind === 'action' ? t('rules.canvas.actionPort') : data.kind === 'rule' || group ? t('rules.canvas.booleanPort') : '' }}</span>
+      <span>{{ data.kind === 'condition' ? t('rules.canvas.booleanPort') : t('rules.canvas.actionPort') }}</span>
+    </div>
+
     <div v-if="status" class="rule-graph-node-status">{{ status }}</div>
     <div
       class="rule-node-controls nodrag nopan nowheel"
@@ -88,28 +94,30 @@ onBeforeUnmount(endEditing)
       @focusin="startEditing"
       @focusout="focusOut"
     >
-      <RuleNodeFields :node-id="id" :kind="data.kind" :path="data.path" :model-value="item" :schema="data.schema" :errors="data.errors" :sample="data.sample" @update:model-value="emit('update:data', $event)" />
+      <RuleNodeFields :node-id="id" :kind="data.kind" :path="data.path" :model-value="item" :schema="data.schema" :errors="data.errors" :sample="data.sample" :phase="data.phase" @update:model-value="emit('update:data', $event)" />
       <div class="rule-node-actions">
         <button v-if="data.kind === 'rule' || group && ((item as RuleCondition).op !== 'not' || !childCount)" type="button" class="btn btn-ghost" data-testid="node-add-condition" @click="emit('quick-add', {kind: 'condition', mode: 'auto'})">{{ data.kind === 'rule' ? t('rules.addCondition') : t('rules.canvas.addChild') }}</button>
         <button v-if="data.kind === 'condition'" type="button" class="btn btn-ghost" data-testid="node-wrap-condition" @click="emit('quick-add', {kind: 'condition', mode: 'wrap'})">{{ t('rules.canvas.wrapCondition') }}</button>
         <button v-if="data.kind === 'rule' || data.kind === 'action'" type="button" class="btn btn-ghost" data-testid="node-add-action" @click="emit('quick-add', {kind: 'action', mode: 'auto'})">{{ t('rules.canvas.addAfter') }}</button>
-        <button type="button" class="btn btn-ghost" data-testid="node-advanced" @click="emit('advanced')">{{ t('rules.canvas.inlineAdvanced') }}</button>
       </div>
     </div>
     <Handle v-if="data.kind === 'action' && (item as RuleAction).type === 'array_filter'" id="predicate:predicate" type="target" :position="Position.Bottom" :title="t('rules.canvas.predicatePort')" />
   </div>
 </template>
 <style scoped>
-.rule-graph-node { position: relative; box-sizing: border-box; width: 300px; border: 1px solid var(--color-line); border-radius: .55rem; background: var(--color-surface-elevated, var(--color-surface, var(--color-canvas))); color: var(--color-ink); padding: .65rem .75rem; box-shadow: 0 2px 8px rgb(0 0 0 / 8%); }
-.rule-graph-condition { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-line)); }
-.rule-graph-action { border-color: color-mix(in srgb, #d97706 45%, var(--color-line)); }
-.rule-graph-rule { border-color: var(--color-accent); }
-.rule-graph-node-title { font-size: .78rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rule-node-drag-handle { cursor: grab; padding-bottom: .15rem; }
+.rule-graph-node { --node-tint: var(--color-accent); position: relative; box-sizing: border-box; width: 400px; border: 1px solid var(--color-line-strong); border-radius: 10px; background: var(--color-surface-elevated); color: var(--color-ink); box-shadow: 0 4px 18px rgb(0 0 0 / 12%); }
+.rule-graph-condition { --node-tint: #818cf8; }
+.rule-graph-action { --node-tint: #d29958; }
+.rule-node-header { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 16px; border-radius: 9px 9px 0 0; border-bottom: 1px solid var(--color-line); background: color-mix(in srgb, var(--node-tint) 14%, var(--color-surface-elevated)); }
+.rule-node-kind { flex-shrink: 0; font-size: 10px; color: var(--color-ink-muted); }
+.rule-graph-node-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-node-drag-handle { cursor: grab; }
 .rule-node-drag-handle:active { cursor: grabbing; }
-.rule-graph-node-summary { margin-top: .2rem; color: var(--color-ink-muted); font-size: .67rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rule-graph-node-status { margin-top: .35rem; color: var(--color-accent); font-size: .65rem; }
-.rule-node-controls { margin-top: .55rem; padding-top: .5rem; border-top: 1px solid var(--color-line); cursor: default; }
-.rule-node-actions { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .55rem; }
-.rule-node-actions .btn { padding: .3rem .4rem; font-size: .66rem; }
+.rule-node-ports { display: flex; justify-content: space-between; gap: 16px; padding: 9px 16px; color: var(--color-ink-muted); font-size: 10px; border-bottom: 1px solid var(--color-line); }
+.rule-graph-node-status { margin: 8px 12px 0; border-radius: 4px; padding: 4px 8px; background: var(--color-accent-soft); color: var(--color-accent); font-size: 11px; }
+.rule-node-controls { padding: 10px 12px 12px; cursor: default; }
+.rule-node-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--color-line); }
+.rule-node-actions .btn { flex: 1; justify-content: center; padding: 5px 8px; font-size: 11px; min-height: 28px; background: var(--color-surface-2); }
+:deep(.vue-flow__handle) { top: 60px; }
+:deep(.vue-flow__handle-bottom) { top: auto; }
 </style>

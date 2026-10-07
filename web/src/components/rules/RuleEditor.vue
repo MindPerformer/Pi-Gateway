@@ -7,7 +7,7 @@ import type {RuleCanvasDiagnostics, RuleDebugFocus} from '../../api/ruleSimulati
 import {useI18n} from '../../i18n'
 import {useToastStore} from '../../stores/ui'
 import {clone, parseRule, RuleInputError, stringifyRule, validateRule, type RuleDraft} from '../../utils/ruleEditor'
-import {graphErrors, graphNodeValue, graphPathMap, graphSignature, graphToRule, persistGraphLayout, replaceGraphNode, ruleToGraph, type RuleGraph} from '../../utils/ruleGraph'
+import {graphErrors, graphPathMap, graphSignature, graphToRule, persistGraphLayout, replaceGraphNode, ruleToGraph, type RuleGraph} from '../../utils/ruleGraph'
 import {readonlyRuleFields} from '../../utils/ruleSchemaAdapter'
 import {localHelp} from '../../utils/ruleSchema'
 import {ruleLabel, ruleDisplayName} from '../../utils/ruleLabels'
@@ -35,10 +35,6 @@ watch(debuggerDisabled, disabled=>{if(disabled) sample.value=undefined}, {flush:
 onBeforeUnmount(()=>persistGraphLayout(graph.value))
 function receiveSample(value:unknown) { sample.value=debuggerDisabled.value ? undefined : value }
 function receiveDiagnostics(value:RuleCanvasDiagnostics|null) { diagnostics.value=value; if(!value)sample.value=undefined }
-const selected = computed(() => graph.value.nodes.find(n => graph.value.selected.includes(n.id)) ?? graph.value.nodes.find(n => n.kind === 'rule'))
-const selectedValue = computed(() => selected.value ? graphNodeValue(graph.value,selected.value.id) : undefined)
-const selectedPath = computed(() => selected.value ? paths.value[selected.value.id] ?? selected.value.path : '')
-const panelOpen = ref(false)
 const validating = ref(false)
 const diagnostics = shallowRef<RuleCanvasDiagnostics|null>(null)
 const diagnosticLabels = computed(() => {
@@ -54,8 +50,6 @@ const diagnosticLabels = computed(() => {
     }
     return result
 })
-const normalFields = computed(() => props.schema.rule_fields.filter(f => !['when','actions','name','enabled','phase'].includes(f.name) && !readonlyRuleFields.includes(f.name)))
-const topFields = computed(() => props.schema.rule_fields.filter(f => ['name','enabled','phase'].includes(f.name)))
 const phaseHelp = computed(() => props.schema.rule_fields.find(f => f.name === 'phase')?.enum_help ?? {})
 function patch(fields:Partial<RuleDraft>) {emit('update:modelValue',{...props.modelValue,...fields})}
 function updateGraph(next:RuleGraph, history=true) {
@@ -95,17 +89,6 @@ function updateNodeById(id:string,data:Rule|RuleCondition|RuleAction) {
     const changed=graphSignature(next)!==graphSignature(graph.value)
     updateGraph(next,editingNode!==id||!inlineHistoryRecorded)
     if(changed&&editingNode===id)inlineHistoryRecorded=true
-}
-function openAdvanced(id:string) {
-    endNodeEdit()
-    if(!graph.value.selected.includes(id))updateGraph({...graph.value,selected:[id]},false)
-    panelOpen.value=true
-}
-function updateNode(data:RuleCondition|RuleAction) {if(selected.value) updateGraph(replaceGraphNode(graph.value,selected.value.id,data))}
-function updateAction(actions:RuleAction[]) {
-    if(!selected.value) return
-    if(actions[0]) updateNode(actions[0])
-    else updateGraph({...graph.value,nodes:graph.value.nodes.filter(n=>n.id!==selected.value!.id),edges:graph.value.edges.filter(e=>e.source!==selected.value!.id&&e.target!==selected.value!.id)})
 }
 function undo(redo=false) {
     endNodeEdit()
@@ -156,8 +139,8 @@ function loadExample(example:Rule) {
     updateRule(next)
 }
 async function copyCode(){try{const next=synchronize();if(next)await copyText(props.modelValue.mode==='code'?props.modelValue.code:stringifyRule(next))}catch{toast.error(t('common.clipboardBlocked'))}}
-function focusPath(path:string){const entry=Object.entries(paths.value).filter(([,value])=>path===value||path.startsWith(`${value}/`)).sort((a,b)=>b[1].length-a[1].length)[0];if(entry){canvas.value?.focus(entry[0]);panelOpen.value=true}}
-function debugFocus(focus:RuleDebugFocus){const action=graph.value.nodes.find(n=>n.kind==='action'&&(n.data as RuleAction).id===focus.actionId);if(action){canvas.value?.focus(action.id);panelOpen.value=true}else if(focus.path)focusPath(focus.path)}
+function focusPath(path:string){const entry=Object.entries(paths.value).filter(([,value])=>path===value||path.startsWith(`${value}/`)).sort((a,b)=>b[1].length-a[1].length)[0];if(entry){canvas.value?.focus(entry[0])}}
+function debugFocus(focus:RuleDebugFocus){const action=graph.value.nodes.find(n=>n.kind==='action'&&(n.data as RuleAction).id===focus.actionId);if(action){canvas.value?.focus(action.id)}else if(focus.path)focusPath(focus.path)}
 const shownErrors=computed(()=>[...props.modelValue.errors,...(props.modelValue.mode==='visual'?graphProblems.value.filter(error=>error.code?.startsWith('graph.')):[])].filter((error,index,all)=>all.findIndex(e=>e.path===error.path&&e.message===error.message)===index))
 </script>
 <template>
@@ -166,7 +149,7 @@ const shownErrors=computed(()=>[...props.modelValue.errors,...(props.modelValue.
       <summary class="cursor-pointer font-medium">{{ locale === 'zh-CN' ? '规则执行流水线' : 'Rule execution pipeline' }}</summary>
       <ol class="mt-2 flex flex-wrap gap-2">
         <li v-for="phase in schema.phases" :key="phase" class="rounded border border-[color:var(--color-line)] px-2 py-1" :class="phase === rule.phase ? 'font-semibold ring-1 ring-[color:var(--color-accent)]' : ''" :title="phaseHelp[phase]">
-          <code>{{ phase }}</code><span class="mt-1 block max-w-64 text-[color:var(--color-ink-muted)]">{{ localHelp(phaseHelp[phase], locale) }}</span>
+          <span>{{ ruleLabel('phase', phase, locale) }}</span><span class="mt-1 block max-w-64 text-[color:var(--color-ink-muted)]">{{ localHelp(phaseHelp[phase], locale) }}</span>
         </li>
       </ol>
       <p class="mt-2 text-[color:var(--color-ink-muted)]">{{ locale === 'zh-CN' ? '请求按上述阶段执行；响应事件逐项处理，响应正文用于非流式聚合结果。同阶段优先级越小越先执行，步骤从上到下读取前一步结果。协议默认规则优先级为 -1000；在它之后的规则可以覆盖结果。' : 'Requests follow these stages. Response events run individually; response body rules process non-streaming aggregates. Lower priority runs first within a stage; steps read the preceding result. Protocol defaults use priority -1000; later rules can override their result.' }}</p>
@@ -185,18 +168,7 @@ const shownErrors=computed(()=>[...props.modelValue.errors,...(props.modelValue.
       <ActionEditor :model-value="rule.actions" :schema="schema" :phase="rule.phase" :errors="modelValue.errors" :sample="sample" @update:model-value="updateField('actions',$event)" />
     </template>
     <template v-else-if="modelValue.mode==='visual'">
-      <div class="grid items-start gap-3 sm:grid-cols-[minmax(12rem,1fr)_minmax(8rem,.6fr)_auto]"><RuleField v-for="field in topFields" :key="field.name" :field="field" :model-value="(rule as unknown as Record<string,unknown>)[field.name]" :schema="schema" :path="`/${field.name}`" :errors="modelValue.errors" @update:model-value="updateField(field.name,$event)" /></div>
-      <div class="canvas-editor-layout" :class="{'has-parameters':panelOpen}">
-        <RuleCanvas ref="canvas" :model-value="graph" :schema="schema" :diagnostics="diagnosticLabels" :errors="[...modelValue.errors,...graphProblems]" :sample="sample" :can-undo="!!modelValue.graphUndo?.length" :can-redo="!!modelValue.graphRedo?.length" @update:model-value="updateGraph" @edit="updateNodeById" @advanced="openAdvanced" @edit-start="beginNodeEdit" @edit-end="endNodeEdit" @undo="undo()" @redo="undo(true)" />
-        <aside v-if="panelOpen" class="node-parameter-panel is-open" data-testid="node-parameters">
-          <div class="flex items-center justify-between gap-2"><h3 class="text-sm font-semibold">{{ t('rules.canvas.parameters') }}</h3><button type="button" class="btn panel-close" @click="panelOpen=false">{{ t('common.close') }}</button></div>
-          <template v-if="selected?.kind==='condition'"><ConditionEditor :model-value="selectedValue as RuleCondition" :schema="schema" :path="selectedPath" :errors="modelValue.errors" :sample="sample" compact @update:model-value="updateNode" /></template>
-          <template v-else-if="selected?.kind==='action'"><ActionEditor :model-value="[selectedValue as RuleAction]" :schema="schema" :phase="rule.phase" :errors="modelValue.errors" :sample="sample" :path-offset="Number(selectedPath.split('/')[2]) || 0" compact @update:model-value="updateAction" /></template>
-          <template v-else><h4 class="text-xs font-medium">{{ t('rules.canvas.settings') }}</h4><RuleField v-for="field in normalFields" :key="field.name" :field="field" :model-value="(rule as unknown as Record<string,unknown>)[field.name]" :schema="schema" :path="`/${field.name}`" :errors="modelValue.errors" @update:model-value="updateField(field.name,$event)" /></template>
-          <details v-if="selected" class="text-xs text-[color:var(--color-ink-muted)]"><summary>{{ t('rules.canvas.details') }}</summary><code>{{ selectedPath||'/' }}</code><dl v-if="selected.kind==='rule'"><div v-for="key in readonlyRuleFields" :key="key"><dt>{{ ruleLabel('field',key,locale) }}</dt><dd>{{ (rule as unknown as Record<string,unknown>)[key] }}</dd></div></dl></details>
-        </aside>
-      </div>
-      <button type="button" class="btn show-parameters" @click="panelOpen=true">{{ t('rules.canvas.parameters') }}</button>
+      <RuleCanvas ref="canvas" :model-value="graph" :schema="schema" :diagnostics="diagnosticLabels" :errors="[...modelValue.errors,...graphProblems]" :sample="sample" :can-undo="!!modelValue.graphUndo?.length" :can-redo="!!modelValue.graphRedo?.length" @update:model-value="updateGraph" @edit="updateNodeById" @edit-start="beginNodeEdit" @edit-end="endNodeEdit" @undo="undo()" @redo="undo(true)" />
     </template>
     <div v-else class="space-y-2"><div class="flex gap-2"><button type="button" class="btn" @click="formatCode">{{ t('rules.format') }}</button><button type="button" class="btn" @click="copyCode">{{ t('rules.copyCode') }}</button></div><textarea data-testid="rule-code" class="input min-h-[28rem] font-mono text-xs" spellcheck="false" :value="modelValue.code" :aria-label="t('rules.code')" @input="patch({code:($event.target as HTMLTextAreaElement).value})" /></div>
     <CaptureRuleDebugger :rule="rule" :schema="schema" :disabled="debuggerDisabled" @diagnostics="receiveDiagnostics" @focus="debugFocus" @errors="patch({errors:$event})" @sample="receiveSample" />
@@ -204,10 +176,6 @@ const shownErrors=computed(()=>[...props.modelValue.errors,...(props.modelValue.
   </form>
 </template>
 <style scoped>
-.canvas-editor-layout { display: grid; grid-template-columns: minmax(0,1fr); gap: .75rem; position: relative; }
-.canvas-editor-layout.has-parameters { grid-template-columns: minmax(0,1fr) 20rem; }
-.node-parameter-panel { display: flex; flex-direction: column; gap: .8rem; min-width: 0; max-height: 660px; overflow-y: auto; border: 1px solid var(--color-line); border-radius: .6rem; padding: .75rem; background: var(--color-surface-elevated, var(--color-surface, var(--color-canvas))); }
-.panel-close { display: inline-flex; }
-.show-parameters { display: none; }
-@media(max-width:1300px) { .canvas-editor-layout.has-parameters { grid-template-columns: minmax(0,1fr); } .node-parameter-panel { display: none; } .node-parameter-panel.is-open { display: flex; position: fixed; z-index: 50; top: 4rem; bottom: 1rem; right: 1rem; width: min(90vw,25rem); max-height: none; box-shadow: 0 8px 35px rgb(0 0 0 / 20%); } .panel-close, .show-parameters { display: inline-flex; } }
+.rule-editor { min-width: 0; }
+.rule-editor > * { min-width: 0; }
 </style>

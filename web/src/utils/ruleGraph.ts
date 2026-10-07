@@ -42,7 +42,9 @@ export interface RuleGraphLayout {
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 const layoutStoragePrefix = 'pi-rule-layout:'
 // Leave room for inline value/reference editors; saved or explicitly placed positions stay exact.
-const defaultRowSpacing = 600
+const defaultRowSpacing = 680
+export const ruleNodeWidth = 400
+export const ruleNodeColumnGap = 500
 const memoryLayouts = new Map<string, RuleGraphLayout>()
 const validCoordinate = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 10_000_000
 const validViewport = (value: RuleGraph['viewport'] | undefined) => !!value && validCoordinate(value.x) && validCoordinate(value.y) && Number.isFinite(value.zoom) && value.zoom >= 0.15 && value.zoom <= 2.5
@@ -168,7 +170,7 @@ export function ruleToGraph(rule: Rule, previous?: RuleGraph): RuleGraph {
         edges: [],
         viewport: previous?.viewport ?? {x: 0, y: 0, zoom: 1},
         selected: previous?.selected ?? [],
-        layoutRestored: !!previous
+        layoutRestored: previous?.layoutRestored ?? false
     }
     const used = new Set<string>()
 
@@ -195,7 +197,7 @@ export function ruleToGraph(rule: Rule, previous?: RuleGraph): RuleGraph {
         if (Array.isArray(value.conditions) && ['all', 'any', 'not'].includes(value.op)) {
             delete (current.data as RuleCondition).conditions
             value.conditions.forEach((child, index) => {
-                const next = condition(child, `${path}/conditions/${index}`, x - 360, row)
+                const next = condition(child, `${path}/conditions/${index}`, x - ruleNodeColumnGap, row)
                 graph.edges.push(graphEdge(next.node.id, current.id, 'boolean-in', index))
                 row = next.bottom
             })
@@ -205,17 +207,17 @@ export function ruleToGraph(rule: Rule, previous?: RuleGraph): RuleGraph {
 
     const root = node('rule', rule, '', 560, 80)
     // Rule metadata is retained exactly; AST fields are rebuilt solely from validated edges.
-    const when = condition(rule.when, '/when', 200, 80)
+    const when = condition(rule.when, '/when', 60, 80)
     graph.edges.push(graphEdge(when.node.id, root.id, 'boolean-in'))
     let prior = root, predicateRow = when.bottom
     rule.actions.forEach((action, index) => {
-        const x = 920 + index * 360
+        const x = 1060 + index * ruleNodeColumnGap
         const current = node('action', action, `/actions/${index}`, x, 80)
         graph.edges.push(graphEdge(prior.id, current.id, 'action-in', index));
         prior = current
         for (const [key, value] of Object.entries(action.params)) {
             if (value && typeof value === 'object' && typeof (value as RuleCondition).op === 'string' && key === 'predicate' && action.type==='array_filter') {
-                const child = condition(value as RuleCondition, `/actions/${index}/params/${key}`, x - 360, predicateRow)
+                const child = condition(value as RuleCondition, `/actions/${index}/params/${key}`, x - ruleNodeColumnGap, predicateRow)
                 graph.edges.push(graphEdge(child.node.id, current.id, `predicate:${key}`))
                 predicateRow = child.bottom
                 delete (current.data as RuleAction).params[key]
@@ -382,7 +384,7 @@ export function addGraphModule(graph: RuleGraph, options: RuleGraphAddOptions, s
     }
     const freePosition = (position: RuleGraphNode['position']) => {
         const result = {...position}
-        while (next.nodes.some(node => Math.abs(node.position.x - result.x) < 360 && Math.abs(node.position.y - result.y) < 240)) result.y += 240
+        while (next.nodes.some(node => Math.abs(node.position.x - result.x) < ruleNodeColumnGap && Math.abs(node.position.y - result.y) < defaultRowSpacing)) result.y += defaultRowSpacing
         return result
     }
     const positionFor = (position: RuleGraphNode['position']) => options.position ? {...options.position} : freePosition(position)
@@ -399,9 +401,9 @@ export function addGraphModule(graph: RuleGraph, options: RuleGraphAddOptions, s
         const arrange = (node: RuleGraphNode, x: number, y: number): number => {
             // Keep an explicit main position exact; generated descendants avoid existing cards too.
             node.position = node === main ? {x, y} : freePosition({x, y})
-            let row = node.position.y + (node.kind === 'action' ? 240 : 0)
-            for (const edge of edges.filter(edge => edge.target === node.id).sort((a, b) => a.order - b.order)) row = arrange(included.find(child => child.id === edge.source)!, x - 360, row)
-            return Math.max(node.position.y + 240, row)
+            let row = node.position.y + (node.kind === 'action' ? defaultRowSpacing : 0)
+            for (const edge of edges.filter(edge => edge.target === node.id).sort((a, b) => a.order - b.order)) row = arrange(included.find(child => child.id === edge.source)!, x - ruleNodeColumnGap, row)
+            return Math.max(node.position.y + defaultRowSpacing, row)
         }
         arrange(main, position.x, position.y)
         next.nodes.push(...included);
@@ -419,8 +421,8 @@ export function addGraphModule(graph: RuleGraph, options: RuleGraphAddOptions, s
         return next
     }
     if (mode === 'detached') return finish(addFragment(options.kind, value, positionFor({
-        x: root.position.x + (options.kind === 'action' ? 360 : -360),
-        y: root.position.y + 240
+        x: root.position.x + (options.kind === 'action' ? ruleNodeColumnGap : -ruleNodeColumnGap),
+        y: root.position.y + defaultRowSpacing
     })))
     if (options.kind === 'action') {
         let target = explicitTarget ?? root
@@ -435,7 +437,10 @@ export function addGraphModule(graph: RuleGraph, options: RuleGraphAddOptions, s
             }
         }
         const successor = next.edges.find(edge => edge.source === target.id && edge.sourceHandle === 'action-out')
-        const node = addFragment('action', value, positionFor({x: target.position.x + 360, y: target.position.y}))
+        const node = addFragment('action', value, positionFor({
+            x: target.position.x + ruleNodeColumnGap,
+            y: target.position.y
+        }))
         const order = successor?.order ?? (children(target, 'action-in')[0]?.order ?? -1) + 1
         if (successor) successor.source = node.id
         next.edges.push(graphEdge(target.id, node.id, 'action-in', order))
@@ -454,14 +459,17 @@ export function addGraphModule(graph: RuleGraph, options: RuleGraphAddOptions, s
         const wrapper = addFragment('condition', {
             ...value,
             conditions: []
-        } as RuleCondition, positionFor({x: target.position.x + 360, y: target.position.y}))
+        } as RuleCondition, positionFor({x: target.position.x + ruleNodeColumnGap, y: target.position.y}))
         parent.source = wrapper.id
         next.edges.push(graphEdge(target.id, wrapper.id, 'boolean-in'))
         return finish(wrapper)
     }
     if (target.kind === 'condition' && (['all', 'any'].includes((target.data as RuleCondition).op) || (target.data as RuleCondition).op === 'not' && !children(target).length)) {
         const incoming = children(target)
-        const node = addCondition({x: target.position.x - 360, y: target.position.y + incoming.length * 240})
+        const node = addCondition({
+            x: target.position.x - ruleNodeColumnGap,
+            y: target.position.y + incoming.length * defaultRowSpacing
+        })
         next.edges.push(graphEdge(node.id, target.id, 'boolean-in', Math.max(-1, ...incoming.map(edge => edge.order)) + 1))
         return finish(node)
     }
@@ -470,8 +478,8 @@ export function addGraphModule(graph: RuleGraph, options: RuleGraphAddOptions, s
         const existing = children(target, port)[0]
         if (!existing) {
             const node = addCondition({
-                x: target.position.x - 360,
-                y: target.position.y + (target.kind === 'action' ? 240 : 0)
+                x: target.position.x - ruleNodeColumnGap,
+                y: target.position.y + (target.kind === 'action' ? defaultRowSpacing : 0)
             })
             next.edges.push(graphEdge(node.id, target.id, port))
             return finish(node)
@@ -492,11 +500,11 @@ export function addGraphModule(graph: RuleGraph, options: RuleGraphAddOptions, s
     // Adding beside a leaf/not must not change its subtree or turn NOT(A) into NOT(A AND B).
     const parent = parentEdge(target)
     if (!schema.conditions.some(cap => cap.id === 'all')) fail('capability')
-    const node = addCondition({x: target.position.x, y: target.position.y + 240})
+    const node = addCondition({x: target.position.x, y: target.position.y + defaultRowSpacing})
     const wrapper = addFragment('condition', {
         ...defaultCondition('all', schema),
         conditions: []
-    }, freePosition({x: target.position.x + 360, y: target.position.y}))
+    }, freePosition({x: target.position.x + ruleNodeColumnGap, y: target.position.y}))
     parent.source = wrapper.id
     next.edges.push(graphEdge(target.id, wrapper.id, 'boolean-in', 0), graphEdge(node.id, wrapper.id, 'boolean-in', 1))
     return finish(node)

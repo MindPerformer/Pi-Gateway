@@ -27,7 +27,10 @@ function setReference() { emit('update:modelValue', { $ref: { source: 'current',
 function setLiteralEscape(value: JsonValue) { emit('update:modelValue', { $literal: value }) }
 function updateReference(key: string, value: JsonValue) {
   const current = reference.value ?? { source: 'current', path: '', encoding: 'value' }
-  emit('update:modelValue', { $ref: { ...current, [key]: value } })
+  const next = {...current}
+  if (value === undefined) delete next[key]
+  else next[key] = value
+  emit('update:modelValue', { $ref: next })
 }
 function modeChange(mode: string) {
   if(mode==='computed')emit('update:modelValue',{$expr:{op:'concat',args:['']}})
@@ -36,7 +39,7 @@ function modeChange(mode: string) {
   else setLiteral(literalValue.value)
 }
 const computedValue=computed(()=>{const v=props.modelValue;return v&&typeof v==='object'&&!Array.isArray(v)&&'$expr' in v?v.$expr as Record<string,JsonValue>:null})
-function updateComputed(key:string,value:unknown){emit('update:modelValue',{$expr:{...(computedValue.value??{op:'concat',args:[]}),[key]:value as JsonValue}})}
+function updateComputed(key:string,value:unknown){const next={...(computedValue.value??{op:'concat',args:[]})};if(value===undefined)delete next[key];else next[key]=value as JsonValue;emit('update:modelValue',{$expr:next})}
 const mode = computed(() => computedValue.value?'computed':reference.value ? 'reference' : props.modelValue && typeof props.modelValue === 'object' && !Array.isArray(props.modelValue) && Object.keys(props.modelValue).length === 1 && '$literal' in props.modelValue ? 'escape' : 'literal')
 const sources = computed(() => schema.value?.sources ?? ['current', 'client', 'context', 'item'])
 </script>
@@ -52,7 +55,7 @@ const sources = computed(() => schema.value?.sources ?? ['current', 'client', 'c
       </select>
     </div>
     <div v-if="mode==='computed' && computedValue" class="space-y-2">
-      <RuleField v-for="field in schema?.value_expressions?.find(c=>c.id==='computed')?.fields ?? []" :key="field.name" :field="field" :model-value="computedValue[field.name]" :schema="schema!" :path="`/$expr/${field.name}`" :id-prefix="idPrefix" @update:model-value="updateComputed(field.name,$event)" />
+      <RuleField v-for="field in schema?.value_expressions?.find(c=>c.id==='computed')?.fields ?? []" :key="field.name" :field="field" :model-value="computedValue[field.name]" :schema="schema!" :path="`/$expr/${field.name}`" :compact="compact" :id-prefix="idPrefix" @update:model-value="updateComputed(field.name,$event)" />
     </div>
     <div v-else-if="mode==='reference' && reference" class="space-y-2">
       <RuleField v-for="field in schema?.value_fields ?? []" :key="field.name" :field="field" :model-value="reference[field.name]" :schema="schema!" :path="`/$ref/${field.name}`" :compact="compact" :id-prefix="idPrefix" @update:model-value="updateReference(field.name,$event as JsonValue)" />

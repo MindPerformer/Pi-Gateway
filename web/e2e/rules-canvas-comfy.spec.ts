@@ -1,10 +1,11 @@
 import type {Locator, Page} from '@playwright/test'
 import {expect, fixtureRule, test} from './admin.fixture'
 import {
+    configureModelReplacement,
+    focusNode,
     inlineNodeControls,
     nodeParameters,
     nodeSearch,
-    openAdvanced,
     readCode,
     ruleEditor,
     ruleName,
@@ -90,12 +91,12 @@ test('节点内直接编辑条件、动作和规则，输入拖选、滚轮、De
     await admin.editRule()
     await expect(nodeParameters(page)).not.toBeVisible()
     await page.getByTestId('canvas-fit').click()
-    const modelNode = actionNode(page, '修改模型')
+    const modelNode = actionNode(page, '替换文本')
     await modelNode.locator('.rule-node-drag-handle').click()
     await expect(nodeParameters(page)).not.toBeVisible()
     const originalPositions = await nodePositions(page)
     const originalTransform = await viewport(page).getAttribute('style')
-    const model = inlineNodeControls(page, modelNode).getByLabel('当前模型', {exact: true})
+    const model = inlineNodeControls(page, modelNode).getByLabel('替换文本', {exact: true})
     await model.fill('Typing stays inside the node')
     await inputDrag(page, model)
     await model.press('Control+a')
@@ -128,7 +129,10 @@ test('节点内直接编辑条件、动作和规则，输入拖选、滚轮、De
         when: {conditions: [{op: 'eq'}, {op: 'exists', source: 'client', path: '/metadata/count'}]}
     })
     expect(updated.actions[0]).toEqual(admin.rules[0]!.actions[0])
-    expect(updated.actions[1]).toEqual({...admin.rules[0]!.actions[1], params: {model: 'fixture-inline-model'}})
+    expect(updated.actions[1]).toEqual({
+        ...admin.rules[0]!.actions[1],
+        params: {path: '/model', pattern: 'fixture-old-model', replacement: 'fixture-inline-model'}
+    })
 })
 
 test('节点编辑同步 JSON 并使模拟过期，撤销重做保留原动作身份和未设置字段', async ({page, admin}) => {
@@ -137,7 +141,7 @@ test('节点编辑同步 JSON 并使模拟过期，撤销重做保留原动作�
     await selectCapture(page)
     await runSimulation(page)
     await page.getByTestId('canvas-fit').click()
-    const model = inlineNodeControls(page, actionNode(page, '修改模型')).getByLabel('当前模型', {exact: true})
+    const model = inlineNodeControls(page, actionNode(page, '替换文本')).getByLabel('替换文本', {exact: true})
     await model.fill('fixture-inline-history')
     await expect(page.getByTestId('simulation-stale')).toBeVisible()
     await expect(page.locator('.rule-graph-node-status')).toHaveCount(0)
@@ -149,14 +153,14 @@ test('节点编辑同步 JSON 并使模拟过期，撤销重做保留原动作�
     await runSimulation(page)
     expect(admin.simulationRequests().at(-1)!.rule.actions[1]).toEqual({
         id: 'action-model',
-        type: 'rewrite_model',
-        params: {model: 'fixture-inline-history'}
+        type: 'text_replace',
+        params: {path: '/model', pattern: 'fixture-old-model', replacement: 'fixture-inline-history'}
     })
     const updated = await readCode(page)
     expect(updated.actions[1]).toEqual({
         id: 'action-model',
-        type: 'rewrite_model',
-        params: {model: 'fixture-inline-history'}
+        type: 'text_replace',
+        params: {path: '/model', pattern: 'fixture-old-model', replacement: 'fixture-inline-history'}
     })
     expect(updated.actions[0]).toEqual(admin.rules[0]!.actions[0])
     expect(updated.when).toEqual(admin.rules[0]!.when)
@@ -187,7 +191,7 @@ test('双击空白打开搜索，上下键选中结果、Enter 创建、Escape �
     await inlineNodeControls(page).getByLabel('字段路径', {exact: true}).fill('/missing')
     const count = await graphNodes(page).count()
     await page.getByTestId('canvas-add-node').click()
-    await searchFor(page, 'rewrite_model')
+    await searchFor(page, 'text_replace')
     await page.keyboard.press('Escape')
     await expect(nodeSearch(page)).toHaveCount(0)
     await expect(graphNodes(page)).toHaveCount(count)
@@ -215,13 +219,13 @@ test('节点追加条件、工具栏在选中动作后插入、节点快捷继�
     await actionNode(page, '设置字段值').locator('.rule-node-drag-handle').click()
     await page.getByTestId('canvas-add-node').click()
     await expect(page.getByTestId('node-search-context')).toContainText('设置字段值')
-    await chooseModule(page, 'action', 'rewrite_model')
-    await inlineNodeControls(page).getByLabel('当前模型', {exact: true}).fill('fixture-inserted-first')
+    await chooseModule(page, 'action', 'text_replace')
+    await configureModelReplacement(inlineNodeControls(page), 'fixture-inserted-first')
     await selectedNode(page).getByTestId('node-add-action').click()
-    await expect(page.getByTestId('node-search-context')).toContainText('修改模型')
+    await expect(page.getByTestId('node-search-context')).toContainText('替换文本')
     await expect(nodeSearch(page).locator('[data-testid^="node-search-condition-"]')).toHaveCount(0)
-    await chooseModule(page, 'action', 'rewrite_model')
-    await inlineNodeControls(page).getByLabel('当前模型', {exact: true}).fill('fixture-inserted-second')
+    await chooseModule(page, 'action', 'text_replace')
+    await configureModelReplacement(inlineNodeControls(page), 'fixture-inserted-second')
     const currentIDs = await graphNodes(page).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-node-id')))
     expect(currentIDs).toEqual(expect.arrayContaining(existingNodeIDs))
     const updated = await readCode(page)
@@ -231,7 +235,7 @@ test('节点追加条件、工具栏在选中动作后插入、节点快捷继�
     expect(updated.actions).toHaveLength(4)
     expect(updated.actions[0]).toEqual(original.actions[0])
     expect(updated.actions[3]).toEqual(original.actions[1])
-    expect(updated.actions.slice(1, 3).map(action => action.params.model)).toEqual(['fixture-inserted-first', 'fixture-inserted-second'])
+    expect(updated.actions.slice(1, 3).map(action => action.params.replacement)).toEqual(['fixture-inserted-first', 'fixture-inserted-second'])
     expect(new Set(updated.actions.map(action => action.id)).size).toBe(4)
     await ruleEditor(page).getByRole('button', {name: '保存规则', exact: true}).click()
     await expect.poll(() => admin.rules[0]!.actions).toEqual(updated.actions)
@@ -246,7 +250,7 @@ test('从动作输出端口拖到空白只搜索动作，取消不新增，确�
     await admin.editRule()
     await page.getByTestId('canvas-fit').click()
     const originalIDs = await graphNodes(page).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-node-id')))
-    const source = actionNode(page, '修改模型').locator('[data-handleid="action-out"]')
+    const source = actionNode(page, '替换文本').locator('[data-handleid="action-out"]')
     const dragToBackground = async () => {
         const point = await canvasBackground(page)
         await expect(source).toBeInViewport()
@@ -257,9 +261,9 @@ test('从动作输出端口拖到空白只搜索动作，取消不新增，确�
         await page.mouse.move(point.x, point.y, {steps: 12})
         await page.mouse.up()
         await expect(nodeSearch(page)).toBeVisible()
-        await expect(page.getByTestId('node-search-context')).toContainText('修改模型')
+        await expect(page.getByTestId('node-search-context')).toContainText('替换文本')
         await expect(nodeSearch(page).locator('[data-testid^="node-search-condition-"]')).toHaveCount(0)
-        await expect(page.getByTestId('node-search-action-rewrite_model')).toBeVisible()
+        await expect(page.getByTestId('node-search-action-text_replace')).toBeVisible()
     }
     await dragToBackground()
     await page.keyboard.press('Escape')
@@ -268,14 +272,17 @@ test('从动作输出端口拖到空白只搜索动作，取消不新增，确�
     await expect(page.locator('.vue-flow__edge')).toHaveCount(5)
     expect(await graphNodes(page).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-node-id')))).toEqual(originalIDs)
     await dragToBackground()
-    await chooseModule(page, 'action', 'rewrite_model')
-    await inlineNodeControls(page).getByLabel('当前模型', {exact: true}).fill('fixture-drag-created')
+    await chooseModule(page, 'action', 'text_replace')
+    await configureModelReplacement(inlineNodeControls(page), 'fixture-drag-created')
     await expect(page.locator('.rule-graph-action')).toHaveCount(3)
     await expect(page.locator('.vue-flow__edge')).toHaveCount(6)
     expect(await graphNodes(page).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-node-id')))).toEqual(expect.arrayContaining(originalIDs))
     const updated = await readCode(page)
     expect(updated.actions.slice(0, 2)).toEqual(admin.rules[0]!.actions)
-    expect(updated.actions[2]).toMatchObject({type: 'rewrite_model', params: {model: 'fixture-drag-created'}})
+    expect(updated.actions[2]).toMatchObject({
+        type: 'text_replace',
+        params: {path: '/model', pattern: 'fixture-old-model', replacement: 'fixture-drag-created'}
+    })
     expect(new Set(updated.actions.map(action => action.id)).size).toBe(3)
     await ruleEditor(page).getByRole('button', {name: '保存规则', exact: true}).click()
     await expect.poll(() => admin.rules[0]!.actions).toEqual(updated.actions)
@@ -303,17 +310,17 @@ test('平移缩放后双击空白按真实画布坐标放置新节点，无选�
         return {x: (screen.x - rect.left - matrix.e) / matrix.a, y: (screen.y - rect.top - matrix.f) / matrix.d}
     }, point)
     await page.mouse.dblclick(point.x, point.y)
-    await chooseModule(page, 'action', 'rewrite_model')
+    await chooseModule(page, 'action', 'text_replace')
     const position = await selectedNode(page).evaluate(node => {
         const matrix = new DOMMatrix(getComputedStyle(node.closest('.vue-flow__node')!).transform)
         return {x: matrix.e, y: matrix.f}
     })
     expect(position.x).toBeCloseTo(expected.x, 1)
     expect(position.y).toBeCloseTo(expected.y, 1)
-    await inlineNodeControls(page).getByLabel('当前模型', {exact: true}).fill('fixture-at-click-position')
+    await configureModelReplacement(inlineNodeControls(page), 'fixture-at-click-position')
     const updated = await readCode(page)
     expect(updated.actions.slice(0, 2)).toEqual(admin.rules[0]!.actions)
-    expect(updated.actions[2]!.params.model).toBe('fixture-at-click-position')
+    expect(updated.actions[2]!.params.replacement).toBe('fixture-at-click-position')
 })
 
 test('右键与 Space 可搜索，支持双语检索和阶段过滤，明暗浮层及节点背景清晰', async ({page, admin}, testInfo) => {
@@ -334,25 +341,25 @@ test('右键与 Space 可搜索，支持双语检索和阶段过滤，明暗浮�
     expect(equalsBounds!.y + equalsBounds!.height).toBeLessThanOrEqual(existsBounds!.y)
     const point = await canvasBackground(page)
     await page.mouse.click(point.x, point.y, {button: 'right'})
-    await searchFor(page, '修改模型')
+    await searchFor(page, '替换文本')
     await expect(nodeSearch(page)).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     const lightPopup = await nodeSearch(page).evaluate(element => getComputedStyle(element).backgroundColor)
     const lightNode = await page.locator('.rule-graph-rule').evaluate(element => getComputedStyle(element).backgroundColor)
-    await expect(page.getByTestId('node-search-action-rewrite_model')).toBeVisible()
-    await searchFor(page, 'Change model')
-    await expect(page.getByTestId('node-search-action-rewrite_model')).toBeVisible()
+    await expect(page.getByTestId('node-search-action-text_replace')).toBeVisible()
+    await searchFor(page, 'Replace text')
+    await expect(page.getByTestId('node-search-action-text_replace')).toBeVisible()
     await searchFor(page, 'drop_event')
     await expect(nodeSearch(page).getByRole('option')).toHaveCount(0)
     await page.keyboard.press('Escape')
     await canvas(page).focus()
     await page.keyboard.press('Space')
-    await searchFor(page, 'rewrite_model')
-    await expect(page.getByTestId('node-search-action-rewrite_model')).toBeVisible()
+    await searchFor(page, 'text_replace')
+    await expect(page.getByTestId('node-search-action-text_replace')).toBeVisible()
     await page.keyboard.press('Escape')
     await page.locator('.sidebar-controls button').first().click()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
     await page.getByTestId('canvas-add-node').click()
-    await searchFor(page, 'rewrite_model')
+    await searchFor(page, 'text_replace')
     await expect(nodeSearch(page)).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     await expect.poll(() => nodeSearch(page).evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(lightPopup)
     await expect.poll(() => page.locator('.rule-graph-rule').evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(lightNode)
@@ -369,7 +376,7 @@ test('右键与 Space 可搜索，支持双语检索和阶段过滤，明暗浮�
     expect(admin.requests.some(request => request.method === 'PUT')).toBe(false)
 })
 
-test('高级侧栏仍可编辑嵌套谓词，复杂 JSON、false、零、null 和引用无损保存', async ({page, admin}) => {
+test('节点内直接编辑嵌套谓词，复杂 JSON、false、零、null 和引用无损保存', async ({page, admin}) => {
     const original = fixtureRule()
     original.actions[0]!.params.value = {
         flag: false,
@@ -399,8 +406,8 @@ test('高级侧栏仍可编辑嵌套谓词，复杂 JSON、false、零、null �
     await page.getByTestId('canvas-fit').click()
     const filter = actionNode(page, '筛选数组')
     await expect(filter.getByTestId('rule-node-predicate-summary')).toContainText('全部满足')
-    await openAdvanced(page, filter)
-    await nodeParameters(page).locator('[data-rule-path="/actions/2/params/predicate/conditions/1/path"] textarea').fill('/content/text')
+    await focusNode(page, filter)
+    await inlineNodeControls(page, filter).locator('[data-rule-path="/actions/2/params/predicate/conditions/1/path"] textarea').fill('/content/text')
     const updated = await readCode(page)
     const expected = structuredClone(original)
     const predicate = expected.actions[2]!.params.predicate as { conditions: { path: string }[] }
@@ -417,9 +424,10 @@ test('窄屏新增按钮与搜索浮层不溢出，可直接节点编辑后保�
     await admin.open()
     await page.getByRole('button', {name: '新增规则', exact: true}).click()
     await ruleName(page).fill('Comfy narrow draft')
+    await showCanvas(page)
     await expect(nodeParameters(page)).not.toBeVisible()
     await page.getByTestId('canvas-add-node').click()
-    await searchFor(page, 'rewrite_model')
+    await searchFor(page, 'text_replace')
     await expect(nodeSearch(page)).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     const bounds = await nodeSearch(page).boundingBox()
     expect(bounds!.x).toBeGreaterThanOrEqual(0)
@@ -428,11 +436,46 @@ test('窄屏新增按钮与搜索浮层不溢出，可直接节点编辑后保�
     const searchScreenshot = testInfo.outputPath('rules-node-search-mobile.png')
     await page.screenshot({path: searchScreenshot})
     await testInfo.attach('窄屏节点快捷搜索', {path: searchScreenshot, contentType: 'image/png'})
-    await page.getByTestId('node-search-action-rewrite_model').click()
+    await page.getByTestId('node-search-action-text_replace').click()
     await expect(nodeSearch(page)).toHaveCount(0)
-    await inlineNodeControls(page).getByLabel('当前模型', {exact: true}).fill('fixture-mobile-inline')
+    await configureModelReplacement(inlineNodeControls(page), 'fixture-mobile-inline')
     await expect(nodeParameters(page)).not.toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(392)
     await ruleEditor(page).getByRole('button', {name: '保存规则', exact: true}).click()
-    await expect.poll(() => admin.rules.find(rule => rule.name === 'Comfy narrow draft')?.actions[0]?.params.model).toBe('fixture-mobile-inline')
+    await expect.poll(() => admin.rules.find(rule => rule.name === 'Comfy narrow draft')?.actions[0]?.params.replacement).toBe('fixture-mobile-inline')
+})
+
+test('模块全部参数直接显示，复杂字段展开后控件对齐且自动整理无重叠', async ({page, admin}, testInfo) => {
+    await admin.open()
+    await admin.editRule()
+    await expect(page.getByTestId('node-advanced')).toHaveCount(0)
+    await expect(nodeParameters(page)).toHaveCount(0)
+    const cap = admin.rules[0]!.actions[1]!
+    // Optional flags must stay visible without a disclosure.
+    const replacement = actionNode(page, '替换文本')
+    for (const name of ['path', 'pattern', 'replacement', 'replace_all', 'case_insensitive', 'dot_all', 'multiline', 'on_missing']) {
+        await expect(replacement.locator(`[data-rule-path="/actions/1/params/${name}"]`)).toBeVisible()
+    }
+    expect(cap.params).not.toHaveProperty('case_insensitive')
+    await page.locator('.rule-canvas-toolbar').getByRole('button', {name: '自动整理', exact: true}).click()
+    await page.getByTestId('canvas-fit').click()
+    const bounds = await graphNodes(page).evaluateAll(nodes => nodes.map(node => {
+        const r = node.getBoundingClientRect()
+        return {left: r.left, right: r.right, top: r.top, bottom: r.bottom}
+    }))
+    for (let i = 0; i < bounds.length; i++) for (const other of bounds.slice(i + 1)) {
+        const current = bounds[i]!
+        expect(current.right <= other.left || other.right <= current.left || current.bottom <= other.top || other.bottom <= current.top).toBe(true)
+    }
+    const overflowing = await page.locator('[data-testid="node-inline"] input, [data-testid="node-inline"] textarea, [data-testid="node-inline"] select').evaluateAll(controls => controls.filter(control => {
+        const parent = control.closest('.rule-graph-node')!.getBoundingClientRect(), r = control.getBoundingClientRect()
+        return r.left < parent.left - 1 || r.right > parent.right + 1
+    }).map(control => control.id))
+    expect(overflowing).toEqual([])
+    await page.getByTestId('rule-canvas').scrollIntoViewIfNeeded()
+    const screenshot = testInfo.outputPath('rules-all-parameters-desktop.png')
+    await page.screenshot({path: screenshot})
+    await testInfo.attach('节点全部参数与对齐布局', {path: screenshot, contentType: 'image/png'})
+    const updated = await readCode(page)
+    expect(updated.actions).toEqual(admin.rules[0]!.actions)
 })

@@ -163,7 +163,9 @@ export function localHelp(value: LocalizedHelp | string | undefined, locale: str
 }
 
 export function defaultForField(f: RuleField): unknown {
-    return f.non_empty && (f.default === undefined || f.default === '') && f.examples?.length ? structuredClone(f.examples[0]) : f.default !== undefined ? structuredClone(f.default) : f.type === 'boolean' ? false : f.type === 'number' ? 0 : f.type === 'strings' || f.type === 'values' || f.type === 'action_array' ? [] : f.type === 'value' ? null : f.type === 'condition' ? {op: 'always'} : f.enum?.[0] ?? ''
+    // Catalog values can be Vue proxies when rendered inside reactive drafts.
+    const copy = (value: unknown) => JSON.parse(JSON.stringify(value))
+    return f.non_empty && (f.default === undefined || f.default === '') && f.examples?.length ? copy(f.examples[0]) : f.default !== undefined ? copy(f.default) : f.type === 'boolean' ? false : f.type === 'number' ? 0 : ['strings', 'values', 'action_array', 'condition_array'].includes(f.type) ? [] : f.type === 'value' ? null : f.type === 'condition' ? {op: 'always'} : f.enum?.[0] ?? ''
 }
 
 export function newRule(): Rule {

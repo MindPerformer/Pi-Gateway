@@ -1,8 +1,8 @@
 import {beforeRequest, expect, fixtureRule, simulationResponse, test} from './admin.fixture'
 import {
     closeParameters,
-    nodeParameters,
-    openAdvanced,
+    focusNode,
+    inlineNodeControls,
     readCode,
     ruleEditor,
     selectCapture,
@@ -23,13 +23,12 @@ test('从模拟样本选择数组与转义字段路径，仍可手动输入自�
     }
     await admin.open()
     await admin.editRule()
-    await page.locator('.rule-graph-action').first().locator('.rule-node-drag-handle').click()
-    await openAdvanced(page)
+    await focusNode(page, page.locator('.rule-graph-action').first())
     await selectCapture(page, 101)
     await page.getByTestId('simulate-capture').click()
     await expect(page.getByTestId('simulation-diff')).toBeVisible()
-    const picker = nodeParameters(page).getByTestId('sample-path-select-path')
-    const path = nodeParameters(page).getByLabel('字段路径', {exact: true})
+    const picker = inlineNodeControls(page).getByTestId('sample-path-select-path')
+    const path = inlineNodeControls(page).getByLabel('字段路径', {exact: true})
     await expect(picker).toBeVisible()
     await picker.selectOption('/input/0/content')
     await expect(path).toHaveValue('/input/0/content')
@@ -87,7 +86,17 @@ test('迁移规则的列表和画布标题随语言切换，用户改名及持�
         source: 'legacy',
         legacy_name: 'drop_environment_context',
         when: {op: 'always'},
-        actions: [{id: 'migrated-action', type: 'drop_environment_context', params: {content_item_kind: 'input_text'}}],
+        actions: [{
+            id: 'migrated-action',
+            type: 'text_replace',
+            params: {
+                path: '/instructions',
+                match: 'regex',
+                pattern: '<environment_context>.*?</environment_context>',
+                replacement: '',
+                dot_all: true
+            }
+        }],
     })
     const renamed = {...structuredClone(migrated), id: 'renamed-migrated-rule', name: 'My personal cleanup'}
     admin.rules = [migrated, renamed]

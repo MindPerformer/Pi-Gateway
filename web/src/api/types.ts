@@ -246,6 +246,43 @@ export interface UsageQuery extends StatsRange {
     offset: number
 }
 
+export interface OfficialUsageDay {
+    account_id: number
+    workspace_id: string
+    day: string
+    credits: number | null
+    uncached_input_tokens: number | null
+    cached_input_tokens: number | null
+    output_tokens: number | null
+    total_tokens: number | null
+    users: number
+    threads: number
+    turns: number
+    settled: boolean
+    synced_at: number
+}
+
+export interface OfficialUsageSync {
+    workspace_id: string
+    synced_at: number
+    attempted_at: number
+    error?: string
+}
+
+export interface OfficialUsageResponse {
+    start_date: string
+    end_date: string
+    timezone: string
+    items: OfficialUsageDay[]
+    sync: OfficialUsageSync[]
+    total_credits: number | null
+    equivalent_usd: number | null
+    credits_per_usd: number
+    missing_credit_days: number
+    pending_days: number
+    workspace_count: number
+}
+
 export interface CaptureHeader {
     name: string
     value: string

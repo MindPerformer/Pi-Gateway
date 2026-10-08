@@ -207,6 +207,8 @@ func (s *Server) Routes(mux *http.ServeMux, spa http.Handler) {
 	mux.HandleFunc("GET /api/stats/keys", s.requireAuth(s.handleStatsKeys))
 	mux.HandleFunc("GET /api/stats/accounts", s.requireAuth(s.handleStatsAccounts))
 	mux.HandleFunc("GET /api/usage/records", s.requireAuth(s.handleUsageRecords))
+	mux.HandleFunc("GET /api/usage/official", s.requireAuth(s.handleOfficialUsage))
+	mux.HandleFunc("POST /api/accounts/{id}/official-usage/refresh", s.requireAuth(s.handleRefreshOfficialUsage))
 
 	mux.HandleFunc("GET /api/captures", s.requireAuth(s.handleListCaptures))
 	mux.HandleFunc("GET /api/captures/export", s.requireAuth(s.handleExportCaptures))

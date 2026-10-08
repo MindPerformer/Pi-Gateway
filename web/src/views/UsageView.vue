@@ -9,6 +9,7 @@ import TimeRangePicker from '../components/TimeRangePicker.vue'
 import UsageSummaryCards from '../components/usage/UsageSummaryCards.vue'
 import UsageRecordsTable from '../components/usage/UsageRecordsTable.vue'
 import UsageRecordDetailModal from '../components/usage/UsageRecordDetailModal.vue'
+import OfficialUsagePanel from '../components/usage/OfficialUsagePanel.vue'
 
 const { t, locale } = useI18n()
 const labels = computed(() => locale.value === 'zh-CN'
@@ -100,6 +101,7 @@ onBeforeUnmount(() => { generation++; summaryGeneration++ })
 		<div class="page-content usage-content">
 			<UsageSummaryCards :summary="summary" :loading="summaryLoading" />
 			<p v-if="summaryError" role="alert" class="notice notice-error">{{ summaryError }}</p>
+			<OfficialUsagePanel :accounts="accounts" />
 			<section class="card records-card" :aria-busy="loading">
 				<header class="records-header">
 					<div><h2>{{ labels.records }}</h2><p>{{ labels.description }}</p></div>

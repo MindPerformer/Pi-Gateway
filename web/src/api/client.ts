@@ -12,6 +12,8 @@ import type {
     ModelCatalog,
     ModelStats,
     OAuthFlow,
+    OfficialUsageResponse,
+    OfficialUsageSync,
     Overview,
     ProxyList,
     ProxyTestResult,
@@ -109,6 +111,17 @@ export interface AccountOperationResult {
 }
 
 export const api = {
+    officialUsage(startDate: string, endDate: string, accountId?: number) {
+        const query = new URLSearchParams({start_date: startDate, end_date: endDate})
+        if (accountId) query.set('account_id', String(accountId))
+        return request<OfficialUsageResponse>(`/api/usage/official?${query}`)
+    },
+    refreshOfficialUsage(accountId: number) {
+        return request<{
+            sync: OfficialUsageSync;
+            error: string
+        }>(`/api/accounts/${accountId}/official-usage/refresh`, {method: 'POST'})
+    },
     // auth
     async login(username: string, password: string) {
         return request<{ token: string; username: string; expires_at: number }>('/api/auth/login', {

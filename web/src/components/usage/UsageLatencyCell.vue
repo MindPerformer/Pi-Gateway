@@ -6,7 +6,7 @@ import { duration } from './format'
 
 defineProps<{ firstToken: number | null; latency: number | null; throughput?: number | null }>()
 const { locale } = useI18n()
-const labels = computed(() => locale.value === 'zh-CN' ? { first: '首字', total: '耗时', throughput: 'TPS 流速', throughputHelp: '输出 Token ÷（总耗时 − 首字耗时），单位 Token/秒' } : { first: 'TTFT', total: 'Total', throughput: 'TPS', throughputHelp: 'Output tokens / (total time − time to first token), in tokens per second' })
+const labels = computed(() => locale.value === 'zh-CN' ? { first: '首字', total: '耗时', throughput: 'TPS 流速', throughputHelp: '同 codex2api：输出 Token ÷ 输出阶段秒数；首字按首个非生命周期响应事件计时（含思考结构帧）。缺少有效首字或输出区间不足 20ms 时用总耗时；失败、未完成或无输出不计流速。' } : { first: 'TTFT', total: 'Total', throughput: 'TPS', throughputHelp: 'Matches codex2api: output tokens / generation seconds. TTFT is the first non-lifecycle response event, including reasoning structure events. Uses total time when TTFT is invalid or the interval is under 20ms; excludes failed, unfinished and empty outputs.' })
 </script>
 
 <template>

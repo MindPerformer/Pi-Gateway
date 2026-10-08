@@ -270,6 +270,7 @@ func run() error {
 		cfg.Accounts.RefreshConcurrency,
 		2*time.Second,
 	)
+	accountsMgr.StartOfficialUsageRefresher(rootCtx)
 
 	dataPlane := api.New(api.Options{
 		Config:         cfg,

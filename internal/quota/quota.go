@@ -188,7 +188,19 @@ func AccountEndpointURL(baseURL, resource string) string {
 		path = strings.TrimSuffix(path, "/codex/responses")
 		path = strings.TrimSuffix(path, "/codex")
 	}
-	parsed.RawPath = path + "/" + prefix + "/" + strings.TrimLeft(resource, "/")
+	resourcePath, resourceQuery, _ := strings.Cut(resource, "?")
+	if resourceQuery != "" {
+		query := parsed.Query()
+		values, err := url.ParseQuery(resourceQuery)
+		if err != nil {
+			return base
+		}
+		for key, vals := range values {
+			query[key] = vals
+		}
+		parsed.RawQuery = query.Encode()
+	}
+	parsed.RawPath = path + "/" + prefix + "/" + strings.TrimLeft(resourcePath, "/")
 	parsed.Path, _ = url.PathUnescape(parsed.RawPath)
 	return parsed.String()
 }

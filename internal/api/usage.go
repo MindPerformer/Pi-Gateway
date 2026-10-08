@@ -31,9 +31,8 @@ type usageTracker struct {
 	requestID string
 	startedMS int64
 
-	// upstreamStartMS is stamped when the upstream request is built. The
-	// reference implementation starts its TTFT clock at the same point, so the
-	// gateway's own admission/selection work is excluded from TTFT.
+	// upstreamStartMS anchors transport headers/first-event diagnostics.
+	// First-output and total latency both use startedMS for throughput.
 	upstreamStartMS int64
 	headersMS       int64
 	firstEventMS    int64
@@ -164,11 +163,9 @@ func (t *usageTracker) noteHeaders(status int, now time.Time) {
 	}
 }
 
-// noteFrame stamps the first event and, separately, the first token.
-//
-// The reference implementation defines TTFT as the first *output* event, not
-// the first event: response.created arrives before any token, so treating it as
-// the first token would overstate TTFT for every request.
+// noteFrame matches codex2api's loose TTFT: the first non-lifecycle,
+// non-terminal response event, including reasoning/output structure events.
+// TTFT and total latency share the ledger start so subtracting them is valid.
 func (t *usageTracker) noteFrame(eventType string, now time.Time) {
 	if t.upstreamStartMS == 0 {
 		return
@@ -186,16 +183,21 @@ func (t *usageTracker) noteFrame(eventType string, now time.Time) {
 	if eventType != "" {
 		t.markSent()
 	}
-	if t.firstTokenMS == 0 && isOutputDelta(eventType) {
-		t.firstTokenMS = elapsed
+	if t.firstTokenMS == 0 && isFirstOutputEvent(eventType) {
+		t.firstTokenMS = max(now.UnixMilli()-t.startedMS, 1)
 	}
 }
 
-func isOutputDelta(eventType string) bool {
+func isFirstOutputEvent(eventType string) bool {
 	if !strings.HasPrefix(eventType, "response.") {
 		return false
 	}
-	return strings.Contains(eventType, ".delta")
+	switch eventType {
+	case "response.created", "response.in_progress", "response.error", "response.completed", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+		return false
+	default:
+		return true
+	}
 }
 
 func (t *usageTracker) noteUsage(u upstream.Usage) {

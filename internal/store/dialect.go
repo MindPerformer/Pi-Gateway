@@ -200,7 +200,7 @@ func postgresConnectionError(phase string, err error) error {
 	return fmt.Errorf("store: PostgreSQL %s: %s", phase, category)
 }
 
-const postgresSchemaVersion int64 = 6
+const postgresSchemaVersion int64 = 7
 
 const postgresVersionSchema = `CREATE TABLE IF NOT EXISTS schema_migrations (
  version BIGINT PRIMARY KEY CHECK (version > 0),
@@ -255,7 +255,7 @@ func (s *Store) migratePostgres() error {
 	// publication metadata and rule capture fields. Version 4 adds per-account
 	// 429 cooldown overrides and account-group retry policy. Version 5 adds request
 	// reasoning, actual service tier and settled billing details. Version 6 adds
-	// durable admin sessions. Replaying the
+	// durable admin sessions. Version 7 adds official daily usage snapshots. Replaying the
 	// idempotent schema and additive columns upgrades all prior versions.
 	// Execute statements individually: pgx extended protocol rejects multi-command prepares.
 	for _, statement := range strings.Split(postgresSchema(schemaSQL), ";") {

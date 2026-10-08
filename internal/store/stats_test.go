@@ -68,9 +68,9 @@ func TestUsageSummaryAndDimensionsFrozenMetrics(t *testing.T) {
 	if u.TTFT != (UsagePercentiles{200, 200, 200}) {
 		t.Errorf("TTFT=%+v", u.TTFT)
 	}
-	// Valid TPS samples are 20*1000/(1000-200)=25 and 40*1000/1000=40.
-	// floor(2*ratio) selects 40 for all three frozen order statistics.
-	if u.OutputTPS != (UsagePercentiles{40, 40, 40}) {
+	// Successful samples are 25 and 50 (TTFT equals duration, so use total).
+	// Cancelled/incomplete requests are excluded from throughput.
+	if u.OutputTPS != (UsagePercentiles{50, 50, 50}) {
 		t.Errorf("TPS=%+v", u.OutputTPS)
 	}
 
@@ -83,8 +83,8 @@ func TestUsageSummaryAndDimensionsFrozenMetrics(t *testing.T) {
 	}
 	checkFloat(t, "model a request share", models[0].Share, .6)
 	checkFloat(t, "model b request share", models[1].Share, .4)
-	checkFloat(t, "model a TPS", models[0].OutputTPS, 25)
-	checkFloat(t, "model b TPS", models[1].OutputTPS, 40)
+	checkFloat(t, "model a TPS", models[0].OutputTPS, 37.5)
+	checkFloat(t, "model b TPS", models[1].OutputTPS, 0)
 	keys, err := s.UsageByKey(ctx, f)
 	if err != nil {
 		t.Fatal(err)
@@ -106,8 +106,8 @@ func TestUsageSummaryAndDimensionsFrozenMetrics(t *testing.T) {
 	if len(trend) != 2 || trend[0].BucketStart != start || trend[0].RequestCount != 3 || trend[1].BucketStart != start+86400000 || trend[1].RequestCount != 2 {
 		t.Fatalf("daily trend=%+v", trend)
 	}
-	checkFloat(t, "daily first TPS", trend[0].OutputTPS, 25)
-	checkFloat(t, "daily second TPS", trend[1].OutputTPS, 40)
+	checkFloat(t, "daily first TPS", trend[0].OutputTPS, 37.5)
+	checkFloat(t, "daily second TPS", trend[1].OutputTPS, 0)
 	hours, err := s.UsageTrend(ctx, f, "hour")
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestUsageSummaryAndDimensionsFrozenMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.RequestCount != 2 || u.OutputTPS != (UsagePercentiles{25, 25, 25}) {
+	if u.RequestCount != 2 || u.OutputTPS != (UsagePercentiles{50, 50, 50}) {
 		t.Fatalf("half-open interval or single-sample TPS: %+v", u)
 	}
 	rows, total, err := s.ListUsageRecords(ctx, UsageFilter{Limit: 1, Offset: 2})
@@ -166,8 +166,8 @@ func TestUsageEmptyStatisticsAndNullTPS(t *testing.T) {
 	for i, r := range []UsageRecord{
 		{OutputTokens: nil, LatencyMS: 100, FirstTokenMS: 1},
 		{OutputTokens: usageInt(0), LatencyMS: 100, FirstTokenMS: 1},
-		{OutputTokens: usageInt(1), LatencyMS: 100, FirstTokenMS: 100},
-		{OutputTokens: usageInt(1), LatencyMS: 99, FirstTokenMS: 100},
+		{OutputTokens: usageInt(1), LatencyMS: 0, FirstTokenMS: 100},
+		{OutputTokens: usageInt(1), LatencyMS: -1, FirstTokenMS: 100},
 	} {
 		r.Outcome = "succeeded"
 		r.StartedAt = int64(i + 1)

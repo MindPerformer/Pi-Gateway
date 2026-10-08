@@ -51,7 +51,8 @@ type Manager struct {
 	affinityTTL      time.Duration
 	affinityTimeout  time.Duration
 	// quotaClient fetches rate-limit state; optional.
-	quotaClient *quota.Client
+	quotaClient     *quota.Client
+	officialUsageMu *credentialRefreshLock
 
 	refreshMargin     time.Duration
 	maxPerAccount     int

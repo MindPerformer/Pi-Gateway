@@ -300,17 +300,23 @@ func (s *Store) ListUsageRecords(ctx context.Context, f UsageFilter) (records []
 	return records, total, tx.Commit()
 }
 
-// Only valid generation intervals contribute to TPS; missing/zero output and
-// latency<=TTFT are NULL, not zero samples in averages or percentiles.
-const outputTPSExpr = `CASE WHEN output_tokens>0 AND latency_ms>first_token_ms
- THEN output_tokens*1000.0/max(latency_ms-first_token_ms,1) END`
+// Match codex2api's computeOutputTokensPerSec, including the 20ms fallback.
+// Unfinished/failed requests are not throughput samples.
+const outputTPSValid = `outcome='succeeded' AND status_code<400 AND output_tokens>0 AND latency_ms>0`
+const outputTPSExpr = `CASE WHEN ` + outputTPSValid + `
+ THEN output_tokens*1000.0/(CASE WHEN first_token_ms>0 AND first_token_ms<latency_ms AND latency_ms-first_token_ms>=20
+ THEN latency_ms-first_token_ms ELSE latency_ms END) END`
 
 // OutputTPS uses the same generation interval as aggregate throughput metrics.
 func (r UsageRecord) OutputTPS() *float64 {
-	if r.OutputTokens == nil || *r.OutputTokens <= 0 || r.LatencyMS <= r.FirstTokenMS {
+	if r.Outcome != "succeeded" || r.StatusCode >= 400 || r.OutputTokens == nil || *r.OutputTokens <= 0 || r.LatencyMS <= 0 {
 		return nil
 	}
-	value := float64(*r.OutputTokens) * 1000 / float64(r.LatencyMS-r.FirstTokenMS)
+	generationMS := r.LatencyMS
+	if r.FirstTokenMS > 0 && r.FirstTokenMS < r.LatencyMS && r.LatencyMS-r.FirstTokenMS >= 20 {
+		generationMS -= r.FirstTokenMS
+	}
+	value := float64(*r.OutputTokens) * 1000 / float64(generationMS)
 	return &value
 }
 
@@ -324,7 +330,7 @@ func (s *Store) UsageSummaryFor(ctx context.Context, f UsageFilter) (*UsageSumma
 	where, args := usageWhere(f)
 	query := `WITH filtered AS (SELECT * FROM usage_records WHERE ` + where + `),
  ttft AS (SELECT first_token_ms AS x FROM filtered),
- tps AS (SELECT ` + outputTPSExpr + ` AS x FROM filtered WHERE output_tokens>0 AND latency_ms>first_token_ms)
+ tps AS (SELECT ` + outputTPSExpr + ` AS x FROM filtered WHERE ` + outputTPSValid + `)
  SELECT count(*),coalesce(sum(CASE WHEN outcome='succeeded' THEN 1 ELSE 0 END),0),coalesce(sum(CASE WHEN outcome='failed' THEN 1 ELSE 0 END),0),
  coalesce(sum(CASE WHEN outcome='cancelled' THEN 1 ELSE 0 END),0),coalesce(sum(CASE WHEN outcome='incomplete' THEN 1 ELSE 0 END),0),
  coalesce(sum(input_tokens),0),coalesce(sum(cached_tokens),0),coalesce(sum(cache_write_tokens),0),

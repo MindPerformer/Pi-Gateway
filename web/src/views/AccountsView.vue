@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import OfficialUsagePanel from '../components/usage/OfficialUsagePanel.vue'
 import { copyText as copyToClipboard } from "../utils/clipboard"
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, api } from '../api/client'
@@ -542,6 +543,7 @@ async function copyText(value: string, tag: string) {
 				@consume="(creditId: string) => consumeReset(quotaTarget!, creditId)"
 				@link-codex="linkCodex(quotaTarget)"
 			/>
+			<OfficialUsagePanel v-if="quotaTarget?.codex_linked" :key="quotaTarget.id" :accounts="accounts" :account-id="quotaTarget.id" />
 		</Modal>
 
 		<!-- OAuth wizard -->

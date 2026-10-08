@@ -273,6 +273,28 @@ CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_records(model, started_at DE
 CREATE INDEX IF NOT EXISTS idx_usage_key ON usage_records(api_key_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_account ON usage_records(account_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_outcome ON usage_records(outcome, id DESC);
+CREATE TABLE IF NOT EXISTS official_usage_sync (
+ workspace_id TEXT PRIMARY KEY,
+ synced_at INTEGER NOT NULL DEFAULT 0,
+ attempted_at INTEGER NOT NULL DEFAULT 0,
+ error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS official_daily_usage (
+ workspace_id TEXT NOT NULL,
+ day TEXT NOT NULL,
+ credits REAL,
+ uncached_input_tokens INTEGER,
+ cached_input_tokens INTEGER,
+ output_tokens INTEGER,
+ total_tokens INTEGER,
+ users INTEGER NOT NULL DEFAULT 0,
+ threads INTEGER NOT NULL DEFAULT 0,
+ turns INTEGER NOT NULL DEFAULT 0,
+ settled INTEGER NOT NULL DEFAULT 0,
+ raw TEXT NOT NULL DEFAULT '{}',
+ synced_at INTEGER NOT NULL,
+ PRIMARY KEY(workspace_id, day)
+);
 CREATE TABLE IF NOT EXISTS account_groups (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  name TEXT NOT NULL UNIQUE,

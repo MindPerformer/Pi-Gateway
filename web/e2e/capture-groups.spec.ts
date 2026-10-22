@@ -58,3 +58,30 @@ test('大量规则执行和响应增量默认收纳，展开分批显示且保�
     await expect(page.locator('.individual-frame')).toHaveCount(21)
     await expect(page.locator('.response-event-group').filter({has: group}).getByRole('button', {name: /980/})).toBeVisible()
 })
+
+
+test('差異閱讀區有可及名稱，鍵盤可捲動長內容', async ({page, admin}) => {
+    const capture = structuredClone(admin.captures[0]!)
+    capture.rule_traces = [{
+        rule_id: 'keyboard-diff', rule_name: 'Keyboard diff', phase: 'request',
+        action_id: 'replace', action_type: 'json_set', status: 'changed',
+        changes: [{path: '/long-content', operation: 'replace', before_exists: true, after_exists: true,
+            before: Array.from({length: 120}, (_, index) => `before ${index}`),
+            after: Array.from({length: 120}, (_, index) => `after ${index}`)}]
+    }]
+    admin.captures[0] = capture
+    await page.goto('/captures/101')
+    const rule = page.getByTestId('trace-rule-group').filter({hasText: 'Keyboard diff'})
+    await rule.locator(':scope > summary').click()
+    await rule.locator('[data-rule-status] > summary').click()
+    await rule.locator('.capture-diff > summary').click()
+    const region = rule.getByRole('region', {name: '/long-content', exact: true})
+    await expect(region).toHaveAttribute('tabindex', '0')
+    await region.focus()
+    await expect(region).toBeFocused()
+    expect(await region.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+    await region.press('PageDown')
+    await expect.poll(() => region.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    await region.press('Control+Home')
+    await expect.poll(() => region.evaluate(element => element.scrollTop)).toBe(0)
+})

@@ -7,24 +7,39 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestChatGPTRedirectURI(t *testing.T) {
-	cases := []struct {
-		host string
-		port int
-		want string
-	}{
-		{"", 0, "http://127.0.0.1:1455/auth/callback"},
-		{"127.0.0.1", 1455, "http://127.0.0.1:1455/auth/callback"},
-		{"0.0.0.0", 2000, "http://0.0.0.0:2000/auth/callback"},
+	const registered = "http://127.0.0.1:1455/auth/callback"
+	if ChatGPTRedirectURI != registered {
+		t.Fatalf("registered redirect changed: %s", ChatGPTRedirectURI)
 	}
-	for _, tc := range cases {
-		if got := ChatGPTRedirectURI(tc.host, tc.port); got != tc.want {
-			t.Errorf("ChatGPTRedirectURI(%q,%d) = %q, want %q", tc.host, tc.port, got, tc.want)
+	parsed, err := url.Parse(ChatGPTRedirectURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Scheme != "http" || parsed.Hostname() != ChatGPTDefaultCallbackHost || parsed.Port() != strconv.Itoa(ChatGPTCallbackPort) || parsed.Path != ChatGPTCallbackPath || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
+		t.Fatalf("registered loopback contract differs from callback constants: %s", parsed)
+	}
+}
+
+func TestChatGPTRegisteredRedirectIsIndependentOfListener(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "0.0.0.0", "::1"} {
+		manager := NewFlowManager(nil, FlowOptions{CallbackHost: host, CallbackPort: 2000, Logger: quietLogger(), DeviceID: func() string { return "0f5d2a1c-1111-2222-3333-444455556666" }})
+		flow, err := manager.buildFlow(FlowKindChatGPT, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorization, err := url.Parse(flow.AuthURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if flow.RedirectURI != ChatGPTRedirectURI || authorization.Query().Get("redirect_uri") != ChatGPTRedirectURI {
+			t.Fatalf("listener %q changed registered redirect", host)
 		}
 	}
 }
@@ -45,7 +60,7 @@ func TestAgentHostID(t *testing.T) {
 }
 
 func TestBuildChatGPTAuthorizeURL(t *testing.T) {
-	redirect := ChatGPTRedirectURI("", 0)
+	redirect := ChatGPTRedirectURI
 	raw := BuildChatGPTAuthorizeURL("challenge-value", "state-value", "nonce-value", "urn:uuid:abc", redirect)
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -85,7 +100,7 @@ func TestBuildChatGPTAuthorizeURL(t *testing.T) {
 }
 
 func TestParseChatGPTCallback(t *testing.T) {
-	redirect := ChatGPTRedirectURI("", 0)
+	redirect := ChatGPTRedirectURI
 	valid := redirect + "?code=the-code&state=the-state&client_id=issued-client-123"
 
 	code, clientID, err := ParseChatGPTCallback(valid, "the-state", redirect)
@@ -159,7 +174,7 @@ func TestValidateChatGPTClientID(t *testing.T) {
 
 func TestExchangeChatGPTCodeRequiresIssuedClientID(t *testing.T) {
 	c := NewClient(nil)
-	if _, err := c.ExchangeChatGPTCode(context.Background(), "code", "verifier", "  ", ChatGPTRedirectURI("", 0)); err == nil {
+	if _, err := c.ExchangeChatGPTCode(context.Background(), "code", "verifier", "  ", ChatGPTRedirectURI); err == nil {
 		t.Fatal("expected an error when the issued client id is missing")
 	}
 }
@@ -176,7 +191,7 @@ func TestExchangeChatGPTCodeSendsResourceAndParsesToken(t *testing.T) {
 
 	c := NewClient(nil)
 	c.chatgptTokenURL = srv.URL
-	redirect := ChatGPTRedirectURI("", 0)
+	redirect := ChatGPTRedirectURI
 	tok, err := c.ExchangeChatGPTCode(context.Background(), "the-code", "the-verifier", "issued-client", redirect)
 	if err != nil {
 		t.Fatalf("exchange returned error: %v", err)
@@ -270,7 +285,7 @@ func TestExchangeChatGPTCodeRejectsMissingIDToken(t *testing.T) {
 	})
 	c := NewClient(nil)
 	c.chatgptTokenURL = srv.URL
-	if _, err := c.ExchangeChatGPTCode(context.Background(), "code", "verifier", "issued-client", ChatGPTRedirectURI("", 0)); err == nil {
+	if _, err := c.ExchangeChatGPTCode(context.Background(), "code", "verifier", "issued-client", ChatGPTRedirectURI); err == nil {
 		t.Fatal("expected an error when the id token is absent")
 	}
 }

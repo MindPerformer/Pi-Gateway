@@ -32,6 +32,7 @@ const graphModel=computed(()=>toRaw(props.modelValue))
 const flowId = editorId()
 const flow = useVueFlow(flowId)
 const canvasElement = ref<HTMLElement>()
+const addNodeButton = ref<HTMLButtonElement>()
 const search = ref(''), libraryOpen = ref(false), connectionError = ref('')
 const activeGroup=ref<string>()
 const portManager=ref<string>()
@@ -250,7 +251,14 @@ function openNodeQuickAdd(id: string, request: QuickRequest) {
     quick.value = {targetId: id, kind: request.kind, mode: request.mode ?? 'auto', sourceHandle: request.sourceHandle, screen: bounds ? {x: bounds.left + 30, y: bounds.bottom - 25} : centerPoint()}
     connectionError.value = ''
 }
-function closeSearch() { quick.value = null; canvasElement.value?.focus({preventScroll: true}) }
+function closeSearch() { quick.value = null; addNodeButton.value?.focus({preventScroll: true}) }
+// A connection release can open search before the following pane click.
+// Keep its input focus so typing and Escape remain owned by the dialog.
+function canvasPaneClick(event: MouseEvent) {
+    if (quick.value) { return }
+    addNodeButton.value?.focus({preventScroll: true})
+    if (event.detail === 2) { canvasDoubleClick(event) }
+}
 async function createModule(options: RuleGraphAddOptions) {
     try {
         let next: RuleGraph
@@ -514,7 +522,12 @@ async function focus(id: string) {
     await persistViewport()
 }
 function keyboard(event: KeyboardEvent) {
-    if (event.isComposing || (event.target as HTMLElement).closest?.('input,textarea,select,button,a,[contenteditable=true]')) { return }
+    const commandAnchor = event.target === addNodeButton.value
+    if (event.isComposing || (!commandAnchor && (event.target as HTMLElement).closest?.('input,textarea,select,button,a,[contenteditable=true]'))) { return }
+    // Space/Enter on the native Add button keep their native click behavior.
+    if (commandAnchor && (event.key === ' ' || event.key === 'Enter')) { return }
+    // VueFlow owns deletion of selected nodes AND edges; do not dispatch a second removal.
+    if (commandAnchor && ['Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); return }
     if (event.key === ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); openSearch(); return }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); if (event.shiftKey) { emit('redo'); } else { emit('undo') } }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicate() }
@@ -525,7 +538,7 @@ defineExpose({focus, fit})
     <div class="rule-canvas-shell" @keydown="keyboard">
         <div class="rule-canvas-toolbar">
             <div class="rule-toolbar-group">
-                <button type="button" class="btn btn-primary" data-testid="canvas-add-node" @click="openSearch()"><Plus />{{ t('rules.canvas.addNode') }}</button>
+                <button ref="addNodeButton" type="button" class="btn btn-primary" data-testid="canvas-add-node" @click="openSearch()"><Plus />{{ t('rules.canvas.addNode') }}</button>
                 <button type="button" class="btn" data-testid="toggle-module-library" :aria-expanded="libraryOpen" @click="libraryOpen = !libraryOpen"><Search />{{ t('rules.canvas.library') }}</button>
                 <button type="button" class="btn" data-testid="canvas-create-group" :disabled="!modelValue.selected.some(id=>modelValue.nodes.some(node=>node.id===id&&node.kind!=='rule')) || !!activeGroup" @click="createGroup">{{locale==='zh-CN'?'收纳为组':'Group selected'}}</button>
                 <button v-if="activeGroup" type="button" class="btn" data-testid="canvas-leave-group" @click="leaveGroup">← {{locale==='zh-CN'?'返回工作流':'Back to workflow'}}</button>
@@ -560,15 +573,15 @@ defineExpose({focus, fit})
                 <h3>{{ t('rules.addAction') }}</h3>
                 <button v-for="cap in actions" :key="cap.id" type="button" class="module-item" :data-testid="`add-action-${cap.id}`" :title="localHelp(cap.description, locale)" @click="libraryAdd('action', cap.id)">{{ ruleLabel('action', cap.id, locale) }}</button>
             </aside>
-            <!-- Focus target for Escape restoration and canvas Space/undo/duplicate shortcuts. -->
-            <div ref="canvasElement" class="rule-flow" data-testid="rule-canvas" role="application" :aria-label="t('rules.graphical')" tabindex="0" @dblclick="canvasDoubleClick">
-                <VueFlow :id="flowId" :nodes="nodes" :edges="edges" :apply-default="false" :default-viewport="modelValue.viewport" :min-zoom="0.15" :max-zoom="2.5" :zoom-on-double-click="false" :is-valid-connection="validConnection" :delete-key-code="['Backspace', 'Delete']" :fit-view-on-init="false" @nodes-initialized="initializeLayout" @nodes-change="changes" @edges-change="edgeChanges" @connect="connect" @connect-start="startConnection" @connect-end="endConnection" @pane-context-menu="canvasContextMenu" @node-click="select($event.node.id,$event.event.shiftKey||$event.event.ctrlKey||$event.event.metaKey)" @move-end="publish({...modelValue, viewport: $event.flowTransform})">
+            <!-- The native Add button owns keyboard entry/restoration; this container is a named graph region. -->
+            <section ref="canvasElement" class="rule-flow" data-testid="rule-canvas" :aria-label="t('rules.graphical')">
+                <VueFlow :id="flowId" :nodes="nodes" :edges="edges" :apply-default="false" :default-viewport="modelValue.viewport" :min-zoom="0.15" :max-zoom="2.5" :zoom-on-double-click="false" :is-valid-connection="validConnection" :delete-key-code="['Backspace', 'Delete']" :fit-view-on-init="false" @nodes-initialized="initializeLayout" @nodes-change="changes" @edges-change="edgeChanges" @connect="connect" @connect-start="startConnection" @connect-end="endConnection" @pane-click="canvasPaneClick" @pane-context-menu="canvasContextMenu" @node-click="select($event.node.id,$event.event.shiftKey||$event.event.ctrlKey||$event.event.metaKey)" @move-end="publish({...modelValue, viewport: $event.flowTransform})">
                     <template #node-rule-module="nodeProps">
                         <RuleCanvasNode v-bind="nodeProps" @update:data="emit('edit', nodeProps.id, $event)" @value-input="openValueInput(nodeProps.id,$event)" @focus-value="focus($event)" @move-argument="(path,direction)=>moveArgument(nodeProps.id,path,direction)" @quick-add="openNodeQuickAdd(nodeProps.id, $event)" @focus-predicate="focusPredicate(nodeProps.id)" @edit-start="emit('edit-start', nodeProps.id)" @edit-end="emit('edit-end', nodeProps.id)" />
                     </template>
                     <template #node-rule-group="nodeProps"><RuleGroupNode v-bind="nodeProps" @enter="enterGroup" @ungroup="ungroup" @rename="(id,name)=>updateGroup(id,group=>group.name=name)" @register="portManager=$event" @port="renamePort" /></template>
                 </VueFlow>
-            </div>
+            </section>
         </div>
         <p v-if="connectionError" role="alert" class="text-xs text-red-500">{{ connectionError }}</p>
         <div v-if="managedGroup" class="group-port-manager">

@@ -263,41 +263,17 @@ func scanUsage(row interface{ Scan(...any) error }) (UsageRecord, error) {
 	return r, err
 }
 
-func (s *Store) ListUsageRecords(ctx context.Context, f UsageFilter) (records []UsageRecord, total int64, err error) {
+type usageRecordsPage struct {
+	records []UsageRecord
+	total   int64
+}
+
+func (s *Store) ListUsageRecords(ctx context.Context, f UsageFilter) ([]UsageRecord, int64, error) {
 	where, args := usageWhere(f)
-	tx, err := s.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, 0, err
-	}
-	defer tx.Rollback()
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM usage_records WHERE `+where, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+usageColumns+` FROM usage_records WHERE `+where+` ORDER BY started_at DESC,id DESC LIMIT ? OFFSET ?`, append(args, f.Limit, f.Offset)...)
-	if err != nil {
-		return nil, 0, err
-	}
-	records = []UsageRecord{}
-	for rows.Next() {
-		r, e := scanUsage(rows)
-		if e != nil {
-			rows.Close()
-			return nil, 0, e
-		}
-		records = append(records, r)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, 0, err
-	}
-	return records, total, tx.Commit()
+	page, err := withStoreTransaction(s, ctx, &sql.TxOptions{ReadOnly: true}, func(tx *storeTx) (usageRecordsPage, error) {
+		return tx.listUsageRecords(ctx, f, where, args)
+	})
+	return page.records, page.total, err
 }
 
 // Match codex2api's computeOutputTokensPerSec, including the 20ms fallback.
@@ -423,4 +399,36 @@ func (s *Store) UsageByKey(ctx context.Context, f UsageFilter) ([]UsageDimension
 }
 func (s *Store) UsageByAccount(ctx context.Context, f UsageFilter) ([]UsageDimension, error) {
 	return s.usageDimensions(ctx, f, "account")
+}
+
+func (tx *storeTx) listUsageRecords(ctx context.Context, f UsageFilter, where string, args []any) (usageRecordsPage, error) {
+	var total int64
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM usage_records WHERE `+where, args...).Scan(&total); err != nil {
+		return usageRecordsPage{}, err
+	}
+	if f.Limit <= 0 {
+		f.Limit = 100
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT `+usageColumns+` FROM usage_records WHERE `+where+` ORDER BY started_at DESC,id DESC LIMIT ? OFFSET ?`, append(args, f.Limit, f.Offset)...)
+	if err != nil {
+		return usageRecordsPage{}, err
+	}
+	records := []UsageRecord{}
+	for rows.Next() {
+		r, e := scanUsage(rows)
+		if e != nil {
+			rows.Close()
+			return usageRecordsPage{}, e
+		}
+		records = append(records, r)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return usageRecordsPage{}, err
+	}
+	return usageRecordsPage{records, total}, tx.Commit()
 }

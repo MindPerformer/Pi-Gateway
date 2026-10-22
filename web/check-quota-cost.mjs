@@ -15,36 +15,34 @@ const bundle = await build({
     logLevel: 'silent'
 })
 const messages = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`)
-let locale = 'en'
-const t = (key, params) => messages.translate(locale, key, params)
-const i18n = {
-    translateNow: t,
-    currentLocale: () => locale,
-    useI18n: () => ({t}),
-    formatDateTime: value => `time:${value}`
-}
-const ui = await loadTestModule('./src/stores/ui.ts', {
-    pinia: {
-        defineStore: () => {
-        }
-    }, vue, '../i18n': i18n
-})
-const money = await loadTestModule('./src/api/stats-format.ts', {'../i18n': i18n})
-const component = (await loadTestModule('./src/components/QuotaCostSummary.vue', {vue, '../api/stats-format': money, '../i18n': i18n, '../stores/ui': ui})).default
-const render = props => renderToString(vue.createSSRApp({render: () => vue.h(component, props)}))
-const usage = {cost_micros: 10000000, priced_requests: 2, unpriced_requests: 0}
-const windowCost = {
-    limit_id: 'codex',
-    role: 'secondary',
-    start_at: 1,
-    as_of: 200,
-    usage,
-    estimated_total_usd: 40,
-    estimated_remaining_usd: 30
-}
+async function checkLocale(locale) {
+    const t = (key, params) => messages.translate(locale, key, params)
+    const i18n = {
+        translateNow: t,
+        currentLocale: () => locale,
+        useI18n: () => ({t}),
+        formatDateTime: value => `time:${value}`
+    }
+    const ui = await loadTestModule('./src/stores/ui.ts', {
+        pinia: {
+            defineStore: () => {
+            }
+        }, vue, '../i18n': i18n
+    })
+    const money = await loadTestModule('./src/api/stats-format.ts', {'../i18n': i18n})
+    const component = (await loadTestModule('./src/components/QuotaCostSummary.vue', {vue, '../api/stats-format': money, '../i18n': i18n, '../stores/ui': ui})).default
+    const render = props => renderToString(vue.createSSRApp({render: () => vue.h(component, props)}))
+    const usage = {cost_micros: 10000000, priced_requests: 2, unpriced_requests: 0}
+    const windowCost = {
+        limit_id: 'codex',
+        role: 'secondary',
+        start_at: 1,
+        as_of: 200,
+        usage,
+        estimated_total_usd: 40,
+        estimated_remaining_usd: 30
+    }
 
-for (const lang of ['en', 'zh-CN']) {
-    locale = lang
     assert.equal(ui.formatUntil(3 * 86400000 + 7 * 3600000), '3d 7h')
     assert.equal(ui.formatUntil(2 * 86400000), '2d 0h')
     assert.equal(ui.formatUntil(86400000), '1d 0h')
@@ -96,6 +94,8 @@ for (const lang of ['en', 'zh-CN']) {
     assert.ok(precision.includes(money.money(1.234567)))
 
 }
+// Each language owns its translation closure and loaded components; concurrent SSR never mutates a shared locale.
+await Promise.all(['en', 'zh-CN'].map(checkLocale))
 console.log('PASS: quota USD cost/estimate rendering in both languages, partial/missing/zero costs and day/hour countdown boundaries')
 
 function textContent(html) {

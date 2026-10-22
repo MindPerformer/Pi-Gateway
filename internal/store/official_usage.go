@@ -78,11 +78,31 @@ func (s *Store) SaveOfficialUsage(ctx context.Context, account *Account, start, 
 		return errors.New("official usage: missing account")
 	}
 	key := OfficialUsageKey(account)
-	tx, err := s.BeginTx(ctx, nil)
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.saveOfficialUsage(ctx, account, start, end, days, fetchErr, key)
+	})
+}
+
+func (s *Store) ListOfficialUsage(ctx context.Context, workspace, start, end string) ([]OfficialUsageDay, error) {
+	rows, err := s.QueryContext(ctx, `SELECT workspace_id,day,credits,uncached_input_tokens,cached_input_tokens,output_tokens,total_tokens,users,threads,turns,settled,synced_at FROM official_daily_usage WHERE workspace_id=? AND day>=? AND day<=? ORDER BY day DESC`, workspace, start, end)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer tx.Rollback()
+	defer rows.Close()
+	out := []OfficialUsageDay{}
+	for rows.Next() {
+		var d OfficialUsageDay
+		var settled int
+		if err := rows.Scan(&d.WorkspaceID, &d.Day, &d.Credits, &d.UncachedInputTokens, &d.CachedInputTokens, &d.OutputTokens, &d.TotalTokens, &d.Users, &d.Threads, &d.Turns, &settled, &d.SyncedAt); err != nil {
+			return nil, err
+		}
+		d.Settled = settled != 0
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (tx *storeTx) saveOfficialUsage(ctx context.Context, account *Account, start string, end string, days []OfficialUsageDay, fetchErr string, key string) error {
 	result, err := tx.ExecContext(ctx, `UPDATE accounts SET updated_at=updated_at WHERE id=? AND codex_account_id=? AND codex_refresh_token=? AND codex_refresh_token<>''`, account.ID, account.CodexAccountID, account.CodexRefreshToken)
 	if err != nil {
 		return err
@@ -115,23 +135,4 @@ func (s *Store) SaveOfficialUsage(ctx context.Context, account *Account, start, 
 		return err
 	}
 	return tx.Commit()
-}
-
-func (s *Store) ListOfficialUsage(ctx context.Context, workspace, start, end string) ([]OfficialUsageDay, error) {
-	rows, err := s.QueryContext(ctx, `SELECT workspace_id,day,credits,uncached_input_tokens,cached_input_tokens,output_tokens,total_tokens,users,threads,turns,settled,synced_at FROM official_daily_usage WHERE workspace_id=? AND day>=? AND day<=? ORDER BY day DESC`, workspace, start, end)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []OfficialUsageDay{}
-	for rows.Next() {
-		var d OfficialUsageDay
-		var settled int
-		if err := rows.Scan(&d.WorkspaceID, &d.Day, &d.Credits, &d.UncachedInputTokens, &d.CachedInputTokens, &d.OutputTokens, &d.TotalTokens, &d.Users, &d.Threads, &d.Turns, &settled, &d.SyncedAt); err != nil {
-			return nil, err
-		}
-		d.Settled = settled != 0
-		out = append(out, d)
-	}
-	return out, rows.Err()
 }

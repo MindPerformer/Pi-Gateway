@@ -105,11 +105,7 @@ func migrateLegacyKeyGroups(ctx context.Context, conn *sql.Conn) error {
 	}
 	// Keep the canonical schema in db.go. Rebuilding recreates the UNIQUE(key)
 	// autoindex; explicit indexes are recreated after the old table is dropped.
-	start := strings.Index(schemaSQL, "CREATE TABLE IF NOT EXISTS api_keys (")
-	definition := schemaSQL[start:]
-	definition = definition[:strings.Index(definition, ");")+2]
-	definition = strings.Replace(definition, "CREATE TABLE IF NOT EXISTS api_keys", "CREATE TABLE api_keys_new", 1)
-	if _, err := conn.ExecContext(ctx, definition); err != nil {
+	if _, err := conn.ExecContext(ctx, legacyAPIKeyTableSQL); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, `INSERT INTO api_keys_new (`+keyColumns+`) SELECT `+keyColumns+` FROM api_keys`); err != nil {

@@ -167,23 +167,7 @@ func (s *Store) UpdateProxy(ctx context.Context, p *Proxy) error {
 		return errors.New("store: invalid proxy")
 	}
 	now := NowMS()
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin update proxy: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `UPDATE proxies SET name=?, url=?, last_test_json=?, updated_at=? WHERE id=?`,
-		p.Name, p.URL, encodeProxyTest(p.LastTest), now, p.ID); err != nil {
-		return fmt.Errorf("store: update proxy: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET proxy_url=?, updated_at=? WHERE proxy_id=?`, p.URL, now, p.ID); err != nil {
-		return fmt.Errorf("store: update bound account proxy: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit proxy update: %w", err)
-	}
-	p.UpdatedAt = now
-	return nil
+	return s.withTransactionBeginContext(ctx, "store: begin update proxy", func(tx *storeTx) error { return tx.updateProxy(ctx, p, now) })
 }
 
 // UpdateProxyTest saves a test result for a proxy.
@@ -231,32 +215,7 @@ func (s *Store) SetProxyAccounts(ctx context.Context, proxyID int64, accountIDs 
 		}
 		return fmt.Errorf("store: get proxy for assignment: %w", err)
 	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin proxy assignment: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	now := NowMS()
-	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET proxy_id=NULL, proxy_url='', updated_at=? WHERE proxy_id=?`, now, proxyID); err != nil {
-		return fmt.Errorf("store: clear proxy assignment: %w", err)
-	}
-	for _, accountID := range accountIDs {
-		if accountID <= 0 {
-			return errors.New("store: invalid account id")
-		}
-		res, err := tx.ExecContext(ctx, `UPDATE accounts SET proxy_id=?, proxy_url=?, updated_at=? WHERE id=?`, proxyID, proxyURL, now, accountID)
-		if err != nil {
-			return fmt.Errorf("store: assign proxy account: %w", err)
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return fmt.Errorf("store: account %d not found", accountID)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit proxy assignment: %w", err)
-	}
-	return nil
+	return s.withTransactionBeginContext(ctx, "store: begin proxy assignment", func(tx *storeTx) error { return tx.setProxyAccounts(ctx, proxyID, accountIDs, proxyURL) })
 }
 
 // ListProxyAccounts returns accounts currently bound to a proxy.
@@ -315,4 +274,43 @@ func nullableID(id int64) any {
 		return nil
 	}
 	return id
+}
+
+func (tx *storeTx) updateProxy(ctx context.Context, p *Proxy, now int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE proxies SET name=?, url=?, last_test_json=?, updated_at=? WHERE id=?`,
+		p.Name, p.URL, encodeProxyTest(p.LastTest), now, p.ID); err != nil {
+		return fmt.Errorf("store: update proxy: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET proxy_url=?, updated_at=? WHERE proxy_id=?`, p.URL, now, p.ID); err != nil {
+		return fmt.Errorf("store: update bound account proxy: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit proxy update: %w", err)
+	}
+	p.UpdatedAt = now
+	return nil
+}
+
+func (tx *storeTx) setProxyAccounts(ctx context.Context, proxyID int64, accountIDs []int64, proxyURL string) error {
+	now := NowMS()
+	if _, err := tx.ExecContext(ctx, `UPDATE accounts SET proxy_id=NULL, proxy_url='', updated_at=? WHERE proxy_id=?`, now, proxyID); err != nil {
+		return fmt.Errorf("store: clear proxy assignment: %w", err)
+	}
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			return errors.New("store: invalid account id")
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE accounts SET proxy_id=?, proxy_url=?, updated_at=? WHERE id=?`, proxyID, proxyURL, now, accountID)
+		if err != nil {
+			return fmt.Errorf("store: assign proxy account: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("store: account %d not found", accountID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit proxy assignment: %w", err)
+	}
+	return nil
 }

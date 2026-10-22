@@ -5,11 +5,10 @@ import "context"
 // AddAccountGroups appends memberships without replacing existing ones or
 // writing a stale credential/management snapshot.
 func (s *Store) AddAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.addAccountGroups(ctx, accountID, groupIDs) })
+}
+
+func (tx *storeTx) addAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
 	var exists int
 	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM accounts WHERE id=?`, accountID).Scan(&exists); err != nil {
 		return err

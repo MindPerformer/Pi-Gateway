@@ -113,12 +113,12 @@ func exerciseCatalogRevisions(t *testing.T, first, second *Store) {
 	}
 	// A revision written within an uncommitted transaction is not yet visible,
 	// and rolling that transaction back leaves the authoritative epoch unchanged.
-	tx, err := first.BeginTx(ctx, nil)
+	err := first.withTransaction(ctx, nil, func(tx *storeTx) error {
+		requireDataNoError(t, changeCatalogRevision(ctx, tx))
+		requireDataCondition(t, catalogRevisionForTest(t, second) == previous, "uncommitted revision escaped transaction")
+		return tx.Rollback()
+	})
 	requireDataNoError(t, err)
-	defer tx.Rollback()
-	requireDataNoError(t, changeCatalogRevision(ctx, tx))
-	requireDataCondition(t, catalogRevisionForTest(t, second) == previous, "uncommitted revision escaped transaction")
-	requireDataNoError(t, tx.Rollback())
 	assertUnchanged()
 	requireDataNoError(t, second.DeleteAccount(ctx, a.ID))
 	assertChanged()
@@ -264,11 +264,11 @@ func testCatalogRevisionDialectContractCase1(t *testing.T, ctx context.Context, 
 	}
 	// The revision upsert is portable and executes with native ?/$n
 	// binding; no fake SQL results are used by this offline contract.
-	tx, err := s.BeginTx(ctx, nil)
+	err := s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		requireDataNoError(t, changeCatalogRevision(ctx, tx))
+		return tx.Commit()
+	})
 	requireDataNoError(t, err)
-	defer tx.Rollback()
-	requireDataNoError(t, changeCatalogRevision(ctx, tx))
-	requireDataNoError(t, tx.Commit())
 	observer.reset()
 	revision := catalogRevisionForTest(t, s)
 	{

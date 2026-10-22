@@ -16,18 +16,9 @@ func adminSessionHash(value string) string {
 // CreateAdminSession persists only a token digest. Password changes invalidate
 // sessions through their credential version, including across gateway instances.
 func (s *Store) CreateAdminSession(ctx context.Context, token, username, passwordHash string, expiresAt int64) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM admin_sessions WHERE expires_at<=?`, NowMS()); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO admin_sessions(token_hash,username,credential_version,expires_at) VALUES(?,?,?,?)`, adminSessionHash(token), username, adminSessionHash(passwordHash), expiresAt); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.createAdminSession(ctx, token, username, passwordHash, expiresAt)
+	})
 }
 
 func (s *Store) AdminSessionValid(ctx context.Context, token, username, passwordHash string) (bool, error) {
@@ -45,4 +36,14 @@ func (s *Store) AdminSessionValid(ctx context.Context, token, username, password
 func (s *Store) DeleteAdminSession(ctx context.Context, token string) error {
 	_, err := s.ExecContext(ctx, `DELETE FROM admin_sessions WHERE token_hash=?`, adminSessionHash(token))
 	return err
+}
+
+func (tx *storeTx) createAdminSession(ctx context.Context, token string, username string, passwordHash string, expiresAt int64) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM admin_sessions WHERE expires_at<=?`, NowMS()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO admin_sessions(token_hash,username,credential_version,expires_at) VALUES(?,?,?,?)`, adminSessionHash(token), username, adminSessionHash(passwordHash), expiresAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

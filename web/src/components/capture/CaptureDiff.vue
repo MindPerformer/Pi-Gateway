@@ -72,11 +72,11 @@ const singleLabel = computed(() => props.after.available ? props.afterLabel : pr
 				<output v-if="diff.limited" class="capture-note" >{{ c('limited') }}</output>
 				<p v-if="partial" class="capture-note">{{ c('partial') }}</p>
 				<!-- Overflow must remain keyboard-scrollable, including when no links/buttons occur in the payload. -->
-				<div class="diff-lines" :aria-label="title" tabindex="0">
+				<section class="diff-lines" :aria-label="title" tabindex="0">
 					<div v-for="(line, index) in diff.lines" :key="index" class="diff-line" :class="`diff-${line.kind}`">
 						<span class="line-number" aria-hidden="true">{{ line.beforeLine ?? '' }}</span><span class="line-number" aria-hidden="true">{{ line.afterLine ?? '' }}</span><span class="line-sign">{{ (() => { if (line.kind === 'added') { return '+'; } if (line.kind === 'removed') { return '−'; } return ' '; })() }}</span><code>{{ line.text || ' ' }}</code>
 					</div>
-				</div>
+				</section>
 				<details v-if="!same" class="recorded-values"><summary>{{ c('rawValues') }}</summary><div class="recorded-grid"><JsonViewer :value="preview(before.value).text" :label="beforeLabel" max-height="24rem" /><JsonViewer :value="preview(after.value).text" :label="afterLabel" max-height="24rem" /></div><p v-if="preview(before.value).limited || preview(after.value).limited" class="capture-note">{{ c('limited') }}</p></details>
 			</template>
 		</div>

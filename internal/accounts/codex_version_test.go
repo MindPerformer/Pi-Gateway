@@ -500,17 +500,16 @@ func TestResolveCodexClientVersionAlreadyCanceled(t *testing.T) {
 // Read distinguishes cancellation during body consumption from header/transport I/O.
 type codexVersionTestObservedBody struct {
 	io.ReadCloser
-	ctx     context.Context
-	started chan<- context.Context
+	started chan<- struct{}
 	once    sync.Once
 }
 
 func (b *codexVersionTestObservedBody) Read(p []byte) (int, error) {
-	b.once.Do(func() { b.started <- b.ctx })
+	b.once.Do(func() { b.started <- struct{}{} })
 	return b.ReadCloser.Read(p)
 }
 
-func newCodexVersionBodyTestManager(t *testing.T, handler http.HandlerFunc) (*Manager, *codexVersionTestClock, <-chan context.Context) {
+func newCodexVersionBodyTestManager(t *testing.T, handler http.HandlerFunc) (*Manager, *codexVersionTestClock, <-chan context.Context, <-chan struct{}) {
 	t.Helper()
 	serverCtx, cancelServer := context.WithCancel(context.Background())
 	t.Cleanup(cancelServer) // Register immediately; the server cleanup also cancels before closing.
@@ -531,7 +530,11 @@ func newCodexVersionBodyTestManager(t *testing.T, handler http.HandlerFunc) (*Ma
 		return (&net.Dialer{}).DialContext(ctx, network, addr)
 	}}
 	t.Cleanup(transport.CloseIdleConnections)
-	bodyStarted := make(chan context.Context, 4)
+	// Context metadata is delivered by the request transport, not retained by
+	// the response body. The resolver coalesces requests: these two FIFO streams
+	// describe the same single in-flight response and its possible later retry.
+	requestContexts := make(chan context.Context, 4)
+	bodyStarted := make(chan struct{}, 4)
 	manager, clock := newCodexVersionTestManager(t, "", func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet || r.URL.String() != "https://api.github.com/repos/openai/codex/releases/latest" {
 			return nil, errors.New("body test refuses unexpected release request")
@@ -544,16 +547,17 @@ func newCodexVersionBodyTestManager(t *testing.T, handler http.HandlerFunc) (*Ma
 		if err != nil {
 			return nil, err
 		}
-		response.Body = &codexVersionTestObservedBody{ReadCloser: response.Body, ctx: r.Context(), started: bodyStarted}
+		requestContexts <- r.Context()
+		response.Body = &codexVersionTestObservedBody{ReadCloser: response.Body, started: bodyStarted}
 		return response, nil
 	})
-	return manager, clock, bodyStarted
+	return manager, clock, requestContexts, bodyStarted
 }
 
 func TestResolveCodexClientVersionRequestTimeoutIsFiveSeconds(t *testing.T) {
 	var calls atomic.Int64
 	serverStopped := make(chan struct{})
-	manager, clock, bodyStarted := newCodexVersionBodyTestManager(t, func(w http.ResponseWriter, r *http.Request) {
+	manager, clock, requestContexts, bodyStarted := newCodexVersionBodyTestManager(t, func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) == 1 {
 			w.WriteHeader(http.StatusOK)
 			w.(http.Flusher).Flush()
@@ -567,7 +571,7 @@ func TestResolveCodexClientVersionRequestTimeoutIsFiveSeconds(t *testing.T) {
 	t.Cleanup(cancel)
 	started := time.Now()
 	result := startCodexVersionTestResolve(manager, ctx)
-	bodyCtx := receiveCodexVersionTest(t, bodyStarted)
+	bodyCtx := receiveCodexVersionBodyContext(t, bodyStarted, requestContexts)
 	deadline, ok := bodyCtx.Deadline()
 	remaining := time.Until(deadline)
 	if !ok || remaining <= 0 || remaining > 5*time.Second || deadline.Before(started.Add(4*time.Second)) {
@@ -798,7 +802,7 @@ func testResolveCodexClientVersionBodyCancellationAllowsWaiterRetryPhase1(t *tes
 	serverStopped, releaseRetry := make(chan struct{}), make(chan struct{})
 	releaseAll := sync.OnceFunc(func() { close(releaseRetry) })
 	t.Cleanup(releaseAll)
-	manager, clock, bodyStarted := newCodexVersionBodyTestManager(t, func(w http.ResponseWriter, r *http.Request) {
+	manager, clock, requestContexts, bodyStarted := newCodexVersionBodyTestManager(t, func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		w.WriteHeader(http.StatusOK)
 		w.(http.Flusher).Flush()
@@ -821,7 +825,7 @@ func testResolveCodexClientVersionBodyCancellationAllowsWaiterRetryPhase1(t *tes
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())
 	t.Cleanup(cancelLeader)
 	leader := startCodexVersionTestResolve(manager, leaderCtx)
-	firstBodyCtx := receiveCodexVersionTest(t, bodyStarted)
+	firstBodyCtx := receiveCodexVersionBodyContext(t, bodyStarted, requestContexts)
 	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
 	t.Cleanup(cancelWaiter)
 	waiter := newCodexVersionTestWaitContext(waiterCtx)
@@ -836,7 +840,7 @@ func testResolveCodexClientVersionBodyCancellationAllowsWaiterRetryPhase1(t *tes
 		t.Fatalf("first body context=%v, want parent cancellation", firstBodyCtx.Err())
 	})
 	receiveCodexVersionTest(t, serverStopped)
-	retryBodyCtx := receiveCodexVersionTest(t, bodyStarted)
+	retryBodyCtx := receiveCodexVersionBodyContext(t, bodyStarted, requestContexts)
 	manager.codexVersions.mu.Lock()
 	untouched := manager.codexVersions.version == (*capturedCached) && manager.codexVersions.nextCheck.Equal(previousDeadline) && manager.codexVersions.inflight != nil
 	manager.codexVersions.mu.Unlock()
@@ -988,5 +992,37 @@ func TestCodexVersionWaitContextDelegatesWithoutEarlySignal(t *testing.T) {
 	receiveCodexVersionTest(t, waiter.Done())
 	if !errors.Is(waiter.Err(), context.Canceled) {
 		t.Fatal("wait adapter lost parent cancellation")
+	}
+}
+
+// Headers alone must not satisfy body-consumption synchronization. Only after
+// the first Read signal can a test inspect the matching request context.
+func receiveCodexVersionBodyContext(t *testing.T, started <-chan struct{}, contexts <-chan context.Context) context.Context {
+	t.Helper()
+	receiveCodexVersionTest(t, started)
+	return receiveCodexVersionTest(t, contexts)
+}
+
+func TestCodexVersionObservedBodySignalsOnlyFirstRead(t *testing.T) {
+	started := make(chan struct{}, 2)
+	body := &codexVersionTestObservedBody{ReadCloser: io.NopCloser(strings.NewReader("ab")), started: started}
+	defer body.Close()
+	select {
+	case <-started:
+		t.Fatal("body signaled before Read")
+	default:
+	}
+	buffer := make([]byte, 1)
+	if n, err := body.Read(buffer); n != 1 || err != nil || buffer[0] != 'a' {
+		t.Fatalf("first read: n=%d err=%v value=%q", n, err, buffer)
+	}
+	receiveCodexVersionTest(t, started)
+	if n, err := body.Read(buffer); n != 1 || err != nil || buffer[0] != 'b' {
+		t.Fatalf("second read: n=%d err=%v value=%q", n, err, buffer)
+	}
+	select {
+	case <-started:
+		t.Fatal("body signaled more than once")
+	default:
 	}
 }

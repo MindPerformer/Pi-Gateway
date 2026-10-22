@@ -316,6 +316,8 @@ func TestPostgresStoreIntegration(t *testing.T) {
 		t.Fatal(s.Driver())
 	}
 	exerciseSQLBackend(t, s)
+	exerciseDeferredCommitFailure(t, s)
+	exerciseReadOnlyTransactionOptions(t, s)
 	exerciseAccountModelBatches(t, s)
 	second, err := OpenOptions(Options{Driver: "postgres", DSN: registered})
 	if err != nil {

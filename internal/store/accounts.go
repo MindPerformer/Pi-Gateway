@@ -163,54 +163,9 @@ func (s *Store) CreateAccount(ctx context.Context, a *Account, cooldownOverride 
 	a.InheritedModelRestrictions = []InheritedModelRestriction{}
 	modelsJSON, _ := json.Marshal(models)
 	supplementalJSON, _ := json.Marshal(supplemental)
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	now := NowMS()
-	if a.CreatedAt == 0 {
-		a.CreatedAt = now
-	}
-	a.UpdatedAt = now
-	a.Cooldown429Seconds = -1
-	if len(cooldownOverride) > 0 {
-		if cooldownOverride[0] < -1 || cooldownOverride[0] > 86400 {
-			return fmt.Errorf("%w: invalid cooldown override", ErrInvalidPolicy)
-		}
-		a.Cooldown429Seconds = cooldownOverride[0]
-	}
-	if a.Concurrency <= 0 {
-		a.Concurrency = 3
-	}
-	if a.Weight <= 0 {
-		a.Weight = 1
-	}
-	if a.Status == "" {
-		a.Status = AccountStatusUnknown
-	}
-
-	id, err := s.insertID(ctx, tx, `INSERT INTO accounts
-		(name, email, account_id, plan_type, access_token, refresh_token, id_token, expires_at,
-		 enabled, weight, concurrency, proxy_url, proxy_id, status, last_error, created_at, updated_at,
-		 oauth_client_id, upstream_protocol, disabled_models, supplemental_models,
-		 codex_access_token,codex_refresh_token,codex_id_token,codex_expires_at,codex_account_id,cooldown_429_seconds)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		a.Name, a.Email, a.AccountID, a.PlanType, a.AccessToken, a.RefreshToken, a.IDToken, a.ExpiresAt,
-		boolToInt(a.Enabled), a.Weight, a.Concurrency, a.ProxyURL, a.ProxyID, a.Status, a.LastError, a.CreatedAt, a.UpdatedAt,
-		a.OAuthClientID, a.UpstreamProtocol, string(modelsJSON), string(supplementalJSON),
-		a.CodexAccessToken, a.CodexRefreshToken, a.CodexIDToken, a.CodexExpiresAt, a.CodexAccountID, a.Cooldown429Seconds)
-	if err != nil {
-		return fmt.Errorf("store: create account: %w", err)
-	}
-	a.ID = id
-	if err := replaceAccountGroups(ctx, tx, id, a.GroupIDs); err != nil {
-		return err
-	}
-	if err := changeCatalogRevision(ctx, tx); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.createAccount(s, ctx, a, cooldownOverride, modelsJSON, supplementalJSON)
+	})
 }
 
 // UpdateAccount persists the mutable fields of an account. It does not write
@@ -315,32 +270,9 @@ func (s *Store) PatchAccountManagementFields(ctx context.Context, id int64, patc
 	if err != nil {
 		return err
 	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	args = append(args, id)
-	res, err := tx.ExecContext(ctx, "UPDATE accounts SET "+strings.Join(sets, ",")+" WHERE id=?", args...)
-	if err != nil {
-		return fmt.Errorf("store: patch account: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return sql.ErrNoRows
-	}
-	if patch.GroupIDs != nil {
-		if err := replaceAccountGroups(ctx, tx, id, patch.GroupIDs); err != nil {
-			return err
-		}
-	}
-	if patch.SupplementalModels != nil {
-		if err := changeCatalogRevision(ctx, tx); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.patchAccountManagementFields(ctx, id, patch, sets, args)
+	})
 }
 
 // UpdateAccountCredentials writes refreshed tokens.
@@ -391,26 +323,9 @@ func (s *Store) AttachChatGPTCredential(ctx context.Context, id int64, credentia
 // quota and model catalogs. Even a same-identity relink invalidates its pending
 // catalog generation and old snapshot in the credential transaction.
 func (s *Store) SaveCodexCredential(ctx context.Context, id int64, access, refresh, idToken string, expiresAt int64, codexAccountID string) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := lockModelCatalogAccount(ctx, tx, id); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE accounts SET
-		codex_access_token=?, codex_refresh_token=?, codex_id_token=?, codex_expires_at=?, codex_account_id=?,
-		updated_at=?
-		WHERE id=?`,
-		access, refresh, idToken, expiresAt, codexAccountID, NowMS(), id)
-	if err != nil {
-		return fmt.Errorf("store: save codex credential: %w", err)
-	}
-	if err := clearCodexModelCatalog(ctx, tx, id, true); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.saveCodexCredential(ctx, id, access, refresh, idToken, expiresAt, codexAccountID)
+	})
 }
 
 // UpdateCodexCredentialsIfCurrent atomically rotates the Codex credential only if
@@ -419,69 +334,14 @@ func (s *Store) UpdateCodexCredentialsIfCurrent(ctx context.Context, id int64, e
 	if strings.TrimSpace(expectedRefresh) == "" {
 		return ErrCodexCredentialChanged
 	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	current, err := lockModelCatalogAccount(ctx, tx, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrCodexCredentialChanged
-	}
-	if err != nil {
-		return err
-	}
-	if current.CodexRefreshToken != expectedRefresh {
-		return ErrCodexCredentialChanged
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE accounts SET
-		codex_access_token=?, codex_refresh_token=CASE WHEN ?='' THEN codex_refresh_token ELSE ? END,
-		codex_expires_at=?, codex_account_id=?, updated_at=?
-		WHERE id=? AND codex_refresh_token=?`,
-		access, refresh, refresh, expiresAt, codexAccountID, NowMS(), id, expectedRefresh)
-	if err != nil {
-		return fmt.Errorf("store: compare-and-swap Codex credentials: %w", err)
-	}
-	if affected, err := result.RowsAffected(); err != nil {
-		return fmt.Errorf("store: compare-and-swap Codex credentials count: %w", err)
-	} else if affected != 1 {
-		return ErrCodexCredentialChanged
-	}
-	// Normal token renewal keeps both snapshots and the current generation.
-	// A changed account identity instead requires a new catalog request.
-	if current.CodexAccountID != codexAccountID {
-		if err := clearCodexModelCatalog(ctx, tx, id, true); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.updateCodexCredentialsIfCurrent(ctx, id, expectedRefresh, access, refresh, expiresAt, codexAccountID)
+	})
 }
 
 // ClearCodexCredential detaches the optional Codex credential.
 func (s *Store) ClearCodexCredential(ctx context.Context, id int64) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	current, err := lockModelCatalogAccount(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE accounts SET
-		codex_access_token='', codex_refresh_token='', codex_id_token='', codex_expires_at=0, codex_account_id='',
-		quota_json='', quota_updated_at=0, quota_error='',
-		updated_at=?
-		WHERE id=?`, NowMS(), id)
-	if err != nil {
-		return fmt.Errorf("store: clear codex credential: %w", err)
-	}
-	bindingChanged := current.CodexAccessToken != "" || current.CodexRefreshToken != "" ||
-		current.CodexIDToken != "" || current.CodexAccountID != ""
-	if err := clearCodexModelCatalog(ctx, tx, id, bindingChanged); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.clearCodexCredential(ctx, id) })
 }
 
 // UpdateAccountOAuthClientID stores the issued client id for the ChatGPT credential.
@@ -652,33 +512,7 @@ func (s *Store) ListAccountsDueForRefresh(ctx context.Context, deadlineMS int64)
 
 // DeleteAccount removes an account by id.
 func (s *Store) DeleteAccount(ctx context.Context, id int64) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	changed := false
-	for _, query := range []string{
-		`DELETE FROM accounts WHERE id=?`,
-		`DELETE FROM account_group_accounts WHERE account_id=?`,
-		`DELETE FROM account_model_catalog WHERE account_id=?`,
-	} {
-		res, err := tx.ExecContext(ctx, query, id)
-		if err != nil {
-			return fmt.Errorf("store: delete account: %w", err)
-		}
-		if n, err := res.RowsAffected(); err != nil {
-			return err
-		} else if n > 0 {
-			changed = true
-		}
-	}
-	if changed {
-		if err := changeCatalogRevision(ctx, tx); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.deleteAccount(ctx, id) })
 }
 
 func accountManagementUpdate(patch AccountManagementPatch) ([]string, []any, error) {
@@ -753,4 +587,172 @@ func appendAccountCapacityUpdate(sets []string, args []any, patch AccountManagem
 		args = append(args, *patch.Concurrency)
 	}
 	return sets, args, nil
+}
+
+func (tx *storeTx) createAccount(s *Store, ctx context.Context, a *Account, cooldownOverride []int, modelsJSON []byte, supplementalJSON []byte) error {
+	now := NowMS()
+	if a.CreatedAt == 0 {
+		a.CreatedAt = now
+	}
+	a.UpdatedAt = now
+	a.Cooldown429Seconds = -1
+	if len(cooldownOverride) > 0 {
+		if cooldownOverride[0] < -1 || cooldownOverride[0] > 86400 {
+			return fmt.Errorf("%w: invalid cooldown override", ErrInvalidPolicy)
+		}
+		a.Cooldown429Seconds = cooldownOverride[0]
+	}
+	if a.Concurrency <= 0 {
+		a.Concurrency = 3
+	}
+	if a.Weight <= 0 {
+		a.Weight = 1
+	}
+	if a.Status == "" {
+		a.Status = AccountStatusUnknown
+	}
+
+	id, err := s.insertID(ctx, tx, `INSERT INTO accounts
+		(name, email, account_id, plan_type, access_token, refresh_token, id_token, expires_at,
+		 enabled, weight, concurrency, proxy_url, proxy_id, status, last_error, created_at, updated_at,
+		 oauth_client_id, upstream_protocol, disabled_models, supplemental_models,
+		 codex_access_token,codex_refresh_token,codex_id_token,codex_expires_at,codex_account_id,cooldown_429_seconds)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		a.Name, a.Email, a.AccountID, a.PlanType, a.AccessToken, a.RefreshToken, a.IDToken, a.ExpiresAt,
+		boolToInt(a.Enabled), a.Weight, a.Concurrency, a.ProxyURL, a.ProxyID, a.Status, a.LastError, a.CreatedAt, a.UpdatedAt,
+		a.OAuthClientID, a.UpstreamProtocol, string(modelsJSON), string(supplementalJSON),
+		a.CodexAccessToken, a.CodexRefreshToken, a.CodexIDToken, a.CodexExpiresAt, a.CodexAccountID, a.Cooldown429Seconds)
+	if err != nil {
+		return fmt.Errorf("store: create account: %w", err)
+	}
+	a.ID = id
+	if err := replaceAccountGroups(ctx, tx, id, a.GroupIDs); err != nil {
+		return err
+	}
+	if err := changeCatalogRevision(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) patchAccountManagementFields(ctx context.Context, id int64, patch AccountManagementPatch, sets []string, args []any) error {
+	args = append(args, id)
+	res, err := tx.ExecContext(ctx, "UPDATE accounts SET "+strings.Join(sets, ",")+" WHERE id=?", args...)
+	if err != nil {
+		return fmt.Errorf("store: patch account: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
+	}
+	if patch.GroupIDs != nil {
+		if err := replaceAccountGroups(ctx, tx, id, patch.GroupIDs); err != nil {
+			return err
+		}
+	}
+	if patch.SupplementalModels != nil {
+		if err := changeCatalogRevision(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) saveCodexCredential(ctx context.Context, id int64, access string, refresh string, idToken string, expiresAt int64, codexAccountID string) error {
+	if _, err := lockModelCatalogAccount(ctx, tx, id); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE accounts SET
+		codex_access_token=?, codex_refresh_token=?, codex_id_token=?, codex_expires_at=?, codex_account_id=?,
+		updated_at=?
+		WHERE id=?`,
+		access, refresh, idToken, expiresAt, codexAccountID, NowMS(), id)
+	if err != nil {
+		return fmt.Errorf("store: save codex credential: %w", err)
+	}
+	if err := clearCodexModelCatalog(ctx, tx, id, true); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) updateCodexCredentialsIfCurrent(ctx context.Context, id int64, expectedRefresh string, access string, refresh string, expiresAt int64, codexAccountID string) error {
+	current, err := lockModelCatalogAccount(ctx, tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrCodexCredentialChanged
+	}
+	if err != nil {
+		return err
+	}
+	if current.CodexRefreshToken != expectedRefresh {
+		return ErrCodexCredentialChanged
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE accounts SET
+		codex_access_token=?, codex_refresh_token=CASE WHEN ?='' THEN codex_refresh_token ELSE ? END,
+		codex_expires_at=?, codex_account_id=?, updated_at=?
+		WHERE id=? AND codex_refresh_token=?`,
+		access, refresh, refresh, expiresAt, codexAccountID, NowMS(), id, expectedRefresh)
+	if err != nil {
+		return fmt.Errorf("store: compare-and-swap Codex credentials: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("store: compare-and-swap Codex credentials count: %w", err)
+	} else if affected != 1 {
+		return ErrCodexCredentialChanged
+	}
+	// Normal token renewal keeps both snapshots and the current generation.
+	// A changed account identity instead requires a new catalog request.
+	if current.CodexAccountID != codexAccountID {
+		if err := clearCodexModelCatalog(ctx, tx, id, true); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) clearCodexCredential(ctx context.Context, id int64) error {
+	current, err := lockModelCatalogAccount(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE accounts SET
+		codex_access_token='', codex_refresh_token='', codex_id_token='', codex_expires_at=0, codex_account_id='',
+		quota_json='', quota_updated_at=0, quota_error='',
+		updated_at=?
+		WHERE id=?`, NowMS(), id)
+	if err != nil {
+		return fmt.Errorf("store: clear codex credential: %w", err)
+	}
+	bindingChanged := current.CodexAccessToken != "" || current.CodexRefreshToken != "" ||
+		current.CodexIDToken != "" || current.CodexAccountID != ""
+	if err := clearCodexModelCatalog(ctx, tx, id, bindingChanged); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) deleteAccount(ctx context.Context, id int64) error {
+	changed := false
+	for _, query := range []string{
+		`DELETE FROM accounts WHERE id=?`,
+		`DELETE FROM account_group_accounts WHERE account_id=?`,
+		`DELETE FROM account_model_catalog WHERE account_id=?`,
+	} {
+		res, err := tx.ExecContext(ctx, query, id)
+		if err != nil {
+			return fmt.Errorf("store: delete account: %w", err)
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n > 0 {
+			changed = true
+		}
+	}
+	if changed {
+		if err := changeCatalogRevision(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

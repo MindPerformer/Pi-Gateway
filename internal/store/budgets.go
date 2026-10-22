@@ -36,11 +36,31 @@ func rollBudgetWindows(ctx context.Context, tx *storeTx, id int64, now int64, co
 }
 
 func (s *Store) KeyBudgetStatus(ctx context.Context, apiKeyID int64, now int64) ([]KeyBudgetWindow, error) {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
+	return withStoreTransaction(s, ctx, nil, func(tx *storeTx) ([]KeyBudgetWindow, error) {
+		return tx.keyBudgetStatus(ctx, apiKeyID, now)
+	})
+}
+
+func (s *Store) SettleKeyCharge(ctx context.Context, requestID string, apiKeyID int64, costMicros int64, now int64) (bool, error) {
+	if requestID == "" {
+		return false, errors.New("store: empty charge request ID")
 	}
-	defer tx.Rollback()
+	if costMicros < 0 {
+		return false, errors.New("store: negative charge")
+	}
+	return withStoreTransaction(s, ctx, nil, func(tx *storeTx) (bool, error) {
+		return tx.settleKeyCharge(ctx, requestID, apiKeyID, costMicros, now)
+	})
+}
+
+func (s *Store) ResetKeyBudget(ctx context.Context, apiKeyID int64, period string, now int64) error {
+	if period != "daily" && period != "weekly" && period != "" && period != "all" {
+		return fmt.Errorf("store: invalid budget period %q", period)
+	}
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.resetKeyBudget(ctx, apiKeyID, period, now) })
+}
+
+func (tx *storeTx) keyBudgetStatus(ctx context.Context, apiKeyID int64, now int64) ([]KeyBudgetWindow, error) {
 	if err := rollBudgetWindows(ctx, tx, apiKeyID, now, 0); err != nil {
 		return nil, err
 	}
@@ -56,18 +76,7 @@ func (s *Store) KeyBudgetStatus(ctx context.Context, apiKeyID int64, now int64) 
 	return out, nil
 }
 
-func (s *Store) SettleKeyCharge(ctx context.Context, requestID string, apiKeyID int64, costMicros int64, now int64) (bool, error) {
-	if requestID == "" {
-		return false, errors.New("store: empty charge request ID")
-	}
-	if costMicros < 0 {
-		return false, errors.New("store: negative charge")
-	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
+func (tx *storeTx) settleKeyCharge(ctx context.Context, requestID string, apiKeyID int64, costMicros int64, now int64) (bool, error) {
 	res, err := tx.ExecContext(ctx, `INSERT INTO key_charge_events(request_id,api_key_id,cost_micros,created_at) VALUES (?,?,?,?) ON CONFLICT(request_id) DO NOTHING`, requestID, apiKeyID, costMicros, now)
 	if err != nil {
 		return false, err
@@ -88,15 +97,7 @@ func (s *Store) SettleKeyCharge(ctx context.Context, requestID string, apiKeyID 
 	return true, nil
 }
 
-func (s *Store) ResetKeyBudget(ctx context.Context, apiKeyID int64, period string, now int64) error {
-	if period != "daily" && period != "weekly" && period != "" && period != "all" {
-		return fmt.Errorf("store: invalid budget period %q", period)
-	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+func (tx *storeTx) resetKeyBudget(ctx context.Context, apiKeyID int64, period string, now int64) error {
 	for _, w := range budgetWindows(now) {
 		if period != "" && period != "all" && period != w.Period {
 			continue

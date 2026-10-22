@@ -93,16 +93,16 @@ func TestAccountModelBatchReadCountAndDialectContract(t *testing.T) {
 	const count = accountModelBatchSize*2 + 1
 	// Fixture insertion is intentionally batched in a transaction and excluded
 	// from observed read counts, so large boundary tests stay inexpensive.
-	tx, err := s.BeginTx(ctx, nil)
-	requireDataNoError(t, err)
-	defer tx.Rollback()
-	for id := 1; id <= count; id++ {
-		{
-			_, err := tx.ExecContext(ctx, `INSERT INTO accounts(id,name,created_at,updated_at) VALUES(?,?,0,0)`, id, "fixture")
-			requireDataTrue(t, err == nil, err)
+	err := s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		for id := 1; id <= count; id++ {
+			{
+				_, err := tx.ExecContext(ctx, `INSERT INTO accounts(id,name,created_at,updated_at) VALUES(?,?,0,0)`, id, "fixture")
+				requireDataTrue(t, err == nil, err)
+			}
 		}
-	}
-	requireDataNoError(t, tx.Commit())
+		return tx.Commit()
+	})
+	requireDataNoError(t, err)
 	for _, dialect := range []string{"sqlite", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			s.driver = dialect

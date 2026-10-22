@@ -67,20 +67,36 @@ function choose(index: number) {
 }
 function keydown(event: KeyboardEvent) {
     if (event.isComposing) { return }
-    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'Home', 'End'].includes(event.key)) { return }
+    if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        emit('close')
+        return
+    }
+    const target = event.target as HTMLElement
+    const result = target.closest<HTMLButtonElement>('[data-search-index]')
+    if (target !== input.value && !result) { return }
+    if (event.key === 'Enter' && target === input.value) {
+        event.preventDefault()
+        event.stopPropagation()
+        choose(active.value)
+        return
+    }
+    const arrows = ['ArrowDown', 'ArrowUp'].includes(event.key)
+    const boundary = !!result && ['Home', 'End'].includes(event.key)
+    if ((!arrows && !boundary) || !entries.value.length) { return }
     event.preventDefault()
     event.stopPropagation()
-    if (event.key === 'Escape') { emit('close') }
-    else if (event.key === 'Enter') { choose(active.value) }
-    else if (event.key === 'Home') { active.value = 0 }
-    else if (event.key === 'End') { active.value = Math.max(0, entries.value.length - 1) }
-    else if (entries.value.length) { active.value = (active.value + (event.key === 'ArrowDown' ? 1 : -1) + entries.value.length) % entries.value.length }
+    focusCommand(event.key, result)
+}
+function focusCommand(key: string, result: HTMLButtonElement | null) {
+    if (!result) { active.value = key === 'ArrowUp' ? entries.value.length - 1 : 0 }
+    else if (key === 'Home') { active.value = 0 }
+    else if (key === 'End') { active.value = entries.value.length - 1 }
+    else { active.value = (Number(result.dataset.searchIndex) + (key === 'ArrowDown' ? 1 : -1) + entries.value.length) % entries.value.length }
+    popup.value?.querySelector<HTMLButtonElement>(`[data-search-index="${active.value}"]`)?.focus()
 }
 watch(entries, () => { active.value = 0 })
-watch(active, async () => {
-    await nextTick()
-    popup.value?.querySelector(`[data-search-index="${active.value}"]`)?.scrollIntoView({block: 'nearest'})
-})
 watch(() => props.open, async open => {
     if (!open) { return }
     query.value = ''
@@ -99,19 +115,20 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); document.r
         <dialog open v-if="open" ref="popup" class="rule-node-search nodrag nopan nowheel" :style="positionStyle" data-testid="node-search" :aria-label="t('rules.canvas.addNode')" @keydown="keydown" @pointerdown.stop @wheel.stop @contextmenu.prevent>
             <header><strong>{{ t('rules.canvas.addNode') }}</strong><button type="button" class="btn btn-ghost" :aria-label="t('common.close')" @click="emit('close')">×</button></header>
             <p class="search-context" data-testid="node-search-context">{{ context }}</p>
-            <input ref="input" v-model="query" class="input" data-testid="node-search-input" :placeholder="t('rules.canvas.search')" :aria-label="t('rules.canvas.search')" role="combobox" :aria-controls="listID" aria-expanded="true" aria-autocomplete="list" :aria-activedescendant="entries.length ? `${listID}-${active}` : undefined" autocomplete="off" />
+            <input ref="input" v-model="query" class="input" data-testid="node-search-input" :placeholder="t('rules.canvas.search')" :aria-label="t('rules.canvas.search')" type="search" :aria-controls="listID" :aria-describedby="`${listID}-keys`" autocomplete="off" />
             <div v-if="!kind && !wrap" class="search-filters">
                 <button v-for="item in (['', 'condition', 'action'] as const)" :key="item" type="button" :class="{active: filter === item}" :aria-pressed="filter === item" @click="filter = item; input?.focus()">{{ t((() => { if (item === '') { return 'rules.canvas.allModules'; } if (item === 'condition') { return 'rules.addCondition'; } return 'rules.addAction'; })()) }}</button>
             </div>
-            <!-- Rich searchable choices use the combobox/listbox active-descendant pattern; native options cannot contain help text and badges. -->
-            <div :id="listID" class="search-results" role="listbox" :aria-label="t('rules.canvas.searchResults')">
-                <button v-for="(entry, index) in entries" :id="`${listID}-${index}`" :key="`${entry.kind}:${entry.type}`" :data-testid="`node-search-${entry.kind}-${entry.type}`" :data-search-index="index" class="search-entry" :class="{active: index === active}" type="button" role="option" :aria-selected="index === active" @pointermove="active = index" @click="choose(index)">
-                    <span class="entry-title"><span class="entry-dot" :class="entry.kind" />{{ entry.label }}</span>
-                    <small>{{ entry.help }}</small>
-                </button>
-                <p v-if="!entries.length" class="search-empty">{{ t('rules.canvas.noSearchResults') }}</p>
-            </div>
-            <footer>{{ t('rules.canvas.searchKeys') }}</footer>
+            <!-- These are immediate commands, not value selections: native buttons retain rich help and real keyboard focus. -->
+            <!-- Visible native markers preserve list semantics, including Safari/VoiceOver, without a redundant role. -->
+            <ul :id="listID" class="search-results" :aria-label="t('rules.canvas.searchResults')">
+                <li v-for="(entry, index) in entries" :key="`${entry.kind}:${entry.type}`"><button :id="`${listID}-${index}`" :data-testid="`node-search-${entry.kind}-${entry.type}`" :data-search-index="index" class="search-entry" :class="{active: index === active}" type="button" :aria-labelledby="`${listID}-${index}-title`" :aria-describedby="`${listID}-${index}-help`" @focus="active = index" @click="choose(index)">
+                    <span :id="`${listID}-${index}-title`" class="entry-title"><span class="entry-dot" :class="entry.kind" />{{ entry.label }}</span>
+                    <small :id="`${listID}-${index}-help`">{{ entry.help }}</small>
+                </button></li>
+            </ul>
+            <output class="search-empty" aria-live="polite" aria-atomic="true">{{ entries.length ? '' : t('rules.canvas.noSearchResults') }}</output>
+            <footer :id="`${listID}-keys`">{{ t('rules.canvas.searchKeys') }}</footer>
         </dialog>
     </Teleport>
 </template>
@@ -122,8 +139,9 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); document.r
 .search-context, .search-empty, footer { margin: 0; font-size: 11px; color: var(--color-ink-muted); line-height: 1.5; overflow-wrap: anywhere; }
 .search-filters { display: flex; gap: 5px; }
 .search-filters button { padding: 4px 8px; font-size: 11px; border-radius: 5px; }
-.search-filters button.active, .search-entry.active { background: var(--color-accent-soft); color: var(--color-accent); }
-.search-results { overflow-y: auto; min-height: 0; flex: 1; }
+.search-filters button.active, .search-entry.active, .search-entry:focus-visible { background: var(--color-accent-soft); color: var(--color-accent); }
+.search-results { list-style: disc; margin: 0; padding: 0; padding-inline-start: 1.25rem; overflow-y: auto; min-height: 0; flex: 1; }
+.search-results > li::marker { color: var(--color-ink-muted); }
 .search-entry { display: grid; gap: 3px; width: 100%; padding: 9px; text-align: left; border-radius: 6px; }
 .entry-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 .entry-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-accent); }

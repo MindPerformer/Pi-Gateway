@@ -223,7 +223,7 @@ func (m *Manager) currentKey(ctx context.Context, key *store.APIKey) (*store.API
 	}
 	current, err := m.store.GetKey(ctx, key.ID)
 	if err != nil {
-		return nil, err
+		return nil, acquisitionQueryError(ctx, err)
 	}
 	if current == nil || !current.Enabled || current.Key != key.Key {
 		return nil, ErrNoAccounts
@@ -313,7 +313,7 @@ func (m *Manager) eligible(ctx context.Context, key *store.APIKey, requestedMode
 func (m *Manager) eligibleFor(ctx context.Context, key *store.APIKey, model string, accountID int64, includeWaiting bool) ([]*store.Account, error) {
 	all, err := m.store.EligibleAccountsForKey(ctx, key)
 	if err != nil {
-		return nil, err
+		return nil, acquisitionQueryError(ctx, err)
 	}
 	now := m.nowTime().UnixMilli()
 	m.mu.Lock()
@@ -326,7 +326,7 @@ func (m *Manager) eligibleFor(ctx context.Context, key *store.APIKey, model stri
 	}
 	disabled, err := m.store.DisabledModelsForAccounts(ctx, ids, key)
 	if err != nil {
-		return nil, err
+		return nil, acquisitionQueryError(ctx, err)
 	}
 	modelDenied := false
 	out := make([]*store.Account, 0, len(healthy))
@@ -889,7 +889,7 @@ func (m *Manager) tryAcquireOrdered(ctx context.Context, key *store.APIKey, requ
 func (m *Manager) specificEligibleAccount(ctx context.Context, accountID int64, requestedModel string) (*store.Account, error) {
 	a, err := m.store.GetAccount(ctx, accountID)
 	if err != nil {
-		return nil, err
+		return nil, acquisitionQueryError(ctx, err)
 	}
 	if a == nil || !a.Enabled || a.CooldownUntil > m.nowTime().UnixMilli() {
 		return nil, ErrNoAccounts
@@ -906,7 +906,7 @@ func (m *Manager) specificEligibleAccount(ctx context.Context, accountID int64, 
 	}
 	models, err := m.store.DisabledModelsForAccount(ctx, a.ID, nil)
 	if err != nil {
-		return nil, err
+		return nil, acquisitionQueryError(ctx, err)
 	}
 	for _, model := range models {
 		if model == strings.TrimSpace(requestedModel) {
@@ -980,4 +980,18 @@ func excludeAccounts(candidates []*store.Account, excluded map[int64]bool) []*st
 		}
 	}
 	return filtered
+}
+
+// A cancellation can arrive after the admission-loop context check while a
+// database driver is running a query. Preserve its original error (for diagnosis)
+// and expose the request cancellation to callers using errors.Is. Successful
+// reads and domain authorization errors are not changed by this helper.
+func acquisitionQueryError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if canceled := ctx.Err(); canceled != nil && !errors.Is(err, canceled) {
+		return errors.Join(canceled, err)
+	}
+	return err
 }

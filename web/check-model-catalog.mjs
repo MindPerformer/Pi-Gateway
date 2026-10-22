@@ -7,27 +7,31 @@ import {renderToString} from '@vue/server-renderer'
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8')
 
-const locale = vue.ref('en')
-const translations = await loadTestModule('./src/components/accounts/accountControlsLocale.ts', {
-    '../../i18n': {useI18n: () => ({locale})},
-})
-const inertVue = {
-    ...vue, watch: () => {
-    }, onBeforeUnmount: () => {
+async function localeModules(language) {
+    const locale = vue.ref(language)
+    const translations = await loadTestModule('./src/components/accounts/accountControlsLocale.ts', {
+        '../../i18n': {useI18n: () => ({locale})},
+    })
+    const inertVue = {
+        ...vue, watch: () => {
+        }, onBeforeUnmount: () => {
+        }
     }
+    const catalog = await loadTestModule('./src/components/accounts/useAccountModelCatalog.ts', {
+        vue: inertVue,
+        '../../api/client': {
+            ApiError: class extends Error {
+            }, api: new Proxy({}, {
+                get: () => () => {
+                    throw new Error('Unexpected network access')
+                }
+            })
+        },
+        './accountControlsLocale': translations,
+    })
+    return {translations, catalog}
 }
-const catalog = await loadTestModule('./src/components/accounts/useAccountModelCatalog.ts', {
-    vue: inertVue,
-    '../../api/client': {
-        ApiError: class extends Error {
-        }, api: new Proxy({}, {
-            get: () => () => {
-                throw new Error('Unexpected network access')
-            }
-        })
-    },
-    './accountControlsLocale': translations,
-})
+const {translations, catalog} = await localeModules('en')
 const {modelCapabilities, manualCatalogModel, modelMetadataJSON, modelMetadataPreview, useAccountModelCatalog} = catalog
 let checked = 0
 
@@ -173,24 +177,27 @@ await check('preview truncation is explicit and full local JSON remains availabl
 })
 const selectorText = readFileSync(new URL('./src/components/accounts/ModelRestrictionSelector.vue', import.meta.url), 'utf8')
 let fixtures = []
-const sourceStatus = await loadTestModule('./src/components/accounts/ModelCatalogSourceStatus.vue', {
-    vue,
-    '../../stores/ui': {formatTime: String},
-    './accountControlsLocale': translations,
-    './useAccountModelCatalog': catalog,
-})
-const Selector = (await loadTestModule('./src/components/accounts/ModelRestrictionSelector.vue', {
-    './ModelCatalogSourceStatus.vue': sourceStatus,
-    vue,
-    'lucide-vue-next': Object.fromEntries(['RefreshCw', 'Search', 'ShieldBan'].map(name => [name, {render: () => vue.h('svg')}])),
-    '../../stores/ui': {formatTime: String},
-    './accountControlsLocale': translations,
-    './useAccountModelCatalog': {
-        ...catalog,
-        useAccountModelCatalog: sources => ({...useAccountModelCatalog(sources), models: vue.ref(fixtures)})
-    },
-})).default
-const render = props => renderToString(vue.h(Selector, {sources: [], modelValue: [], ...props}))
+async function selectorRenderer({translations, catalog}, modelFixtures) {
+    const sourceStatus = await loadTestModule('./src/components/accounts/ModelCatalogSourceStatus.vue', {
+        vue,
+        '../../stores/ui': {formatTime: String},
+        './accountControlsLocale': translations,
+        './useAccountModelCatalog': catalog,
+    })
+    const Selector = (await loadTestModule('./src/components/accounts/ModelRestrictionSelector.vue', {
+        './ModelCatalogSourceStatus.vue': sourceStatus,
+        vue,
+        'lucide-vue-next': Object.fromEntries(['RefreshCw', 'Search', 'ShieldBan'].map(name => [name, {render: () => vue.h('svg')}])),
+        '../../stores/ui': {formatTime: String},
+        './accountControlsLocale': translations,
+        './useAccountModelCatalog': {
+            ...catalog,
+            useAccountModelCatalog: sources => ({...catalog.useAccountModelCatalog(sources), models: vue.ref(modelFixtures())})
+        },
+    })).default
+    return props => renderToString(vue.h(Selector, {sources: [], modelValue: [], ...props}))
+}
+const render = await selectorRenderer({translations, catalog}, () => fixtures)
 await check('real selector escapes metadata markup and renders unknown fields', async () => {
     fixtures = [{
         id: 'danger',
@@ -207,14 +214,13 @@ await check('real selector escapes metadata markup and renders unknown fields', 
     assert.ok(!selectorText.includes('v-html'))
 })
 await check('unsaved manual models show unverified gateway defaults in both languages', async () => {
-    fixtures = []
-    for (const lang of ['en', 'zh-CN']) {
-        locale.value = lang
-        const html = await render({supplementalModels: ['unsaved']})
+    // Each concurrent render owns its locale, catalog module and model fixtures.
+    await Promise.all(['en', 'zh-CN'].map(async lang => {
+        const renderLocale = await selectorRenderer(await localeModules(lang), () => [])
+        const html = await renderLocale({supplementalModels: ['unsaved']})
         assert.ok(html.includes(lang === 'en' ? 'gateway reasoning defaults' : '网关默认值'))
         for (const value of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']) assert.ok(html.includes(value))
-    }
-    locale.value = 'en'
+    }))
 })
 await check('large metadata shows truncation/download, old catalogs and restrictions still render', async () => {
     fixtures = [{id: 'large', name: 'Large', sources: [], metadata: {unknown: 'a'.repeat(30000)}}, {

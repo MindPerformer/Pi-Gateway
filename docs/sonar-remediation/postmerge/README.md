@@ -14,7 +14,7 @@
 
 完整分支資料改為 `web/fixtures/nested-workflow-branch.json`，測試從 JSON 載入。保留 backend／已儲存規則所需的 `then` 欄位，不改名、不動態拼字。原有所有 graph round-trip、節點身分、巢狀分支增刪與複製斷言保留。
 
-新增 `then` 為陣列、不可呼叫、`Promise.resolve(params)` 保留同一物件、JSON 序列化往返一致的斷言。這是測試資料建模及分析消歧，**不是宣稱原程式具有 thenable 漏洞**；正式掃描是否關閉該項仍待驗證。
+新增 `then` 為陣列、不可呼叫、`Promise.resolve(params)` 保留同一物件、canonical JSON fixture 序列化 byte 一致的斷言。這是測試資料建模及分析消歧，**不是宣稱原程式具有 thenable 漏洞**；正式掃描是否關閉該項仍待驗證。
 
 ### G03：舊 API key migration 的固定欄位複製
 
@@ -50,3 +50,9 @@
 - `go vet -buildvcs=false -p=1 ./...` 與 `go build -buildvcs=false -p=1 ./...` 通過。首次未指定該參數因隔離來源匯出沒有 Git 工作樹、無法取得 VCS status 而失敗；此參數只取消版本資訊嵌入，不停用 vet、測試或安全檢查。
 
 使用者已另行批准本輪盡可能修正後推送原分支並建立新 PR；不自動合併、不部署，也不改 Sonar disposition。PR #3 已合併，本輪是獨立變更。
+
+## PR #4 第一輪掃描與修正
+
+`6359e0db15b76f53c69b04836aff6a41f6f21df0` 的 push frontend 已實際通過 59/59 Chromium 測試，包含 reduced-motion 與鍵盤捲動補測。Sonar Quality Gate 通過，但新增一項 maintainability：`web/check-rule-graph.mjs` 的 JSON.parse(JSON.stringify(...)) fixture 契約被解讀為 memory clone（issue `AaFktPF2pc1P3dGzNRRi`）。
+
+後續改為真正 wire golden-byte 比對：從 fixture JSON.parse 載入後，JSON.stringify 的 canonical pretty bytes 必須精確還原原 fixture。保留非 callable、Promise identity 及所有原 graph round-trip 斷言；不把 JSON wire 語義換成 structuredClone、不隱藏分析字串。規則全套重新驗證；新 head 的完整 CI／Sonar 仍需重新執行，第一輪 59/59 不冒充新 head 結果。該 Sonar 摘要 coverage 為 0.0%，不宣稱已有 coverage 達標證據。

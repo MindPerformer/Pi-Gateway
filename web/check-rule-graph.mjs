@@ -373,7 +373,7 @@ async function loadNestedWorkflowFixture() {
     assert.ok(Array.isArray(branch.params.then), 'the wire then branch is an action array')
     assert.notEqual(typeof branch.params.then, 'function', 'wire branch data must never be callable')
     assert.equal(await Promise.resolve(branch.params), branch.params, 'Promise resolution must preserve non-callable wire then data')
-    assert.deepEqual(JSON.parse(JSON.stringify(branch)), branch, 'the fixture survives the JSON wire round trip')
+    assert.equal(`${JSON.stringify(branch, null, 2)}\n`, serialized, 'serialization must reproduce the canonical wire fixture bytes')
     return branch
 }
 

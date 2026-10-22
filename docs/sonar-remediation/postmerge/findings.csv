@@ -1,0 +1,14 @@
+group_id,file,message,visible_lower_bound,exact_count_from_images,sources,local_status,rationale
+G01,web/check-rule-graph.mjs,Do not add `then` to an object.,1,1,S1,code_changed_pending_scan,完整 JSON wire fixture；保留 then 欄位；新增不可呼叫與 Promise resolution identity 測試。不是實際 thenable 漏洞。
+G02,internal/store/dialect.go,Make sure using a dynamically formatted SQL query is safe here.,4,,"S1,S2",manual_review_candidate,目前六個方言 wrapper 的 query/args 分離與完整 caller 證據見 overall/security-review.md；不是任意 SQL sanitizer。截圖跨頁重複不能精確識別個別 issue。
+G03,internal/store/key_migration.go,Make sure using a dynamically formatted SQL query is safe here.,1,1,S2,code_changed_pending_scan,legacy API key copy 使用完整固定 INSERT…SELECT；新增 canonical keyColumns 同序一致性測試。
+G04,web/src/components/capture/CaptureDiff.vue,"""tabindex"" should only be declared on interactive elements.",1,1,S2,manual_review_candidate,named section 是具名捲動區，tabindex=0 維持各瀏覽器鍵盤捲動；MDN 支持此模式，不套假 widget role。
+G05,cmd/pi-gateway/main.go,Using HTTP protocol is insecure. Use HTTPS instead.,1,1,S3,product_risk_preserved,啟動訊息反映真實 HTTP 服務，字串本身不發送請求。保留產品 HTTP，需可信網路或部署 TLS。
+G06,cmd/pi-gateway/runtime.go,Using HTTP protocol is insecure. Use HTTPS instead.,1,1,S3,product_risk_preserved,healthz 無憑證，無 proxy/redirect，wildcard 轉 loopback；明確綁定位址仍可能非 loopback，保留相容性。
+G07,internal/config/config.go,Using WS protocol is insecure. Use WSS instead.,1,1,S3,product_risk_preserved,依明確 HTTP upstream 設定映射 WS；可能傳輸憑證及內容，遠端 TLS 強制政策需要另行決定。
+G08,internal/accounts/codex_version_test.go,Remove this 'context.Context' field and pass context as a parameter to methods that need it.,1,1,S3,code_changed_pending_scan,測試probe自行擁有done/waiting/cancel生命週期，移除不需要的parent context；保持readiness/取消/重試/真HTTP body斷言並測標準子context傳播。
+G09,web/src/style.css,"Remove this ""!important"" and resolve the specificity conflict instead.",4,4,"S3,S4",manual_review_candidate,四個 !important 僅 reduced-motion 覆寫，確保包含 scoped/inline 高優先度樣式時仍尊重使用者減少動態偏好。
+G10,web/check-rule-components.mjs,Unexpected `await` inside a loop.,5,,"S4,S5,S6",manual_review_candidate,五處可定位 await 迴圈操作同一 mounted 元件/事件 callbacks，順序影響 state；不改成競爭性 Promise.all。截圖個別項目數未確證。
+G11,web/check-rule-components.mjs,Prefer `structuredClone(…)` over `JSON.parse(JSON.stringify(…))` to create a deep clone.,1,1,S5,manual_review_candidate,JSON normalize 是獨立 wire-format oracle；structuredClone 不能替代 JSON 對 undefined/NaN 的序列化語義，亦可能不接受 Vue proxy。
+G12,web/src/utils/clipboard.ts,"The signature '(commandId: string, showUI?: boolean | undefined, value?: string | undefined): bo [RIGHT-CLIPPED]
+deprecated.",1,1,S6,product_compatibility_preserved,deprecated execCommand 是非 secure-context 的剪貼簿相容 fallback；移除會破壞要求的 HTTP 支援，截圖訊息右端被裁切。

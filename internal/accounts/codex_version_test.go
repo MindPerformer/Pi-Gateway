@@ -343,23 +343,34 @@ func TestResolveCodexClientVersionNeverDowngrades(t *testing.T) {
 	}
 }
 
-// Observing Done proves a waiter reached the pending-request select, without sleeps.
-// The resolver only calls Err before that point; no HTTP request is created for it.
-// The adapter deliberately retains its test-scoped parent to preserve the full
-// context contract; hiding the parent in method values would not change lifetime.
+// This test-only context owns its cancellation lifecycle; it does not retain a
+// request or parent context. Observing Done proves the resolver reached the
+// pending-request select, since the resolver only calls Err before that point.
 type codexVersionTestWaitContext struct {
-	context.Context
-	waiting chan struct{}
-	once    sync.Once
+	done       chan struct{}
+	waiting    chan struct{}
+	readyOnce  sync.Once
+	cancelOnce sync.Once
 }
 
-func newCodexVersionTestWaitContext(ctx context.Context) *codexVersionTestWaitContext {
-	return &codexVersionTestWaitContext{Context: ctx, waiting: make(chan struct{})}
+func newCodexVersionTestWaitContext() (*codexVersionTestWaitContext, context.CancelFunc) {
+	probe := &codexVersionTestWaitContext{done: make(chan struct{}), waiting: make(chan struct{})}
+	return probe, func() { probe.cancelOnce.Do(func() { close(probe.done) }) }
 }
 
+func (c *codexVersionTestWaitContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *codexVersionTestWaitContext) Value(any) any               { return nil }
+func (c *codexVersionTestWaitContext) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
 func (c *codexVersionTestWaitContext) Done() <-chan struct{} {
-	c.once.Do(func() { close(c.waiting) })
-	return c.Context.Done()
+	c.readyOnce.Do(func() { close(c.waiting) })
+	return c.done
 }
 
 type codexVersionTestResult struct {
@@ -409,7 +420,8 @@ func TestResolveCodexClientVersionConcurrentRequestsCoalesce(t *testing.T) {
 	results := []<-chan codexVersionTestResult{startCodexVersionTestResolve(manager, ctx)}
 	receiveCodexVersionTest(t, started)
 	for range 16 {
-		waiter := newCodexVersionTestWaitContext(ctx)
+		waiter, cancelWaiter := newCodexVersionTestWaitContext()
+		t.Cleanup(cancelWaiter)
 		results = append(results, startCodexVersionTestResolve(manager, waiter))
 		receiveCodexVersionTest(t, waiter.waiting)
 	}
@@ -448,9 +460,8 @@ func TestResolveCodexClientVersionCanceledWaiterDoesNotCancelLeader(t *testing.T
 	defer cancelLeader()
 	leader := startCodexVersionTestResolve(manager, leaderCtx)
 	receiveCodexVersionTest(t, started)
-	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
-	defer cancelWaiter()
-	waiter := newCodexVersionTestWaitContext(waiterCtx)
+	waiter, cancelWaiter := newCodexVersionTestWaitContext()
+	t.Cleanup(cancelWaiter)
 	result := startCodexVersionTestResolve(manager, waiter)
 	receiveCodexVersionTest(t, waiter.waiting)
 	cancelWaiter()
@@ -768,9 +779,8 @@ func testResolveCodexClientVersionCanceledLeaderAllowsWaiterRetryPhase1(t *testi
 	defer cancelLeader()
 	leader := startCodexVersionTestResolve(manager, leaderCtx)
 	receiveCodexVersionTest(t, started)
-	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
-	defer cancelWaiter()
-	waiter := newCodexVersionTestWaitContext(waiterCtx)
+	waiter, cancelWaiter := newCodexVersionTestWaitContext()
+	t.Cleanup(cancelWaiter)
 	result := startCodexVersionTestResolve(manager, waiter)
 	receiveCodexVersionTest(t, waiter.waiting)
 	cancelLeader()
@@ -826,9 +836,8 @@ func testResolveCodexClientVersionBodyCancellationAllowsWaiterRetryPhase1(t *tes
 	t.Cleanup(cancelLeader)
 	leader := startCodexVersionTestResolve(manager, leaderCtx)
 	firstBodyCtx := receiveCodexVersionBodyContext(t, bodyStarted, requestContexts)
-	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiter, cancelWaiter := newCodexVersionTestWaitContext()
 	t.Cleanup(cancelWaiter)
-	waiter := newCodexVersionTestWaitContext(waiterCtx)
 	result := startCodexVersionTestResolve(manager, waiter)
 	receiveCodexVersionTest(t, waiter.waiting)
 	cancelLeader()
@@ -966,32 +975,36 @@ func testResolveCodexClientVersionFailureLogsAreSanitizedPhase1(t *testing.T, ca
 	})
 }
 
-func TestCodexVersionWaitContextDelegatesWithoutEarlySignal(t *testing.T) {
-	type testKey struct{}
-	deadline := time.Now().Add(time.Minute)
-	parent, cancel := context.WithDeadline(context.WithValue(context.Background(), testKey{}, "value"), deadline)
-	defer cancel()
-	waiter := newCodexVersionTestWaitContext(parent)
-	gotDeadline, ok := waiter.Deadline()
-	if !ok || !gotDeadline.Equal(deadline) || waiter.Value(testKey{}) != "value" || waiter.Err() != nil {
-		t.Fatal("wait adapter changed parent context operations")
+func TestCodexVersionWaitContextOwnsCancellationWithoutEarlySignal(t *testing.T) {
+	probe, cancel := newCodexVersionTestWaitContext()
+	t.Cleanup(cancel)
+	deadline, ok := probe.Deadline()
+	if ok || !deadline.IsZero() || probe.Value(struct{}{}) != nil || probe.Err() != nil {
+		t.Fatal("fresh lifecycle probe must have no deadline, values, or cancellation")
 	}
 	select {
-	case <-waiter.waiting:
+	case <-probe.waiting:
 		t.Fatal("non-Done operation signaled waiter readiness")
 	default:
 	}
-	if waiter.Done() != parent.Done() {
-		t.Fatal("wait adapter replaced parent cancellation channel")
-	}
-	receiveCodexVersionTest(t, waiter.waiting)
-	if waiter.Done() != parent.Done() {
+	done := probe.Done()
+	receiveCodexVersionTest(t, probe.waiting)
+	if probe.Done() != done {
 		t.Fatal("repeated Done changed cancellation channel")
 	}
+	select {
+	case <-done:
+		t.Fatal("observing readiness canceled the probe")
+	default:
+	}
+	child, cancelChild := context.WithCancel(probe)
+	t.Cleanup(cancelChild)
 	cancel()
-	receiveCodexVersionTest(t, waiter.Done())
-	if !errors.Is(waiter.Err(), context.Canceled) {
-		t.Fatal("wait adapter lost parent cancellation")
+	cancel() // Cancellation is safe to repeat, including registered cleanup.
+	receiveCodexVersionTest(t, done)
+	receiveCodexVersionTest(t, child.Done())
+	if !errors.Is(probe.Err(), context.Canceled) || !errors.Is(child.Err(), context.Canceled) {
+		t.Fatal("probe cancellation did not propagate through standard context.WithCancel")
 	}
 }
 

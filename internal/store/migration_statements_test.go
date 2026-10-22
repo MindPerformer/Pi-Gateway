@@ -63,3 +63,12 @@ func sqliteTableDefinition(t *testing.T, s *Store, table string) string {
 	}
 	return definition
 }
+
+func TestLegacyAPIKeyCopyColumns(t *testing.T) {
+	// keyColumns is the scanner's independent canonical projection. This test
+	// prevents a future field change from silently dropping or reordering data.
+	want := "INSERT INTO api_keys_new (" + keyColumns + ") SELECT " + keyColumns + " FROM api_keys"
+	if legacyAPIKeyCopySQL != want {
+		t.Fatal("legacy key copy must preserve every canonical field in scanner order")
+	}
+}

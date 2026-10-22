@@ -204,7 +204,7 @@ func (m *FlowManager) buildFlow(kind string, meta map[string]string) (*Flow, err
 		// The registered redirect is fixed at 127.0.0.1:1455 regardless of the
 		// listener host, exactly as Pi does: a non-default host can only be finished
 		// by pasting the redirect URL.
-		redirect := ChatGPTRedirectURI("", 0)
+		redirect := ChatGPTRedirectURI
 		flow.RedirectURI = redirect
 		flow.state = state
 		flow.nonce = nonce

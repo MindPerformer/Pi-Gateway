@@ -210,24 +210,25 @@ export async function checkRuleComponents(schema) {
         }
     }
 
-    for (const field of schema.rule_fields) if (!['when', 'actions'].includes(field.name)) await editField(field)
+    // Field fixtures own their component tree, model and Pinia instance. Only independent mounts run concurrently.
+    await Promise.all(schema.rule_fields.filter(field => !['when', 'actions'].includes(field.name)).map(editField))
     await checkCapabilities()
 
     async function checkCapabilities() {
-        for (const cap of schema.actions) {
+        await Promise.all(schema.actions.map(async cap => {
             const action = components.newAction(cap.id, schema)
             const mounted = mount(components.ActionEditor, [action], {schema, phase: cap.phases[0]})
             for (const button of walk(mounted.host).filter(n => n.type === 'button' && text(n).startsWith('Options ·'))) await fire(button, 'onClick')
             for (const field of cap.fields) assert.ok(walk(mounted.host).some(n => n.props['data-rule-path'] === `/actions/0/params/${field.name}`), `${cap.id}.${field.name}: not rendered`)
             mounted.unmount();
             capabilitiesRendered++
-            for (const field of cap.fields) await editField(field)
-        }
+            await Promise.all(cap.fields.map(editField))
+        }))
         await checkConditions()
     }
 
     async function checkConditions() {
-        for (const cap of schema.conditions) {
+        await Promise.all(schema.conditions.map(async cap => {
             const condition = components.defaultCondition(cap.id, schema)
             const mounted = mount(components.ConditionEditor, condition, {schema})
             const options = walk(control(mounted.host, n => n.type === 'select')).filter(n => n.type === 'option').map(n => n.props.value)
@@ -236,8 +237,8 @@ export async function checkRuleComponents(schema) {
             else for (const field of cap.fields) assert.ok(walk(mounted.host).some(n => n.props['data-rule-path'] === `/when/${field.name}`))
             mounted.unmount();
             capabilitiesRendered++
-            for (const field of cap.fields) await editField(field)
-        }
+            await Promise.all(cap.fields.map(editField))
+        }))
     }
     // Create nested object/array/scalar values using only actual component controls.
     const json = mount(components.JsonValueEditor, null)
@@ -311,7 +312,8 @@ export async function checkRuleComponents(schema) {
             if (cap.id === 'json_merge') action.params.value = {a: [null, true, 'x']}
             fixtures.push({...components.newRule(), name: cap.id, phase: cap.phases[0], actions: [action]})
         }
-        for (const fixture of fixtures) {
+        // Each fixture owns an editor. Steps within that editor remain strictly ordered.
+        await Promise.all(fixtures.map(async (fixture, fixtureIndex) => {
             const state = components.createDraft(fixture)
             const editor = mount(components.RuleEditor, state, {schema})
             await clickLabel(editor.host, 'JSON code')
@@ -320,7 +322,7 @@ export async function checkRuleComponents(schema) {
             await clickLabel(editor.host, 'Visual editor')
             assert.equal(editor.state.value.mode, 'visual', JSON.stringify(editor.state.value.errors))
             assert.deepEqual(normalized(editor.state.value.rule), normalized(fixture))
-            const changedDescription = `graph edit ${roundtrips}\nmultiline`
+            const changedDescription = `graph edit ${fixtureIndex}\nmultiline`
             // Canvas fields are covered by real browser tests; this custom renderer stubs Vue Flow.
             await clickLabel(editor.host, 'Steps')
             if (fixture.description === undefined) {
@@ -334,7 +336,7 @@ export async function checkRuleComponents(schema) {
                 description: changedDescription
             }));
             roundtrips++
-            if (roundtrips === 1) {
+            if (fixtureIndex === 0) {
                 const before = normalized(editor.state.value.rule);
                 await fire(control(editor.host, n => n.type === 'textarea' && n.props['aria-label'] === 'JSON code'), 'onInput', '{broken');
                 await clickLabel(editor.host, 'Visual editor');
@@ -343,7 +345,7 @@ export async function checkRuleComponents(schema) {
                 assert.deepEqual(normalized(editor.state.value.rule), before)
             }
             editor.unmount()
-        }
+        }))
     }
     console.log(`PASS: real Vue controls: ${capabilitiesRendered} capabilities, ${fieldsEdited} field edits, ${enumsEdited} enum options, recursive JSON/reference creation, ${roundtrips} code→visual→code roundtrips and invalid-code retention`)
 }

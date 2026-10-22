@@ -482,29 +482,9 @@ func (s *Store) BeginAccountModelCatalogRefresh(ctx context.Context, id int64) (
 	if err != nil {
 		return nil, fmt.Errorf("store: generate model catalog refresh token: %w", err)
 	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if _, err := lockModelCatalogAccount(ctx, tx, id); err != nil {
-		return nil, err
-	}
-	state, before, err := readLockedModelCatalog(ctx, tx, id)
-	if err != nil {
-		return nil, err
-	}
-	attempt := &ModelCatalogRefreshAttempt{Token: token.String(), AttemptedAt: NowMS()}
-	for _, source := range modelCatalogSources() {
-		state.Pending[source] = modelCatalogFence{Token: attempt.Token, AttemptedAt: attempt.AttemptedAt}
-	}
-	if err := writeLockedModelCatalog(ctx, tx, id, state, before, false); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return attempt, nil
+	return withStoreTransaction(s, ctx, nil, func(tx *storeTx) (*ModelCatalogRefreshAttempt, error) {
+		return tx.beginAccountModelCatalogRefresh(ctx, id, token)
+	})
 }
 
 func applyModelCatalogSource(previous ModelCatalogSource, incoming ModelCatalogSource, source string, attempted int64) (ModelCatalogSource, error) {
@@ -533,47 +513,9 @@ func (s *Store) SaveAccountModelCatalogRefresh(ctx context.Context, id int64, at
 	for source := range results {
 		applied[source] = false
 	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	account, err := lockModelCatalogAccount(ctx, tx, id)
-	if err != nil {
-		return nil, err
-	}
-	state, before, err := readLockedModelCatalog(ctx, tx, id)
-	if err != nil {
-		return nil, err
-	}
-	changed := false
-	for _, source := range modelCatalogSources() {
-		result, exists := results[source]
-		fence := state.Pending[source]
-		if !exists || fence.Token != attempt.Token || fence.AttemptedAt != attempt.AttemptedAt ||
-			result.CredentialFingerprint == "" || result.CredentialFingerprint != ModelCatalogCredentialFingerprint(account, source) {
-			continue
-		}
-		catalog, err := applyModelCatalogSource(state.Sources[source], result.Catalog, source, fence.AttemptedAt)
-		if err != nil {
-			return nil, err
-		}
-		state.Sources[source] = catalog
-		// Retain the time watermark for the legacy writer, but consume the
-		// token so duplicate submissions cannot overwrite an applied result.
-		state.Pending[source] = modelCatalogFence{AttemptedAt: fence.AttemptedAt}
-		applied[source] = true
-		changed = true
-	}
-	if changed {
-		if err := writeLockedModelCatalog(ctx, tx, id, state, before, false); err != nil {
-			return nil, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return applied, nil
+	return withStoreTransaction(s, ctx, nil, func(tx *storeTx) (map[string]bool, error) {
+		return tx.saveAccountModelCatalogRefresh(ctx, id, attempt, results, applied)
+	})
 }
 
 // SaveAccountModelCatalog is the legacy ChatGPT-only writer. It must not replace
@@ -587,63 +529,9 @@ func (s *Store) SaveAccountModelCatalog(ctx context.Context, id int64, catalog *
 	if attempted <= 0 {
 		attempted = NowMS()
 	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := lockModelCatalogAccount(ctx, tx, id); err != nil {
-		// Preserve the old writer's harmless no-op on an account deleted
-		// during a fetch. The generation-aware API returns sql.ErrNoRows.
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return err
-	}
-	state, before, err := readLockedModelCatalog(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	previous := state.Sources[ModelSourceChatGPT]
-	fence := state.Pending[ModelSourceChatGPT]
-	watermark := max(previous.AttemptedAt, fence.AttemptedAt)
-	// Tokenized refreshes fence all older work. Legacy attempts instead track
-	// the latest successful list and latest attempt independently: an older
-	// success may improve the list without clearing a newer failure.
-	if legacyCatalogSuperseded(catalog, previous, fence, attempted, watermark) {
-		return tx.Commit()
-	}
-	if attempted == watermark && attempted <= fence.AttemptedAt {
-		// Preserve legacy cache invalidation without letting a same-millisecond
-		// legacy attempt overwrite a snapshot protected by a tokenized refresh.
-		if err := changeCatalogRevision(ctx, tx); err != nil {
-			return err
-		}
-		return tx.Commit()
-	}
-	// A merged read can contain Codex-only models. They must never become
-	// ChatGPT-owned through the compatibility entry point.
-	models := legacyChatGPTModels(catalog.Models)
-	incoming, err := applyModelCatalogSource(previous, ModelCatalogSource{
-		Models: models, FetchedAt: catalog.FetchedAt, Error: catalog.Error,
-	}, ModelSourceChatGPT, attempted)
-	if err != nil {
-		return err
-	}
-	if attempted < previous.AttemptedAt {
-		incoming.AttemptedAt = previous.AttemptedAt
-		incoming.Error = previous.Error
-		incoming.Skipped = previous.Skipped
-		incoming.SkipReason = previous.SkipReason
-	}
-	state.Sources[ModelSourceChatGPT] = incoming
-	// Pending watermarks belong only to tokenized refreshes. Treating every
-	// legacy failure as a fence would discard a late successful snapshot.
-	// Identical legacy writes still invalidate caches when their clocks tie.
-	if err := writeLockedModelCatalog(ctx, tx, id, state, before, attempted == watermark); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.saveAccountModelCatalog(ctx, id, catalog, attempted)
+	})
 }
 
 // clearCodexModelCatalog runs only after locking/updating the owning account in
@@ -736,4 +624,119 @@ func validateLegacyCatalog(id int64, catalog *ModelCatalog) error {
 		return fmt.Errorf("store: encode account model catalog: %w", err)
 	}
 	return nil
+}
+
+func (tx *storeTx) beginAccountModelCatalogRefresh(ctx context.Context, id int64, token uuid.UUID) (*ModelCatalogRefreshAttempt, error) {
+	if _, err := lockModelCatalogAccount(ctx, tx, id); err != nil {
+		return nil, err
+	}
+	state, before, err := readLockedModelCatalog(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	attempt := &ModelCatalogRefreshAttempt{Token: token.String(), AttemptedAt: NowMS()}
+	for _, source := range modelCatalogSources() {
+		state.Pending[source] = modelCatalogFence{Token: attempt.Token, AttemptedAt: attempt.AttemptedAt}
+	}
+	if err := writeLockedModelCatalog(ctx, tx, id, state, before, false); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return attempt, nil
+}
+
+func (tx *storeTx) saveAccountModelCatalogRefresh(ctx context.Context, id int64, attempt *ModelCatalogRefreshAttempt, results map[string]ModelCatalogSourceResult, applied map[string]bool) (map[string]bool, error) {
+	account, err := lockModelCatalogAccount(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	state, before, err := readLockedModelCatalog(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	changed := false
+	for _, source := range modelCatalogSources() {
+		result, exists := results[source]
+		fence := state.Pending[source]
+		if !exists || fence.Token != attempt.Token || fence.AttemptedAt != attempt.AttemptedAt ||
+			result.CredentialFingerprint == "" || result.CredentialFingerprint != ModelCatalogCredentialFingerprint(account, source) {
+			continue
+		}
+		catalog, err := applyModelCatalogSource(state.Sources[source], result.Catalog, source, fence.AttemptedAt)
+		if err != nil {
+			return nil, err
+		}
+		state.Sources[source] = catalog
+		// Retain the time watermark for the legacy writer, but consume the
+		// token so duplicate submissions cannot overwrite an applied result.
+		state.Pending[source] = modelCatalogFence{AttemptedAt: fence.AttemptedAt}
+		applied[source] = true
+		changed = true
+	}
+	if changed {
+		if err := writeLockedModelCatalog(ctx, tx, id, state, before, false); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return applied, nil
+}
+
+func (tx *storeTx) saveAccountModelCatalog(ctx context.Context, id int64, catalog *ModelCatalog, attempted int64) error {
+	if _, err := lockModelCatalogAccount(ctx, tx, id); err != nil {
+		// Preserve the old writer's harmless no-op on an account deleted
+		// during a fetch. The generation-aware API returns sql.ErrNoRows.
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	state, before, err := readLockedModelCatalog(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	previous := state.Sources[ModelSourceChatGPT]
+	fence := state.Pending[ModelSourceChatGPT]
+	watermark := max(previous.AttemptedAt, fence.AttemptedAt)
+	// Tokenized refreshes fence all older work. Legacy attempts instead track
+	// the latest successful list and latest attempt independently: an older
+	// success may improve the list without clearing a newer failure.
+	if legacyCatalogSuperseded(catalog, previous, fence, attempted, watermark) {
+		return tx.Commit()
+	}
+	if attempted == watermark && attempted <= fence.AttemptedAt {
+		// Preserve legacy cache invalidation without letting a same-millisecond
+		// legacy attempt overwrite a snapshot protected by a tokenized refresh.
+		if err := changeCatalogRevision(ctx, tx); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	// A merged read can contain Codex-only models. They must never become
+	// ChatGPT-owned through the compatibility entry point.
+	models := legacyChatGPTModels(catalog.Models)
+	incoming, err := applyModelCatalogSource(previous, ModelCatalogSource{
+		Models: models, FetchedAt: catalog.FetchedAt, Error: catalog.Error,
+	}, ModelSourceChatGPT, attempted)
+	if err != nil {
+		return err
+	}
+	if attempted < previous.AttemptedAt {
+		incoming.AttemptedAt = previous.AttemptedAt
+		incoming.Error = previous.Error
+		incoming.Skipped = previous.Skipped
+		incoming.SkipReason = previous.SkipReason
+	}
+	state.Sources[ModelSourceChatGPT] = incoming
+	// Pending watermarks belong only to tokenized refreshes. Treating every
+	// legacy failure as a fence would discard a late successful snapshot.
+	// Identical legacy writes still invalidate caches when their clocks tie.
+	if err := writeLockedModelCatalog(ctx, tx, id, state, before, attempted == watermark); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

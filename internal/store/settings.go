@@ -111,21 +111,7 @@ func (s *Store) SaveSettings(ctx context.Context, in *Settings) error {
 		"pricing_overrides_json":           in.PricingOverridesJSON,
 	}
 	now := NowMS()
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin settings tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	for k, v := range pairs {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)
-			 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
-			settingPrefix+k, v, now); err != nil {
-			return fmt.Errorf("store: save setting %s: %w", k, err)
-		}
-	}
-	return tx.Commit()
+	return s.withTransactionBeginContext(ctx, "store: begin settings tx", func(tx *storeTx) error { return tx.saveSettings(ctx, pairs, now) })
 }
 
 // GetSecret reads an internal (non-user-facing) settings value.
@@ -286,4 +272,17 @@ func (out *Settings) applyStringValues(values map[string]string) {
 	if value := values["compaction_prompt"]; strings.TrimSpace(value) != "" {
 		out.CompactionPrompt = value
 	}
+}
+
+func (tx *storeTx) saveSettings(ctx context.Context, pairs map[string]string, now int64) error {
+
+	for k, v := range pairs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)
+			 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+			settingPrefix+k, v, now); err != nil {
+			return fmt.Errorf("store: save setting %s: %w", k, err)
+		}
+	}
+	return tx.Commit()
 }

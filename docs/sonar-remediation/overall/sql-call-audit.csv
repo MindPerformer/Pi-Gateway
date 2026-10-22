@@ -1,0 +1,275 @@
+file,function,line,method,constant,query
+internal/store/account_batch.go,addAccountGroups,13,QueryRowContext,True,`SELECT 1 FROM accounts WHERE id=?`
+internal/store/account_batch.go,addAccountGroups,17,QueryRowContext,True,`SELECT 1 FROM account_groups WHERE id=?`
+internal/store/account_batch.go,addAccountGroups,20,ExecContext,True,"`INSERT INTO account_group_accounts(account_id,group_id) VALUES(?,?) ON CONFLICT(account_id,group_id) DO NOTHING`"
+internal/store/account_batch.go,addAccountGroups,24,ExecContext,True,`UPDATE accounts SET updated_at=? WHERE id=?`
+internal/store/accounts.go,UpdateAccount,176,ExecContext,True,"`UPDATE accounts SET
+		name=?, email=?, account_id=?, plan_type=?, access_token=?, refresh_token=?, id_token=?,
+		expires_at=?, enabled=?, weight=?, concurrency=?, proxy_url=?, status=?, last_error=?, updated_at=?,
+		oauth_client_id=?, upstream_protocol=?
+		WHERE id=?`"
+internal/store/accounts.go,UpdateAccountManagementFields,217,ExecContext,False,query
+internal/store/accounts.go,UpdateAccountCredentials,280,ExecContext,True,"`UPDATE accounts SET
+		access_token=?, refresh_token=CASE WHEN ?='' THEN refresh_token ELSE ? END,
+		expires_at=?, status=?, last_error=?, last_refresh_at=?, updated_at=?
+		WHERE id=?`"
+internal/store/accounts.go,AttachChatGPTCredential,306,ExecContext,True,"`UPDATE accounts SET
+	 enabled=CASE WHEN access_token='' THEN 1 ELSE enabled END,
+	 email=?,plan_type=?,access_token=?,refresh_token=?,id_token=?,oauth_client_id=?,
+	 expires_at=?,status=?,last_error='',updated_at=? WHERE id=?`"
+internal/store/accounts.go,UpdateAccountOAuthClientID,349,ExecContext,True,"`UPDATE accounts SET oauth_client_id=?, updated_at=? WHERE id=?`"
+internal/store/accounts.go,MarkAccountUsed,360,ExecContext,True,"`UPDATE accounts SET
+		last_used_at=?, request_count=request_count+1,
+		error_count=error_count + CASE WHEN ?=1 THEN 1 ELSE 0 END,
+		updated_at=?
+		WHERE id=?`"
+internal/store/accounts.go,SetAccountStatus,373,ExecContext,True,"`UPDATE accounts SET status=?, last_error=?, updated_at=? WHERE id=?`"
+internal/store/accounts.go,RecoverAccount,385,ExecContext,True,"`UPDATE accounts SET status=?,last_error='',
+ consecutive_failures=0,cooldown_until=0,cooldown_kind='',ewma_failure_rate_bp=0,
+ updated_at=? WHERE id=?`"
+internal/store/accounts.go,SaveAccountQuotaIfCurrent,408,ExecContext,True,"`UPDATE accounts SET
+		quota_json=?, quota_updated_at=?, quota_error=?,
+		plan_type=CASE WHEN ?='' THEN plan_type ELSE ? END,
+		updated_at=?
+		WHERE id=? AND codex_refresh_token=?`"
+internal/store/accounts.go,GetAccount,426,QueryRowContext,True,`SELECT `+accountColumns+` FROM accounts WHERE id=?`
+internal/store/accounts.go,FindAccountByAccountID,442,QueryRowContext,True,`SELECT `+accountColumns+` FROM accounts WHERE account_id=? LIMIT 1`
+internal/store/accounts.go,ListAccounts,455,QueryContext,True,`SELECT `+accountColumns+` FROM accounts ORDER BY id`
+internal/store/accounts.go,ListEnabledAccounts,474,QueryContext,True,`SELECT `+accountColumns+` FROM accounts WHERE enabled=1 ORDER BY id`
+internal/store/accounts.go,ListAccountsDueForRefresh,493,QueryContext,True,"`SELECT `+accountColumns+`
+		FROM accounts
+		WHERE enabled=1 AND refresh_token <> '' AND status IN (?, ?, ?) AND expires_at <= ?
+		ORDER BY expires_at`"
+internal/store/accounts.go,patchAccountManagementFields,640,ExecContext,False,"""UPDATE accounts SET ""+strings.Join(sets, "","")+"" WHERE id=?"""
+internal/store/accounts.go,saveCodexCredential,666,ExecContext,True,"`UPDATE accounts SET
+		codex_access_token=?, codex_refresh_token=?, codex_id_token=?, codex_expires_at=?, codex_account_id=?,
+		updated_at=?
+		WHERE id=?`"
+internal/store/accounts.go,updateCodexCredentialsIfCurrent,691,ExecContext,True,"`UPDATE accounts SET
+		codex_access_token=?, codex_refresh_token=CASE WHEN ?='' THEN codex_refresh_token ELSE ? END,
+		codex_expires_at=?, codex_account_id=?, updated_at=?
+		WHERE id=? AND codex_refresh_token=?`"
+internal/store/accounts.go,clearCodexCredential,719,ExecContext,True,"`UPDATE accounts SET
+		codex_access_token='', codex_refresh_token='', codex_id_token='', codex_expires_at=0, codex_account_id='',
+		quota_json='', quota_updated_at=0, quota_error='',
+		updated_at=?
+		WHERE id=?`"
+internal/store/accounts.go,deleteAccount,742,ExecContext,False,query
+internal/store/admin_sessions.go,AdminSessionValid,26,QueryRowContext,True,`SELECT expires_at FROM admin_sessions WHERE token_hash=? AND username=? AND credential_version=?`
+internal/store/admin_sessions.go,DeleteAdminSession,37,ExecContext,True,`DELETE FROM admin_sessions WHERE token_hash=?`
+internal/store/admin_sessions.go,createAdminSession,42,ExecContext,True,`DELETE FROM admin_sessions WHERE expires_at<=?`
+internal/store/admin_sessions.go,createAdminSession,45,ExecContext,True,"`INSERT INTO admin_sessions(token_hash,username,credential_version,expires_at) VALUES(?,?,?,?)`"
+internal/store/budgets.go,rollBudgetWindows,27,ExecContext,True,"`INSERT INTO key_budget_windows(api_key_id,period,window_start,used_micros) VALUES (?,?,?,?)
+   ON CONFLICT(api_key_id,period) DO UPDATE SET window_start=excluded.window_start,
+   used_micros=CASE WHEN key_budget_windows.window_start=excluded.window_start THEN key_budget_windows.used_micros+excluded.used_micros ELSE excluded.used_micros END`"
+internal/store/budgets.go,keyBudgetStatus,69,QueryRowContext,True,`SELECT used_micros FROM key_budget_windows WHERE api_key_id=? AND period=?`
+internal/store/budgets.go,settleKeyCharge,80,ExecContext,True,"`INSERT INTO key_charge_events(request_id,api_key_id,cost_micros,created_at) VALUES (?,?,?,?) ON CONFLICT(request_id) DO NOTHING`"
+internal/store/budgets.go,resetKeyBudget,105,ExecContext,True,"`INSERT INTO key_budget_windows(api_key_id,period,window_start,used_micros) VALUES (?,?,?,0)
+   ON CONFLICT(api_key_id,period) DO UPDATE SET window_start=excluded.window_start,used_micros=0`"
+internal/store/captures.go,trimAccountCaptures,194,ExecContext,True,"`DELETE FROM captures WHERE account_id = ? AND id NOT IN (
+		SELECT id FROM captures WHERE account_id = ? ORDER BY id DESC LIMIT ?
+	)`"
+internal/store/captures.go,ListCaptures,235,QueryRowContext,False,`SELECT COUNT(*) FROM captures `+where
+internal/store/captures.go,ListCaptures,259,QueryContext,False,query
+internal/store/captures.go,GetCapture,310,QueryRowContext,True,`SELECT `+captureColumns+` FROM captures WHERE id=?`
+internal/store/captures.go,ClearUnassignedCaptures,324,ExecContext,True,`DELETE FROM captures WHERE account_id=0`
+internal/store/captures.go,DeleteCapture,334,ExecContext,True,`DELETE FROM captures WHERE id=?`
+internal/store/captures.go,ClearCaptures,345,ExecContext,True,`DELETE FROM captures WHERE account_id=?`
+internal/store/captures.go,ClearCaptures,347,ExecContext,True,`DELETE FROM captures`
+internal/store/captures.go,Stats,372,QueryRowContext,True,"`SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN outcome='ok' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN outcome='error' THEN 1 ELSE 0 END),0),
+			COALESCE(CAST(AVG(NULLIF(duration_ms,0)) AS INTEGER),0),
+			COALESCE(SUM(prompt_tokens),0),
+			COALESCE(SUM(completion_tokens),0)
+		FROM (SELECT * FROM captures ORDER BY id DESC LIMIT ?) AS sampled`"
+internal/store/compaction.go,CompactionKey,18,ExecContext,True,"`INSERT INTO settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO NOTHING`"
+internal/store/db.go,migrateOnce,419,ExecContext,True,"""BEGIN IMMEDIATE"""
+internal/store/db.go,migrateOnce,425,ExecContext,True,"""ROLLBACK"""
+internal/store/db.go,migrateOnce,437,ExecContext,True,schemaSQL
+internal/store/db.go,migrateOnce,445,ExecContext,True,proxyBindingSchema
+internal/store/db.go,migrateOnce,453,ExecContext,True,"""COMMIT"""
+internal/store/db.go,ensureColumns,511,QueryContext,True,"`SELECT cid, name, type, ""notnull"", dflt_value, pk FROM pragma_table_info(?)`"
+internal/store/db.go,ensureColumns,538,ExecContext,False,statement.sqlite
+internal/store/deployment.go,DeploymentID,22,QueryRowContext,True,`SELECT value FROM settings WHERE key=?`
+internal/store/deployment.go,DeploymentID,32,ExecContext,True,"`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO NOTHING`"
+internal/store/deployment.go,DeploymentID,35,QueryRowContext,True,`SELECT value FROM settings WHERE key=?`
+internal/store/dialect.go,ExecContext,151,ExecContext,False,s.Rebind(query)
+internal/store/dialect.go,QueryContext,154,QueryContext,False,s.Rebind(query)
+internal/store/dialect.go,QueryRowContext,157,QueryRowContext,False,s.Rebind(query)
+internal/store/dialect.go,ExecContext,204,ExecContext,False,tx.store.Rebind(query)
+internal/store/dialect.go,QueryContext,207,QueryContext,False,tx.store.Rebind(query)
+internal/store/dialect.go,QueryRowContext,210,QueryRowContext,False,tx.store.Rebind(query)
+internal/store/dialect.go,insertID,221,QueryRowContext,False,"query+"" RETURNING id"""
+internal/store/dialect.go,insertID,224,ExecContext,False,query
+internal/store/dialect.go,checkPostgresSchemaVersion,261,ExecContext,True,postgresVersionSchema
+internal/store/dialect.go,checkPostgresSchemaVersion,265,QueryRowContext,True,"`SELECT COALESCE(MAX(version),0) FROM schema_migrations`"
+internal/store/dialect.go,recordPostgresSchemaVersion,275,ExecContext,True,"`INSERT INTO schema_migrations(version,applied_at) VALUES ($1,$2)`"
+internal/store/dialect.go,migratePostgres,291,ExecContext,True,`SELECT pg_advisory_xact_lock(1885955943)`
+internal/store/dialect.go,migratePostgres,313,ExecContext,False,statement
+internal/store/dialect.go,migratePostgres,321,ExecContext,False,statement
+internal/store/dialect.go,applyPostgresAdditiveColumns,362,ExecContext,False,statement.postgres
+internal/store/groups.go,ListAccountGroups,46,QueryContext,True,"`SELECT id,name,enabled,notes,created_at,updated_at,disabled_models,switch_on_429 FROM account_groups ORDER BY id`"
+internal/store/groups.go,GetAccountGroup,74,QueryRowContext,True,"`SELECT id,name,enabled,notes,created_at,updated_at,disabled_models,switch_on_429 FROM account_groups WHERE id=?`"
+internal/store/groups.go,replaceGroupAccounts,159,ExecContext,True,`DELETE FROM account_group_accounts WHERE group_id=?`
+internal/store/groups.go,replaceGroupAccounts,164,QueryRowContext,True,`SELECT 1 FROM accounts WHERE id=?`
+internal/store/groups.go,replaceGroupAccounts,170,ExecContext,True,"`INSERT INTO account_group_accounts(group_id,account_id) VALUES (?,?)`"
+internal/store/groups.go,EligibleAccountsForKey,182,QueryContext,True,"`SELECT `+accountColumns+` FROM accounts WHERE enabled=1 AND (
+  NOT EXISTS(SELECT 1 FROM api_key_groups WHERE api_key_id=?) OR
+  NOT EXISTS(SELECT 1 FROM account_group_accounts WHERE account_id=accounts.id) OR
+  EXISTS(SELECT 1 FROM account_group_accounts ga JOIN account_groups g ON g.id=ga.group_id
+   JOIN api_key_groups kg ON kg.group_id=g.id WHERE kg.api_key_id=? AND g.enabled=1 AND ga.account_id=accounts.id)
+ ) ORDER BY id`"
+internal/store/groups.go,replaceKeyGroups,212,ExecContext,True,`DELETE FROM api_key_groups WHERE api_key_id=?`
+internal/store/groups.go,replaceKeyGroups,217,QueryRowContext,True,`SELECT 1 FROM account_groups WHERE id=?`
+internal/store/groups.go,replaceKeyGroups,220,ExecContext,True,"`INSERT INTO api_key_groups(api_key_id,group_id) VALUES (?,?)`"
+internal/store/groups.go,DisabledModelsForAccount,308,QueryContext,True,"`SELECT disabled_models FROM accounts WHERE id=?
+	 UNION ALL SELECT g.disabled_models FROM account_groups g WHERE g.enabled=1 AND
+	 EXISTS(SELECT 1 FROM accounts WHERE id=?) AND (EXISTS(SELECT 1 FROM account_group_accounts ga WHERE ga.group_id=g.id AND ga.account_id=?)
+	 OR EXISTS(SELECT 1 FROM api_key_groups kg WHERE kg.group_id=g.id AND kg.api_key_id=?))`"
+internal/store/groups.go,DisabledModelsForAccounts,363,QueryContext,False,"`WITH selected_accounts AS (
+			SELECT id,disabled_models FROM accounts WHERE id IN (`+placeholders+`)
+		)
+		SELECT a.id,a.disabled_models FROM selected_accounts a
+		UNION ALL SELECT a.id,g.disabled_models FROM selected_accounts a
+			JOIN account_group_accounts ga ON ga.account_id=a.id
+			JOIN account_groups g ON g.id=ga.group_id AND g.enabled=1
+		UNION ALL SELECT a.id,g.disabled_models FROM selected_accounts a
+			JOIN api_key_groups kg ON kg.api_key_id=?
+			JOIN account_groups g ON g.id=kg.group_id AND g.enabled=1`"
+internal/store/groups.go,ensureUniqueGroupName,421,QueryContext,True,`SELECT name FROM account_groups WHERE id<>?`
+internal/store/groups.go,replaceAccountGroups,448,ExecContext,True,`DELETE FROM account_group_accounts WHERE account_id=?`
+internal/store/groups.go,replaceAccountGroups,453,QueryRowContext,True,`SELECT 1 FROM account_groups WHERE id=?`
+internal/store/groups.go,replaceAccountGroups,459,ExecContext,True,"`INSERT INTO account_group_accounts(group_id,account_id) VALUES (?,?)`"
+internal/store/groups.go,queryIDs,467,QueryContext,False,query
+internal/store/groups.go,patchAccountGroup,550,ExecContext,False,"""UPDATE account_groups SET ""+strings.Join(sets, "","")+"" WHERE id=?"""
+internal/store/groups.go,deleteAccountGroup,574,ExecContext,False,query
+internal/store/groups.go,setAccountGroupAccounts,583,ExecContext,True,`UPDATE account_groups SET updated_at=? WHERE id=?`
+internal/store/groups.go,setKeyGroups,599,ExecContext,True,`UPDATE api_keys SET updated_at=? WHERE id=?`
+internal/store/key_migration.go,hasLegacyKeyColumns,18,QueryRowContext,True,"`SELECT count(*) FROM pragma_table_info('api_keys') WHERE name IN ('scope','account_ids')`"
+internal/store/key_migration.go,backupBeforeKeyMigration,40,ExecContext,True,`VACUUM main INTO ?`
+internal/store/key_migration.go,migrateLegacyKeyGroups,47,QueryContext,True,"`SELECT id, account_ids FROM api_keys WHERE scope='list' AND trim(account_ids)<>'' ORDER BY id`"
+internal/store/key_migration.go,migrateLegacyKeyGroups,84,ExecContext,True,"`INSERT INTO account_groups(name,created_at,updated_at) VALUES (?,?,?) ON CONFLICT(name) DO NOTHING`"
+internal/store/key_migration.go,migrateLegacyKeyGroups,88,QueryRowContext,True,`SELECT id FROM account_groups WHERE name=?`
+internal/store/key_migration.go,migrateLegacyKeyGroups,92,ExecContext,True,"`INSERT OR IGNORE INTO account_group_accounts(group_id,account_id) VALUES (?,?)`"
+internal/store/key_migration.go,migrateLegacyKeyGroups,96,ExecContext,True,"`INSERT OR IGNORE INTO api_key_groups(api_key_id,group_id) VALUES (?,?)`"
+internal/store/key_migration.go,migrateLegacyKeyGroups,103,QueryRowContext,True,"`SELECT coalesce(max(seq),0) FROM sqlite_sequence WHERE name='api_keys'`"
+internal/store/key_migration.go,migrateLegacyKeyGroups,108,ExecContext,True,legacyAPIKeyTableSQL
+internal/store/key_migration.go,migrateLegacyKeyGroups,111,ExecContext,True,`INSERT INTO api_keys_new (`+keyColumns+`) SELECT `+keyColumns+` FROM api_keys`
+internal/store/key_migration.go,migrateLegacyKeyGroups,114,ExecContext,True,`DROP TABLE api_keys; ALTER TABLE api_keys_new RENAME TO api_keys; CREATE INDEX idx_api_keys_key ON api_keys(key)`
+internal/store/key_migration.go,migrateLegacyKeyGroups,117,ExecContext,True,"`UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='api_keys'`"
+internal/store/key_migration.go,migrateLegacyKeyGroups,120,ExecContext,True,"`INSERT INTO sqlite_sequence(name,seq) SELECT 'api_keys',? WHERE NOT EXISTS(SELECT 1 FROM sqlite_sequence WHERE name='api_keys')`"
+internal/store/keys.go,loadKey,87,QueryRowContext,False,query
+internal/store/keys.go,ListKeys,99,QueryContext,True,`SELECT `+keyColumns+` FROM api_keys ORDER BY id`
+internal/store/keys.go,MarkKeyUsed,128,ExecContext,True,"`UPDATE api_keys SET last_used_at=?,request_count=request_count+1,updated_at=? WHERE id=?`"
+internal/store/keys.go,updateKey,154,ExecContext,True,"`UPDATE api_keys SET
+ name=?,enabled=?,label=?,max_concurrency=?,requests_per_minute=?,daily_limit_usd=?,weekly_limit_usd=?,strategy=?,transport=?,updated_at=? WHERE id=?`"
+internal/store/keys.go,deleteKey,173,ExecContext,False,query
+internal/store/middlewares.go,ListMiddlewares,21,QueryContext,True,"`SELECT name, enabled, order_index, config, updated_at FROM middlewares ORDER BY order_index, name`"
+internal/store/middlewares.go,GetMiddleware,45,QueryRowContext,True,"`SELECT name, enabled, order_index, config, updated_at FROM middlewares WHERE name=?`"
+internal/store/middlewares.go,UpsertMiddleware,64,ExecContext,True,"`INSERT INTO middlewares (name, enabled, order_index, config, updated_at) VALUES (?,?,?,?,?)
+		 ON CONFLICT(name) DO UPDATE SET enabled=excluded.enabled, order_index=excluded.order_index,
+		   config=excluded.config, updated_at=excluded.updated_at`"
+internal/store/middlewares.go,DeleteMiddleware,77,ExecContext,True,`DELETE FROM middlewares WHERE name=?`
+internal/store/model_catalog.go,GetAccountModelCatalog,135,QueryRowContext,True,"`SELECT COALESCE(c.models_json,'[]'),
+		COALESCE(c.fetched_at,0), COALESCE(c.attempted_at,0), COALESCE(c.error,''),
+		a.supplemental_models, COALESCE(c.source_catalogs_json,'{}')
+		FROM accounts a LEFT JOIN account_model_catalog c ON c.account_id=a.id
+		WHERE a.id=?`"
+internal/store/model_catalog.go,GetAccountModelCatalogs,173,QueryContext,False,"`SELECT a.id, COALESCE(c.models_json,'[]'),
+			COALESCE(c.fetched_at,0), COALESCE(c.attempted_at,0), COALESCE(c.error,''),
+			a.supplemental_models, COALESCE(c.source_catalogs_json,'{}')
+			FROM accounts a LEFT JOIN account_model_catalog c ON c.account_id=a.id
+			WHERE a.id IN (`+placeholders+`) ORDER BY a.id`"
+internal/store/model_catalog.go,CatalogRevision,356,QueryRowContext,True,`SELECT value FROM settings WHERE key=?`
+internal/store/model_catalog.go,changeCatalogRevision,374,ExecContext,True,"`INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`"
+internal/store/model_catalog.go,lockModelCatalogAccount,388,ExecContext,True,`UPDATE accounts SET updated_at=updated_at WHERE id=?`
+internal/store/model_catalog.go,lockModelCatalogAccount,404,QueryRowContext,False,query
+internal/store/model_catalog.go,readLockedModelCatalog,423,QueryRowContext,False,query
+internal/store/model_catalog.go,writeLockedModelCatalog,462,ExecContext,True,"`INSERT INTO account_model_catalog
+		(account_id, models_json, source_catalogs_json, fetched_at, attempted_at, error) VALUES(?,?,?,?,?,?)
+		ON CONFLICT(account_id) DO UPDATE SET models_json=excluded.models_json,
+		source_catalogs_json=excluded.source_catalogs_json, fetched_at=excluded.fetched_at,
+		attempted_at=excluded.attempted_at, error=excluded.error`"
+internal/store/official_usage.go,OfficialUsageSyncFor,66,QueryRowContext,True,"`SELECT synced_at,attempted_at,error FROM official_usage_sync WHERE workspace_id=?`"
+internal/store/official_usage.go,ListOfficialUsage,87,QueryContext,True,"`SELECT workspace_id,day,credits,uncached_input_tokens,cached_input_tokens,output_tokens,total_tokens,users,threads,turns,settled,synced_at FROM official_daily_usage WHERE workspace_id=? AND day>=? AND day<=? ORDER BY day DESC`"
+internal/store/official_usage.go,saveOfficialUsage,106,ExecContext,True,`UPDATE accounts SET updated_at=updated_at WHERE id=? AND codex_account_id=? AND codex_refresh_token=? AND codex_refresh_token<>''`
+internal/store/official_usage.go,saveOfficialUsage,121,ExecContext,True,"`INSERT INTO official_daily_usage(workspace_id,day,credits,uncached_input_tokens,cached_input_tokens,output_tokens,total_tokens,users,threads,turns,settled,raw,synced_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+ ON CONFLICT(workspace_id,day) DO UPDATE SET credits=excluded.credits,uncached_input_tokens=excluded.uncached_input_tokens,cached_input_tokens=excluded.cached_input_tokens,output_tokens=excluded.output_tokens,total_tokens=excluded.total_tokens,users=excluded.users,threads=excluded.threads,turns=excluded.turns,settled=excluded.settled,raw=excluded.raw,synced_at=excluded.synced_at`"
+internal/store/official_usage.go,saveOfficialUsage,133,ExecContext,True,"`INSERT INTO official_usage_sync(workspace_id,synced_at,attempted_at,error) VALUES (?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET synced_at=CASE WHEN excluded.synced_at=0 THEN official_usage_sync.synced_at ELSE excluded.synced_at END,attempted_at=excluded.attempted_at,error=excluded.error`"
+internal/store/proxies.go,GetProxy,105,QueryRowContext,True,"`SELECT p.id, p.name, p.url, p.last_test_json,
+		(SELECT COUNT(*) FROM accounts a WHERE a.proxy_id=p.id), p.created_at, p.updated_at
+		FROM proxies p WHERE p.id=?`"
+internal/store/proxies.go,ListProxies,132,QueryRowContext,False,"""SELECT COUNT(*) FROM proxies p""+where"
+internal/store/proxies.go,ListProxies,141,QueryContext,False,"`SELECT p.id, p.name, p.url, p.last_test_json,
+		(SELECT COUNT(*) FROM accounts a WHERE a.proxy_id=p.id), p.created_at, p.updated_at
+		FROM proxies p`+where+` ORDER BY p.updated_at DESC, p.id DESC LIMIT ? OFFSET ?`"
+internal/store/proxies.go,UpdateProxyTest,175,ExecContext,True,`UPDATE proxies SET last_test_json=? WHERE id=? AND url=?`
+internal/store/proxies.go,DeleteProxy,191,QueryRowContext,True,`SELECT COUNT(*) FROM accounts WHERE proxy_id=?`
+internal/store/proxies.go,DeleteProxy,197,ExecContext,True,`DELETE FROM proxies WHERE id=?`
+internal/store/proxies.go,SetProxyAccounts,212,QueryRowContext,True,`SELECT url FROM proxies WHERE id=?`
+internal/store/proxies.go,ListProxyAccounts,232,QueryRowContext,False,"""SELECT COUNT(*) FROM accounts WHERE ""+where"
+internal/store/proxies.go,ListProxyAccounts,235,QueryContext,False,"""SELECT ""+accountColumns+"" FROM accounts WHERE ""+where+"" ORDER BY accounts.name, accounts.id LIMIT ? OFFSET ?"""
+internal/store/proxies.go,SetAccountProxy,258,QueryRowContext,True,`SELECT COUNT(*) FROM proxies WHERE id=?`
+internal/store/proxies.go,SetAccountProxy,265,ExecContext,True,"`UPDATE accounts SET proxy_id=?, proxy_url=?, updated_at=? WHERE id=?`"
+internal/store/proxies.go,updateProxy,280,ExecContext,True,"`UPDATE proxies SET name=?, url=?, last_test_json=?, updated_at=? WHERE id=?`"
+internal/store/proxies.go,updateProxy,284,ExecContext,True,"`UPDATE accounts SET proxy_url=?, updated_at=? WHERE proxy_id=?`"
+internal/store/proxies.go,setProxyAccounts,296,ExecContext,True,"`UPDATE accounts SET proxy_id=NULL, proxy_url='', updated_at=? WHERE proxy_id=?`"
+internal/store/proxies.go,setProxyAccounts,303,ExecContext,True,"`UPDATE accounts SET proxy_id=?, proxy_url=?, updated_at=? WHERE id=?`"
+internal/store/rules.go,RuleSetVersion,135,QueryRowContext,True,`SELECT version FROM rule_set_metadata WHERE singleton=1`
+internal/store/rules.go,GetRule,140,QueryRowContext,True,`SELECT `+ruleColumns+` FROM rules WHERE id=?`
+internal/store/rules.go,loadRuleSetTx,155,QueryRowContext,True,"`SELECT version,legacy_migrated,updated_at FROM rule_set_metadata WHERE singleton=1`"
+internal/store/rules.go,loadRuleSetTx,159,QueryContext,True,`SELECT `+ruleColumns+` FROM rules ORDER BY `+ruleOrder
+internal/store/rules.go,withRulePublication,244,ExecContext,True,`UPDATE rule_set_metadata SET version=version WHERE singleton=1`
+internal/store/rules.go,persistRuleTx,526,ExecContext,True,"`INSERT INTO rules (`+ruleColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+	 ON CONFLICT(id) DO UPDATE SET rule_json=excluded.rule_json,revision=excluded.revision,
+	 name=excluded.name,description=excluded.description,phase=excluded.phase,enabled=excluded.enabled,
+	 priority=excluded.priority,order_index=excluded.order_index,updated_at=excluded.updated_at,
+	 legacy_name=excluded.legacy_name,source=excluded.source`"
+internal/store/rules.go,persistLegacyRuleTx,536,ExecContext,True,"`INSERT INTO middlewares(name,enabled,order_index,config,updated_at) VALUES(?,?,?,?,?)
+	 ON CONFLICT(name) DO UPDATE SET enabled=excluded.enabled,order_index=excluded.order_index,config=excluded.config,updated_at=excluded.updated_at`"
+internal/store/rules.go,RulesV2Installed,586,QueryRowContext,True,`SELECT COUNT(*) FROM settings WHERE key='rules.language.v2'`
+internal/store/rules.go,persistRuleChanges,592,ExecContext,True,`DELETE FROM rules WHERE id=?`
+internal/store/rules.go,persistLanguageV2Marker,662,ExecContext,True,"`INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`"
+internal/store/rules.go,listRules,689,QueryRowContext,True,`SELECT version FROM rule_set_metadata WHERE singleton=1`
+internal/store/rules.go,listRules,692,QueryRowContext,False,`SELECT COUNT(*) FROM rules`+where
+internal/store/rules.go,listRules,696,QueryContext,False,`SELECT `+ruleColumns+` FROM rules`+where+` ORDER BY `+ruleOrder+` LIMIT ? OFFSET ?`
+internal/store/rules.go,publishRules,747,ExecContext,True,"`UPDATE rule_set_metadata SET version=?,updated_at=? WHERE singleton=1`"
+internal/store/rules.go,repairLegacyMiddleware,761,QueryRowContext,True,`SELECT legacy_migrated FROM rule_set_metadata WHERE singleton=1`
+internal/store/rules.go,restoreRulesV2Marker,814,QueryRowContext,True,`SELECT COUNT(*) FROM settings WHERE key='rules.language.v2'`
+internal/store/rules.go,restoreRulesV2Marker,818,QueryRowContext,True,`SELECT COUNT(*) FROM rules WHERE id='language-v2-installed'`
+internal/store/rules.go,restoreRulesV2Marker,824,ExecContext,True,"`INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`"
+internal/store/rules.go,loadLegacyMiddlewareTx,835,QueryContext,True,"`SELECT name,enabled,order_index,config,updated_at FROM middlewares ORDER BY order_index,name`"
+internal/store/rules.go,persistInitializedRules,882,ExecContext,True,"`UPDATE rule_set_metadata SET version=?,legacy_migrated=1,legacy_source=?,updated_at=? WHERE singleton=1`"
+internal/store/rules.go,persistInitializedRules,886,ExecContext,True,"`INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`"
+internal/store/rules_upgrade.go,upgradeDefaultRules,24,QueryRowContext,True,`SELECT value FROM settings WHERE key=?`
+internal/store/rules_upgrade.go,upgradeDefaultRules,45,ExecContext,True,"`INSERT INTO settings(key,value,updated_at) VALUES (?,?,?)`"
+internal/store/rules_upgrade.go,applyDefaultRuleUpgrade,86,ExecContext,True,"`UPDATE rule_set_metadata SET version=?,updated_at=? WHERE singleton=1`"
+internal/store/settings.go,LoadSettings,57,QueryContext,True,"`SELECT key, value FROM settings WHERE key LIKE ?`"
+internal/store/settings.go,GetSecret,120,QueryRowContext,True,`SELECT value FROM settings WHERE key=?`
+internal/store/settings.go,SetSecret,132,ExecContext,True,"`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`"
+internal/store/settings.go,RecordAudit,144,ExecContext,True,"`INSERT INTO audit_events (action, detail, created_at) VALUES (?,?,?)`"
+internal/store/settings.go,ListAudit,164,QueryContext,True,"`SELECT id, action, detail, created_at FROM audit_events ORDER BY id DESC LIMIT ?`"
+internal/store/settings.go,saveSettings,280,ExecContext,True,"`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?)
+			 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`"
+internal/store/usage.go,AccountUsageCost,77,QueryRowContext,False,"`SELECT coalesce(sum(cost_micros),0),count(cost_micros),count(*)-count(cost_micros) FROM usage_records WHERE `+where"
+internal/store/usage.go,FinishUsageRecord,158,ExecContext,True,"`UPDATE usage_records SET outcome=?,status_code=?,error_code=?,error_message=?,upstream_send_state=?,
+ input_tokens=?,cached_tokens=?,cache_write_tokens=?,output_tokens=?,reasoning_tokens=?,total_tokens=?,
+ connect_ms=?,headers_ms=?,first_event_ms=?,first_token_ms=?,latency_ms=?,cost_micros=?,cost_source=?,price_version=?,completed_at=?,
+	 upstream_transport=CASE WHEN ?='' THEN upstream_transport ELSE ? END,
+ model=CASE WHEN ?='' THEN model ELSE ? END,reasoning_effort=?,requested_service_tier=?,service_tier=?,billing_details=? WHERE id=?`"
+internal/store/usage.go,ReconcileRunningUsageRecords,177,ExecContext,True,"`UPDATE usage_records SET outcome='incomplete',completed_at=? WHERE outcome='running' AND started_at<?`"
+internal/store/usage.go,DeleteUsageRecordsBefore,202,ExecContext,True,"`DELETE FROM usage_records WHERE id IN
+   (SELECT id FROM usage_records WHERE outcome<>'running' AND completed_at<? ORDER BY completed_at,id LIMIT ?)`"
+internal/store/usage.go,UsageSummaryFor,318,QueryRowContext,False,query
+internal/store/usage.go,UsageTrend,346,QueryContext,False,"`SELECT `+aligned+` AS bucket_start,count(*),`+usageMetricSums+
+		` FROM usage_records WHERE `+where+` GROUP BY bucket_start ORDER BY bucket_start`"
+internal/store/usage.go,usageDimensions,376,QueryContext,False,"`WITH filtered AS (SELECT * FROM usage_records WHERE `+where+`)
+ SELECT `+key+`,`+id+`,count(*) AS request_count,coalesce(sum(CASE WHEN outcome='succeeded' THEN 1 ELSE 0 END),0),coalesce(sum(CASE WHEN outcome='failed' THEN 1 ELSE 0 END),0),`+
+		usageMetricSums+`,count(*)*1.0/(SELECT count(*) FROM filtered)
+ FROM filtered GROUP BY `+group+` ORDER BY request_count DESC,1,2`"
+internal/store/usage.go,listUsageRecords,406,QueryRowContext,False,`SELECT count(*) FROM usage_records WHERE `+where
+internal/store/usage.go,listUsageRecords,415,QueryContext,False,"`SELECT `+usageColumns+` FROM usage_records WHERE `+where+` ORDER BY started_at DESC,id DESC LIMIT ? OFFSET ?`"

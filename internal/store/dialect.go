@@ -162,10 +162,10 @@ type storeTx struct {
 	store *Store
 }
 
-// BeginTx transfers ownership of the live transaction to the caller. The caller
-// must defer Rollback and explicitly Commit; rolling back here would invalidate
-// the transaction before the caller could execute its first statement.
-func (s *Store) BeginTx(ctx context.Context, opts *sql.TxOptions) (*storeTx, error) {
+// withStoreTransaction owns the transaction lifetime. The callback commits at
+// its existing success boundary; every other exit, including panic, rolls back.
+// A transaction must never escape the callback.
+func withStoreTransaction[T any](s *Store, ctx context.Context, opts *sql.TxOptions, use func(*storeTx) (T, error)) (T, error) {
 	// PostgreSQL READ COMMITTED gives each statement a different snapshot;
 	// read-only count/page transactions require the same snapshot as SQLite.
 	if s.driver == "postgres" && opts != nil && opts.ReadOnly && opts.Isolation == sql.LevelDefault {
@@ -175,9 +175,28 @@ func (s *Store) BeginTx(ctx context.Context, opts *sql.TxOptions) (*storeTx, err
 	}
 	tx, err := s.db.BeginTx(ctx, opts)
 	if err != nil {
-		return nil, err
+		var zero T
+		return zero, err
 	}
-	return &storeTx{Tx: tx, store: s}, nil
+	defer tx.Rollback()
+	return use(&storeTx{Tx: tx, store: s})
+}
+
+func (s *Store) withTransaction(ctx context.Context, opts *sql.TxOptions, use func(*storeTx) error) error {
+	_, err := withStoreTransaction(s, ctx, opts, func(tx *storeTx) (struct{}, error) {
+		return struct{}{}, use(tx)
+	})
+	return err
+}
+
+// withTransactionBeginContext preserves acquisition diagnostics without
+// relabeling callback/commit failures as a failure to begin the transaction.
+func (s *Store) withTransactionBeginContext(ctx context.Context, operation string, use func(*storeTx) error) error {
+	entered, err := withStoreTransaction(s, ctx, nil, func(tx *storeTx) (bool, error) { return true, use(tx) })
+	if err != nil && !entered {
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+	return err
 }
 
 // Transaction wrappers preserve the same placeholder/value separation as Store.
@@ -295,13 +314,8 @@ func (s *Store) migratePostgres() error {
 			return fmt.Errorf("store: PostgreSQL schema: %w", err)
 		}
 	}
-	for table, columns := range additiveColumns() {
-		for name, definition := range columns {
-			statement := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", table, name, postgresSchema(definition))
-			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return fmt.Errorf("store: add %s.%s: %w", table, name, err)
-			}
-		}
+	if err := applyPostgresAdditiveColumns(ctx, tx); err != nil {
+		return err
 	}
 	for _, statement := range postgresProxyBindingSchema {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -336,4 +350,19 @@ var postgresProxyBindingSchema = []string{
  END; $proxy$`,
 	`DROP TRIGGER IF EXISTS proxy_url_update ON proxies`,
 	`CREATE TRIGGER proxy_url_update AFTER UPDATE OF url ON proxies FOR EACH ROW EXECUTE FUNCTION pi_proxy_url_sync()`,
+}
+
+func applyPostgresAdditiveColumns(ctx context.Context, tx *sql.Tx) error {
+	for table, columns := range additiveColumns() {
+		for name := range columns {
+			statement, err := registeredAdditiveMigration(table, name)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, statement.postgres); err != nil {
+				return fmt.Errorf("store: add %s.%s: %w", table, name, err)
+			}
+		}
+	}
+	return nil
 }

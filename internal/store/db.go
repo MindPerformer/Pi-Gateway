@@ -127,6 +127,26 @@ func (s *Store) Close() error { return s.db.Close() }
 // Portable SQL must use Store.ExecContext/QueryContext/QueryRowContext instead.
 func (s *Store) DB() *sql.DB { return s.db }
 
+// Shared compile-time DDL keeps initial creation and legacy rebuild identical.
+const apiKeyTableDefinition = `(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ name TEXT NOT NULL,
+ key TEXT NOT NULL UNIQUE,
+ enabled INTEGER NOT NULL DEFAULT 1,
+ strategy TEXT NOT NULL DEFAULT '',
+ transport TEXT NOT NULL DEFAULT '',
+ label TEXT NOT NULL DEFAULT '',
+ max_concurrency INTEGER NOT NULL DEFAULT 0,
+ requests_per_minute INTEGER NOT NULL DEFAULT 0,
+ daily_limit_usd REAL NOT NULL DEFAULT 0,
+ weekly_limit_usd REAL NOT NULL DEFAULT 0,
+ last_used_at INTEGER NOT NULL DEFAULT 0,
+ request_count INTEGER NOT NULL DEFAULT 0,
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL
+);`
+const legacyAPIKeyTableSQL = `CREATE TABLE api_keys_new ` + apiKeyTableDefinition
+
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS admin_sessions (
  token_hash TEXT PRIMARY KEY,
@@ -183,23 +203,7 @@ CREATE TABLE IF NOT EXISTS account_model_catalog (
  attempted_at INTEGER NOT NULL DEFAULT 0,
  error TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS api_keys (
- id INTEGER PRIMARY KEY AUTOINCREMENT,
- name TEXT NOT NULL,
- key TEXT NOT NULL UNIQUE,
- enabled INTEGER NOT NULL DEFAULT 1,
- strategy TEXT NOT NULL DEFAULT '',
- transport TEXT NOT NULL DEFAULT '',
- label TEXT NOT NULL DEFAULT '',
- max_concurrency INTEGER NOT NULL DEFAULT 0,
- requests_per_minute INTEGER NOT NULL DEFAULT 0,
- daily_limit_usd REAL NOT NULL DEFAULT 0,
- weekly_limit_usd REAL NOT NULL DEFAULT 0,
- last_used_at INTEGER NOT NULL DEFAULT 0,
- request_count INTEGER NOT NULL DEFAULT 0,
- created_at INTEGER NOT NULL,
- updated_at INTEGER NOT NULL
-);
+CREATE TABLE IF NOT EXISTS api_keys ` + apiKeyTableDefinition + `
 CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
 CREATE TABLE IF NOT EXISTS usage_records (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -523,12 +527,15 @@ func ensureColumns(ctx context.Context, conn *sql.Conn, table string, want map[s
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for name, definition := range want {
+	for name := range want {
 		if existing[name] {
 			continue
 		}
-		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, definition)
-		if _, err := conn.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnError(err) {
+		statement, err := registeredAdditiveMigration(table, name)
+		if err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, statement.sqlite); err != nil && !isDuplicateColumnError(err) {
 			return fmt.Errorf("store: add %s.%s: %w", table, name, err)
 		}
 	}

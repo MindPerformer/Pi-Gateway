@@ -35,6 +35,12 @@ const (
 	// ChatGPTResource scopes the grant to the OpenAI API host.
 	ChatGPTResource = "https://api.openai.com/v1"
 
+	// ChatGPTRedirectURI is the registered native-app redirect, not the
+	// configurable callback listener address. Keeping it immutable prevents
+	// accidental redirection of an authorization code to an arbitrary host.
+	// Loopback HTTP is intentional: RFC 8252 section 7.3.
+	ChatGPTRedirectURI = "http://127.0.0.1:1455/auth/callback"
+
 	ChatGPTCallbackPath        = "/auth/callback"
 	ChatGPTCallbackPort        = 1455
 	ChatGPTDefaultCallbackHost = "127.0.0.1"
@@ -51,18 +57,6 @@ const (
 
 // uuidPattern matches the device id OpenAI expects in ext_agent_host_id.
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-// ChatGPTRedirectURI builds the loopback callback URL Pi registers.
-func ChatGPTRedirectURI(host string, port int) string {
-	host = strings.TrimSpace(host)
-	if host == "" {
-		host = ChatGPTDefaultCallbackHost
-	}
-	if port <= 0 {
-		port = ChatGPTCallbackPort
-	}
-	return fmt.Sprintf("http://%s:%d%s", host, port, ChatGPTCallbackPath)
-}
 
 // NewDeviceUUID returns a fresh random UUID used as the installation identity.
 func NewDeviceUUID() string { return uuid.NewString() }

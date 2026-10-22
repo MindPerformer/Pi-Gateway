@@ -63,22 +63,7 @@ func (s *Store) CreateKey(ctx context.Context, k *APIKey) error {
 		k.CreatedAt = NowMS()
 	}
 	k.UpdatedAt = NowMS()
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	id, err := s.insertID(ctx, tx, `INSERT INTO api_keys
- (name,key,enabled,label,max_concurrency,requests_per_minute,daily_limit_usd,weekly_limit_usd,strategy,transport,created_at,updated_at)
- VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, k.Name, k.Key, boolToInt(k.Enabled), k.Label, k.MaxConcurrency, k.RequestsPerMinute, k.DailyLimitUSD, k.WeeklyLimitUSD, k.Strategy, k.Transport, k.CreatedAt, k.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("store: create key: %w", err)
-	}
-	k.ID = id
-	if err := replaceKeyGroups(ctx, tx, k.ID, k.GroupIDs); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.createKey(s, ctx, k) })
 }
 
 func (s *Store) UpdateKey(ctx context.Context, k *APIKey) error {
@@ -86,26 +71,7 @@ func (s *Store) UpdateKey(ctx context.Context, k *APIKey) error {
 		return errors.New("store: nil API key")
 	}
 	k.UpdatedAt = NowMS()
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE api_keys SET
- name=?,enabled=?,label=?,max_concurrency=?,requests_per_minute=?,daily_limit_usd=?,weekly_limit_usd=?,strategy=?,transport=?,updated_at=? WHERE id=?`,
-		k.Name, boolToInt(k.Enabled), k.Label, k.MaxConcurrency, k.RequestsPerMinute, k.DailyLimitUSD, k.WeeklyLimitUSD, k.Strategy, k.Transport, k.UpdatedAt, k.ID)
-	if err != nil {
-		return fmt.Errorf("store: update key: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return sql.ErrNoRows
-	}
-	if err := replaceKeyGroups(ctx, tx, k.ID, k.GroupIDs); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.updateKey(ctx, k) })
 }
 
 // GetKeyByValue also returns disabled keys so callers can distinguish them.
@@ -167,11 +133,42 @@ func (s *Store) MarkKeyUsed(ctx context.Context, id int64) error {
 }
 
 func (s *Store) DeleteKey(ctx context.Context, id int64) error {
-	tx, err := s.BeginTx(ctx, nil)
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.deleteKey(ctx, id) })
+}
+
+func (tx *storeTx) createKey(s *Store, ctx context.Context, k *APIKey) error {
+	id, err := s.insertID(ctx, tx, `INSERT INTO api_keys
+ (name,key,enabled,label,max_concurrency,requests_per_minute,daily_limit_usd,weekly_limit_usd,strategy,transport,created_at,updated_at)
+ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, k.Name, k.Key, boolToInt(k.Enabled), k.Label, k.MaxConcurrency, k.RequestsPerMinute, k.DailyLimitUSD, k.WeeklyLimitUSD, k.Strategy, k.Transport, k.CreatedAt, k.UpdatedAt)
 	if err != nil {
+		return fmt.Errorf("store: create key: %w", err)
+	}
+	k.ID = id
+	if err := replaceKeyGroups(ctx, tx, k.ID, k.GroupIDs); err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	return tx.Commit()
+}
+
+func (tx *storeTx) updateKey(ctx context.Context, k *APIKey) error {
+	res, err := tx.ExecContext(ctx, `UPDATE api_keys SET
+ name=?,enabled=?,label=?,max_concurrency=?,requests_per_minute=?,daily_limit_usd=?,weekly_limit_usd=?,strategy=?,transport=?,updated_at=? WHERE id=?`,
+		k.Name, boolToInt(k.Enabled), k.Label, k.MaxConcurrency, k.RequestsPerMinute, k.DailyLimitUSD, k.WeeklyLimitUSD, k.Strategy, k.Transport, k.UpdatedAt, k.ID)
+	if err != nil {
+		return fmt.Errorf("store: update key: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
+	}
+	if err := replaceKeyGroups(ctx, tx, k.ID, k.GroupIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) deleteKey(ctx context.Context, id int64) error {
 	for _, query := range []string{`DELETE FROM api_keys WHERE id=?`, `DELETE FROM api_key_groups WHERE api_key_id=?`, `DELETE FROM key_budget_windows WHERE api_key_id=?`} {
 		if _, err := tx.ExecContext(ctx, query, id); err != nil {
 			return err

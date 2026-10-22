@@ -146,19 +146,7 @@ func (s *Store) GetRule(ctx context.Context, id string) (*RuleRow, error) {
 
 // LoadRuleSet reads both the publication version and ALL rows atomically.
 func (s *Store) LoadRuleSet(ctx context.Context) (*RuleSetSnapshot, error) {
-	tx, err := s.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	snapshot, err := loadRuleSetTx(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return snapshot, nil
+	return withStoreTransaction(s, ctx, &sql.TxOptions{ReadOnly: true}, func(tx *storeTx) (*RuleSetSnapshot, error) { return tx.loadRuleSet(ctx) })
 }
 
 func loadRuleSetTx(ctx context.Context, tx *storeTx) (*RuleSetSnapshot, error) {
@@ -212,47 +200,7 @@ func (s *Store) ListRules(ctx context.Context, filter RuleListFilter) (*RulePage
 		where += ` AND enabled=?`
 		args = append(args, boolToInt(*filter.Enabled))
 	}
-	tx, err := s.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	offset := int64(filter.Page-1) * int64(filter.PageSize)
-	if filter.Offset != nil {
-		if *filter.Offset < 0 {
-			return nil, fmt.Errorf("%w: offset must not be negative", ErrRuleInvalid)
-		}
-		offset = *filter.Offset
-	}
-	out := &RulePage{Rules: []*RuleRow{}, Page: filter.Page, PageSize: filter.PageSize, Limit: filter.PageSize, Offset: offset}
-	if err := tx.QueryRowContext(ctx, `SELECT version FROM rule_set_metadata WHERE singleton=1`).Scan(&out.Version); err != nil {
-		return nil, err
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rules`+where, args...).Scan(&out.Total); err != nil {
-		return nil, err
-	}
-	pageArgs := append(append([]any{}, args...), filter.PageSize, offset)
-	rows, err := tx.QueryContext(ctx, `SELECT `+ruleColumns+` FROM rules`+where+` ORDER BY `+ruleOrder+` LIMIT ? OFFSET ?`, pageArgs...)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		r, err := scanRule(rows)
-		if err != nil {
-			rows.Close()
-			return nil, err
-		}
-		out.Rules = append(out.Rules, r)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return withStoreTransaction(s, ctx, &sql.TxOptions{ReadOnly: true}, func(tx *storeTx) (*RulePage, error) { return tx.listRules(ctx, filter, where, args) })
 }
 
 // RuleChange is an atomic mutation. Existing rows always require their revision.
@@ -283,79 +231,47 @@ func (s *Store) PublishRules(ctx context.Context, expectedVersion *int64, change
 	if validate == nil || len(changes) == 0 {
 		return nil, fmt.Errorf("%w: changes and validator are required", ErrRuleInvalid)
 	}
-	tx, err := s.beginRulePublication(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	snapshot, err := loadRuleSetTx(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	if expectedVersion != nil && *expectedVersion != snapshot.Version {
-		return nil, &RuleConflict{Expected: *expectedVersion, Actual: snapshot.Version}
-	}
-	changed, deleted, err := applyRuleChanges(snapshot, changes)
-	if err != nil {
-		return nil, err
-	}
-	snapshot.ChangedIDs = make([]string, 0, len(changed)+len(deleted))
-	for _, row := range changed {
-		snapshot.ChangedIDs = append(snapshot.ChangedIDs, row.ID)
-	}
-	snapshot.ChangedIDs = append(snapshot.ChangedIDs, deleted...)
-	snapshot.Version++
-	snapshot.UpdatedAt = NowMS()
-	if err := validate(ctx, snapshot); err != nil {
-		return nil, err
-	}
-	if err := persistRuleChanges(ctx, tx, changed, deleted); err != nil {
-		return nil, err
-	}
-	if err := persistRuleMirrors(ctx, tx, changes, changed); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=?,updated_at=? WHERE singleton=1`, snapshot.Version, snapshot.UpdatedAt); err != nil {
-		return nil, err
-	}
-	if err := persistLanguageV2Marker(ctx, tx, snapshot); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return snapshot, nil
+	return withRulePublication(s, ctx, func(tx *storeTx) (*RuleSetSnapshot, error) {
+		return tx.publishRules(ctx, expectedVersion, changes, validate)
+	})
 }
 
-func (s *Store) beginRulePublication(ctx context.Context) (*storeTx, error) {
-	// A pooled SQLite connection can encounter transient setup/write contention
-	// before busy_timeout takes effect. Retry only lock acquisition, before any
-	// publication reads or changes, so revision checks keep their normal meaning.
+// withRulePublication retries only acquisition, never validation or mutations.
+func withRulePublication[T any](s *Store, ctx context.Context, use func(*storeTx) (T, error)) (T, error) {
 	for attempt := 0; ; attempt++ {
-		tx, err := s.tryBeginRulePublication(ctx)
-		if err == nil || s.driver != "sqlite" || !isSQLiteBusy(err) || attempt >= 5 {
-			return tx, err
+		acquired := false
+		result, err := withStoreTransaction(s, ctx, nil, func(tx *storeTx) (T, error) {
+			if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=version WHERE singleton=1`); err != nil {
+				var zero T
+				return zero, err
+			}
+			acquired = true
+			return use(tx)
+		})
+		if acquired || err == nil || s.driver != "sqlite" || !isSQLiteBusy(err) || attempt >= 5 {
+			return result, err
 		}
-		timer := time.NewTimer(time.Duration(attempt+1) * 50 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
+		if err := waitRulePublicationRetry(ctx, attempt); err != nil {
+			var zero T
+			return zero, err
 		}
 	}
 }
 
-func (s *Store) tryBeginRulePublication(ctx context.Context) (*storeTx, error) {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
+func waitRulePublicationRetry(ctx context.Context, attempt int) error {
+	timer := time.NewTimer(time.Duration(attempt+1) * 50 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=version WHERE singleton=1`); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-	return tx, nil
+}
+
+func (s *Store) withRulePublication(ctx context.Context, use func(*storeTx) error) error {
+	_, err := withRulePublication(s, ctx, func(tx *storeTx) (struct{}, error) { return struct{}{}, use(tx) })
+	return err
 }
 
 type ruleChangeBatch struct {
@@ -630,22 +546,7 @@ func (s *Store) RepairLegacyMiddleware(ctx context.Context, row *MiddlewareRow) 
 	if row == nil || row.Name == "" {
 		return fmt.Errorf("%w: legacy row is required", ErrRuleInvalid)
 	}
-	tx, err := s.beginRulePublication(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var migrated int
-	if err := tx.QueryRowContext(ctx, `SELECT legacy_migrated FROM rule_set_metadata WHERE singleton=1`).Scan(&migrated); err != nil {
-		return err
-	}
-	if migrated != 0 {
-		return fmt.Errorf("%w: legacy rules were migrated; reload before updating", ErrRuleConflict)
-	}
-	if err := persistLegacyRuleTx(ctx, tx, row); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withRulePublication(ctx, func(tx *storeTx) error { return tx.repairLegacyMiddleware(ctx, row) })
 }
 
 // LegacyRuleConverter translates the original rows, including missing-row defaults.
@@ -659,85 +560,9 @@ func (s *Store) InitializeRules(ctx context.Context, convert LegacyRuleConverter
 	if convert == nil || validate == nil {
 		return nil, fmt.Errorf("%w: converter and validator are required", ErrRuleInvalid)
 	}
-	tx, err := s.beginRulePublication(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	snapshot, err := loadRuleSetTx(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	if snapshot.LegacyMigrated {
-		if err := tx.Commit(); err != nil {
-			return nil, err
-		}
-		return snapshot, nil
-	}
-	if snapshot.Version != 0 || len(snapshot.Rules) != 0 {
-		return nil, fmt.Errorf("%w: cannot import legacy rows into an already published ruleset", ErrRuleConflict)
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT name,enabled,order_index,config,updated_at FROM middlewares ORDER BY order_index,name`)
-	if err != nil {
-		return nil, err
-	}
-	legacy := []*MiddlewareRow{}
-	for rows.Next() {
-		row := &MiddlewareRow{}
-		var enabled int
-		if err := rows.Scan(&row.Name, &enabled, &row.OrderIndex, &row.Config, &row.UpdatedAt); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		row.Enabled = enabled == 1
-		legacy = append(legacy, row)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return nil, err
-	}
-	original, err := json.Marshal(legacy)
-	if err != nil {
-		return nil, err
-	}
-	converted, err := convert(ctx, legacy)
-	if err != nil {
-		return nil, err
-	}
-	changes := make([]RuleChange, 0, len(converted))
-	for _, row := range converted {
-		if row == nil {
-			return nil, fmt.Errorf("%w: converter returned nil row", ErrRuleInvalid)
-		}
-		order := row.OrderIndex
-		changes = append(changes, RuleChange{Kind: "create", ID: row.ID, Rule: row.Rule, OrderIndex: &order, LegacyName: row.LegacyName, Source: row.Source})
-	}
-	changed, _, err := applyRuleChanges(snapshot, changes)
-	if err != nil {
-		return nil, err
-	}
-	snapshot.Version, snapshot.LegacyMigrated, snapshot.UpdatedAt = 1, true, NowMS()
-	if err := validate(ctx, snapshot); err != nil {
-		return nil, err
-	}
-	for _, row := range changed {
-		if err := persistRuleTx(ctx, tx, row); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=?,legacy_migrated=1,legacy_source=?,updated_at=? WHERE singleton=1`, snapshot.Version, string(original), snapshot.UpdatedAt); err != nil {
-		return nil, err
-	}
-	if hasV2Marker(snapshot) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
-			return nil, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return snapshot, nil
+	return withRulePublication(s, ctx, func(tx *storeTx) (*RuleSetSnapshot, error) {
+		return tx.initializeRules(ctx, convert, validate)
+	})
 }
 
 func hasV2Marker(snapshot *RuleSetSnapshot) bool {
@@ -753,30 +578,7 @@ func hasV2Marker(snapshot *RuleSetSnapshot) bool {
 // Keep this write out of LoadRuleSet's read-only snapshot transaction and
 // serialize it with publication so the marker cannot race a rule deletion.
 func (s *Store) RestoreRulesV2Marker(ctx context.Context) (bool, error) {
-	tx, err := s.beginRulePublication(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	var setting, marker int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key='rules.language.v2'`).Scan(&setting); err != nil {
-		return false, err
-	}
-	if setting == 0 {
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rules WHERE id='language-v2-installed'`).Scan(&marker); err != nil {
-			return false, err
-		}
-	}
-	installed := setting > 0 || marker > 0
-	if setting == 0 && installed {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
-			return false, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
-	return installed, nil
+	return withRulePublication(s, ctx, func(tx *storeTx) (bool, error) { return tx.restoreRulesV2Marker(ctx) })
 }
 
 func (s *Store) RulesV2Installed(ctx context.Context) (bool, error) {
@@ -856,6 +658,230 @@ func ruleAffectedBySwap(original, a, b *RuleRow) bool {
 }
 
 func persistLanguageV2Marker(ctx context.Context, tx *storeTx, snapshot *RuleSetSnapshot) error {
+	if hasV2Marker(snapshot) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (tx *storeTx) loadRuleSet(ctx context.Context) (*RuleSetSnapshot, error) {
+	snapshot, err := loadRuleSetTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func (tx *storeTx) listRules(ctx context.Context, filter RuleListFilter, where string, args []any) (*RulePage, error) {
+	offset := int64(filter.Page-1) * int64(filter.PageSize)
+	if filter.Offset != nil {
+		if *filter.Offset < 0 {
+			return nil, fmt.Errorf("%w: offset must not be negative", ErrRuleInvalid)
+		}
+		offset = *filter.Offset
+	}
+	out := &RulePage{Rules: []*RuleRow{}, Page: filter.Page, PageSize: filter.PageSize, Limit: filter.PageSize, Offset: offset}
+	if err := tx.QueryRowContext(ctx, `SELECT version FROM rule_set_metadata WHERE singleton=1`).Scan(&out.Version); err != nil {
+		return nil, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rules`+where, args...).Scan(&out.Total); err != nil {
+		return nil, err
+	}
+	pageArgs := append(append([]any{}, args...), filter.PageSize, offset)
+	rows, err := tx.QueryContext(ctx, `SELECT `+ruleColumns+` FROM rules`+where+` ORDER BY `+ruleOrder+` LIMIT ? OFFSET ?`, pageArgs...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		r, err := scanRule(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out.Rules = append(out.Rules, r)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (tx *storeTx) publishRules(ctx context.Context, expectedVersion *int64, changes []RuleChange, validate RuleSetValidator) (*RuleSetSnapshot, error) {
+	snapshot, err := loadRuleSetTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if expectedVersion != nil && *expectedVersion != snapshot.Version {
+		return nil, &RuleConflict{Expected: *expectedVersion, Actual: snapshot.Version}
+	}
+	changed, deleted, err := applyRuleChanges(snapshot, changes)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.ChangedIDs = make([]string, 0, len(changed)+len(deleted))
+	for _, row := range changed {
+		snapshot.ChangedIDs = append(snapshot.ChangedIDs, row.ID)
+	}
+	snapshot.ChangedIDs = append(snapshot.ChangedIDs, deleted...)
+	snapshot.Version++
+	snapshot.UpdatedAt = NowMS()
+	if err := validate(ctx, snapshot); err != nil {
+		return nil, err
+	}
+	if err := persistRuleChanges(ctx, tx, changed, deleted); err != nil {
+		return nil, err
+	}
+	if err := persistRuleMirrors(ctx, tx, changes, changed); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=?,updated_at=? WHERE singleton=1`, snapshot.Version, snapshot.UpdatedAt); err != nil {
+		return nil, err
+	}
+	if err := persistLanguageV2Marker(ctx, tx, snapshot); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func (tx *storeTx) repairLegacyMiddleware(ctx context.Context, row *MiddlewareRow) error {
+	var migrated int
+	if err := tx.QueryRowContext(ctx, `SELECT legacy_migrated FROM rule_set_metadata WHERE singleton=1`).Scan(&migrated); err != nil {
+		return err
+	}
+	if migrated != 0 {
+		return fmt.Errorf("%w: legacy rules were migrated; reload before updating", ErrRuleConflict)
+	}
+	if err := persistLegacyRuleTx(ctx, tx, row); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) initializeRules(ctx context.Context, convert LegacyRuleConverter, validate RuleSetValidator) (*RuleSetSnapshot, error) {
+	snapshot, err := loadRuleSetTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.LegacyMigrated {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return snapshot, nil
+	}
+	if snapshot.Version != 0 || len(snapshot.Rules) != 0 {
+		return nil, fmt.Errorf("%w: cannot import legacy rows into an already published ruleset", ErrRuleConflict)
+	}
+	legacy, err := loadLegacyMiddlewareTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	changes, original, err := prepareLegacyRuleChanges(ctx, legacy, convert)
+	if err != nil {
+		return nil, err
+	}
+	changed, _, err := applyRuleChanges(snapshot, changes)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.Version, snapshot.LegacyMigrated, snapshot.UpdatedAt = 1, true, NowMS()
+	if err := validate(ctx, snapshot); err != nil {
+		return nil, err
+	}
+	if err := persistInitializedRules(ctx, tx, snapshot, changed, original); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func (tx *storeTx) restoreRulesV2Marker(ctx context.Context) (bool, error) {
+	var setting, marker int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key='rules.language.v2'`).Scan(&setting); err != nil {
+		return false, err
+	}
+	if setting == 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rules WHERE id='language-v2-installed'`).Scan(&marker); err != nil {
+			return false, err
+		}
+	}
+	installed := setting > 0 || marker > 0
+	if setting == 0 && installed {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return installed, nil
+}
+
+func loadLegacyMiddlewareTx(ctx context.Context, tx *storeTx) ([]*MiddlewareRow, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT name,enabled,order_index,config,updated_at FROM middlewares ORDER BY order_index,name`)
+	if err != nil {
+		return nil, err
+	}
+	legacy := []*MiddlewareRow{}
+	for rows.Next() {
+		row := &MiddlewareRow{}
+		var enabled int
+		if err := rows.Scan(&row.Name, &enabled, &row.OrderIndex, &row.Config, &row.UpdatedAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		row.Enabled = enabled == 1
+		legacy = append(legacy, row)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return legacy, nil
+}
+func prepareLegacyRuleChanges(ctx context.Context, legacy []*MiddlewareRow, convert LegacyRuleConverter) ([]RuleChange, []byte, error) {
+	original, err := json.Marshal(legacy)
+	if err != nil {
+		return nil, nil, err
+	}
+	converted, err := convert(ctx, legacy)
+	if err != nil {
+		return nil, nil, err
+	}
+	changes := make([]RuleChange, 0, len(converted))
+	for _, row := range converted {
+		if row == nil {
+			return nil, nil, fmt.Errorf("%w: converter returned nil row", ErrRuleInvalid)
+		}
+		order := row.OrderIndex
+		changes = append(changes, RuleChange{Kind: "create", ID: row.ID, Rule: row.Rule, OrderIndex: &order, LegacyName: row.LegacyName, Source: row.Source})
+	}
+	return changes, original, nil
+}
+func persistInitializedRules(ctx context.Context, tx *storeTx, snapshot *RuleSetSnapshot, changed []*RuleRow, original []byte) error {
+	for _, row := range changed {
+		if err := persistRuleTx(ctx, tx, row); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE rule_set_metadata SET version=?,legacy_migrated=1,legacy_source=?,updated_at=? WHERE singleton=1`, snapshot.Version, string(original), snapshot.UpdatedAt); err != nil {
+		return err
+	}
 	if hasV2Marker(snapshot) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('rules.language.v2','installed',?) ON CONFLICT(key) DO NOTHING`, NowMS()); err != nil {
 			return err

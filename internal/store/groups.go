@@ -111,27 +111,7 @@ func (s *Store) CreateAccountGroup(ctx context.Context, g *AccountGroup) error {
 		g.AccountIDs = []int64{}
 	}
 	modelsJSON, _ := json.Marshal(models)
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if g.CreatedAt == 0 {
-		g.CreatedAt = NowMS()
-	}
-	g.UpdatedAt = NowMS()
-	id, err := s.insertID(ctx, tx, `INSERT INTO account_groups(name,enabled,notes,created_at,updated_at,disabled_models,switch_on_429) VALUES (?,?,?,?,?,?,?)`, g.Name, boolToInt(g.Enabled), g.Notes, g.CreatedAt, g.UpdatedAt, string(modelsJSON), g.SwitchOn429)
-	if err != nil {
-		return groupWriteError(err)
-	}
-	g.ID = id
-	if err := ensureUniqueGroupName(ctx, tx, g.Name, g.ID); err != nil {
-		return err
-	}
-	if err := replaceGroupAccounts(ctx, tx, g.ID, g.AccountIDs); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.createAccountGroup(s, ctx, g, modelsJSON) })
 }
 
 func (s *Store) UpdateAccountGroup(ctx context.Context, g *AccountGroup) error {
@@ -160,68 +140,19 @@ func (s *Store) PatchAccountGroup(ctx context.Context, id int64, patch AccountGr
 	if err != nil {
 		return err
 	}
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	args = append(args, id)
-	res, err := tx.ExecContext(ctx, "UPDATE account_groups SET "+strings.Join(sets, ",")+" WHERE id=?", args...)
-	if err != nil {
-		return groupWriteError(err)
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return sql.ErrNoRows
-	}
-	if patch.Name != nil {
-		if err := ensureUniqueGroupName(ctx, tx, strings.TrimSpace(*patch.Name), id); err != nil {
-			return err
-		}
-	}
-	if patch.AccountIDs != nil {
-		if err := replaceGroupAccounts(ctx, tx, id, patch.AccountIDs); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.patchAccountGroup(ctx, id, patch, sets, args)
+	})
 }
 
 func (s *Store) DeleteAccountGroup(ctx context.Context, id int64) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, query := range []string{`DELETE FROM account_groups WHERE id=?`, `DELETE FROM account_group_accounts WHERE group_id=?`, `DELETE FROM api_key_groups WHERE group_id=?`} {
-		if _, err := tx.ExecContext(ctx, query, id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.deleteAccountGroup(ctx, id) })
 }
 
 func (s *Store) SetAccountGroupAccounts(ctx context.Context, groupID int64, accountIDs []int64) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	// Acquire a write lock before validation, avoiding a read-to-write upgrade race.
-	res, err := tx.ExecContext(ctx, `UPDATE account_groups SET updated_at=? WHERE id=?`, NowMS(), groupID)
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return sql.ErrNoRows
-	}
-	if err := replaceGroupAccounts(ctx, tx, groupID, accountIDs); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error {
+		return tx.setAccountGroupAccounts(ctx, groupID, accountIDs)
+	})
 }
 
 func replaceGroupAccounts(ctx context.Context, tx *storeTx, groupID int64, ids []int64) error {
@@ -274,24 +205,7 @@ func (s *Store) ListKeyGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, e
 }
 
 func (s *Store) SetKeyGroups(ctx context.Context, apiKeyID int64, groupIDs []int64) error {
-	tx, err := s.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE api_keys SET updated_at=? WHERE id=?`, NowMS(), apiKeyID)
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return sql.ErrNoRows
-	}
-	if err := replaceKeyGroups(ctx, tx, apiKeyID, groupIDs); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.withTransaction(ctx, nil, func(tx *storeTx) error { return tx.setKeyGroups(ctx, apiKeyID, groupIDs) })
 }
 
 func replaceKeyGroups(ctx context.Context, tx *storeTx, apiKeyID int64, ids []int64) error {
@@ -610,4 +524,89 @@ func accountGroupUpdate(patch AccountGroupPatch) ([]string, []any, error) {
 		args = append(args, string(raw))
 	}
 	return sets, args, nil
+}
+
+func (tx *storeTx) createAccountGroup(s *Store, ctx context.Context, g *AccountGroup, modelsJSON []byte) error {
+	if g.CreatedAt == 0 {
+		g.CreatedAt = NowMS()
+	}
+	g.UpdatedAt = NowMS()
+	id, err := s.insertID(ctx, tx, `INSERT INTO account_groups(name,enabled,notes,created_at,updated_at,disabled_models,switch_on_429) VALUES (?,?,?,?,?,?,?)`, g.Name, boolToInt(g.Enabled), g.Notes, g.CreatedAt, g.UpdatedAt, string(modelsJSON), g.SwitchOn429)
+	if err != nil {
+		return groupWriteError(err)
+	}
+	g.ID = id
+	if err := ensureUniqueGroupName(ctx, tx, g.Name, g.ID); err != nil {
+		return err
+	}
+	if err := replaceGroupAccounts(ctx, tx, g.ID, g.AccountIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) patchAccountGroup(ctx context.Context, id int64, patch AccountGroupPatch, sets []string, args []any) error {
+	args = append(args, id)
+	res, err := tx.ExecContext(ctx, "UPDATE account_groups SET "+strings.Join(sets, ",")+" WHERE id=?", args...)
+	if err != nil {
+		return groupWriteError(err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
+	}
+	if patch.Name != nil {
+		if err := ensureUniqueGroupName(ctx, tx, strings.TrimSpace(*patch.Name), id); err != nil {
+			return err
+		}
+	}
+	if patch.AccountIDs != nil {
+		if err := replaceGroupAccounts(ctx, tx, id, patch.AccountIDs); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) deleteAccountGroup(ctx context.Context, id int64) error {
+	for _, query := range []string{`DELETE FROM account_groups WHERE id=?`, `DELETE FROM account_group_accounts WHERE group_id=?`, `DELETE FROM api_key_groups WHERE group_id=?`} {
+		if _, err := tx.ExecContext(ctx, query, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) setAccountGroupAccounts(ctx context.Context, groupID int64, accountIDs []int64) error {
+	// Acquire a write lock before validation, avoiding a read-to-write upgrade race.
+	res, err := tx.ExecContext(ctx, `UPDATE account_groups SET updated_at=? WHERE id=?`, NowMS(), groupID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
+	}
+	if err := replaceGroupAccounts(ctx, tx, groupID, accountIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (tx *storeTx) setKeyGroups(ctx context.Context, apiKeyID int64, groupIDs []int64) error {
+	res, err := tx.ExecContext(ctx, `UPDATE api_keys SET updated_at=? WHERE id=?`, NowMS(), apiKeyID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
+	}
+	if err := replaceKeyGroups(ctx, tx, apiKeyID, groupIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -31,7 +31,8 @@ async function compileModule(url) {
     }
     source = transpile(source)
     const imports = [...source.matchAll(/\bfrom\s*(['"])([^'"]+)\1/g)]
-    for (const match of imports) {
+    // Resolve independent imports concurrently; apply rewrites afterwards in source order.
+    const replacements = await Promise.all(imports.map(async match => {
         const specifier = match[2]
         let replacement
         if (specifier.endsWith('/i18n')) replacement = localeURL
@@ -40,7 +41,10 @@ async function compileModule(url) {
             if (!existsSync(resolved)) resolved = new URL(`${specifier}.ts`, url)
             replacement = await compileModule(resolved)
         } else replacement = import.meta.resolve(specifier)
-        source = source.replace(match[0], `from '${replacement}'`)
+        return [match[0], replacement]
+    }))
+    for (const [original, replacement] of replacements) {
+        source = source.replace(original, `from '${replacement}'`)
     }
     const compiled = asModule(source)
     modules.set(url.href, compiled)
@@ -215,6 +219,10 @@ await check('total diff displays provided sources and missing-attribution warnin
     assert.match(text(mounted.root), /Recorded change sources/)
     assert.match(text(mounted.root), /historical rule/)
     assert.match(text(mounted.root), /step-level only/)
+    const scrollRegion = all(mounted.root, hasClass('diff-lines'))[0]
+    assert.equal(scrollRegion.type, 'section')
+    assert.equal(scrollRegion.props['aria-label'], 'total')
+    assert.equal(scrollRegion.props.tabindex, '0')
     const rows = all(mounted.root, hasClass('diff-line'))
     assert.ok(rows.length > 0)
     assert.ok(rows.every(row => !text(row).includes('historical rule')), 'final lines must not acquire guessed rule attribution')

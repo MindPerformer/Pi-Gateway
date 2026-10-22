@@ -120,8 +120,8 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); document.r
                 <button v-for="item in (['', 'condition', 'action'] as const)" :key="item" type="button" :class="{active: filter === item}" :aria-pressed="filter === item" @click="filter = item; input?.focus()">{{ t((() => { if (item === '') { return 'rules.canvas.allModules'; } if (item === 'condition') { return 'rules.addCondition'; } return 'rules.addAction'; })()) }}</button>
             </div>
             <!-- These are immediate commands, not value selections: native buttons retain rich help and real keyboard focus. -->
-            <!-- Explicit list role preserves Safari/VoiceOver semantics with list-style:none (MDN list-style accessibility). -->
-            <ul :id="listID" class="search-results" role="list" :aria-label="t('rules.canvas.searchResults')">
+            <!-- Visible native markers preserve list semantics, including Safari/VoiceOver, without a redundant role. -->
+            <ul :id="listID" class="search-results" :aria-label="t('rules.canvas.searchResults')">
                 <li v-for="(entry, index) in entries" :key="`${entry.kind}:${entry.type}`"><button :id="`${listID}-${index}`" :data-testid="`node-search-${entry.kind}-${entry.type}`" :data-search-index="index" class="search-entry" :class="{active: index === active}" type="button" :aria-labelledby="`${listID}-${index}-title`" :aria-describedby="`${listID}-${index}-help`" @focus="active = index" @click="choose(index)">
                     <span :id="`${listID}-${index}-title`" class="entry-title"><span class="entry-dot" :class="entry.kind" />{{ entry.label }}</span>
                     <small :id="`${listID}-${index}-help`">{{ entry.help }}</small>
@@ -140,7 +140,8 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); document.r
 .search-filters { display: flex; gap: 5px; }
 .search-filters button { padding: 4px 8px; font-size: 11px; border-radius: 5px; }
 .search-filters button.active, .search-entry.active, .search-entry:focus-visible { background: var(--color-accent-soft); color: var(--color-accent); }
-.search-results { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; flex: 1; }
+.search-results { list-style: disc; margin: 0; padding: 0; padding-inline-start: 1.25rem; overflow-y: auto; min-height: 0; flex: 1; }
+.search-results > li::marker { color: var(--color-ink-muted); }
 .search-entry { display: grid; gap: 3px; width: 100%; padding: 9px; text-align: left; border-radius: 6px; }
 .entry-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 .entry-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-accent); }

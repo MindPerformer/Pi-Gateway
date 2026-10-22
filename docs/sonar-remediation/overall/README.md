@@ -45,7 +45,7 @@
 - 畫布以既有原生 Add 按鈕承接焦點、Escape 復原與 Ctrl+Z/D 快捷鍵，不再把非互動容器當焦點 widget。Space/Enter 保留原生 click，避免雙開搜尋。
 - Delete/Backspace 僅由原有 VueFlow document keyboard owner 處理 nodes **與 edges**，沒有另加會重複／漏刪邊的刪除路徑；背景雙擊仍開搜尋，保留 node/edge/handle/control 排除 guard。
 - diff 改成有 accessible name 的 section 捲動區，保留 tabindex 讓純文字長內容可鍵盤捲動。這符合 [MDN overflow accessibility 指引](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/overflow#accessibility)，但仍可能命中 S6845，故列人工審查候選而不是宣稱 scanner 已清除。
-- 真實 ul 使用 role=list 保留 Safari 在 list-style:none 下的清單語意，依 [MDN list-style accessibility 指引](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/list-style#accessibility)。不是把任意 div 填入假互動 role。
+- 真實 ul 使用可見原生 disc marker 與邏輯側邊距，不再使用 list-style:none 或冗餘 role=list，保留 Safari 的清單語意，依 [MDN list-style accessibility 指引](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/list-style#accessibility)。不是把任意 div 填入假互動 role。
 - 新增／保留 browser 測試檢查命令清單與焦點、pane 雙擊、edge Delete／單次 undo、duplicate／undo／Space／Escape、長 diff PageDown。58 項 E2E 目前僅收集成功，執行尚待 CI。
 
 ### 回歸驗證另外發現的取消競態（非原 55 項之一）
@@ -75,3 +75,11 @@ DB schema、資料型別、statement 執行順序、wire `then`、OAuth 註冊 r
 ## Sonar 人工審查不是程式修復
 
 [SonarQube Cloud 官方文件](https://docs.sonarsource.com/sonarqube-cloud/managing-your-projects/issues/editing) 區分 Accepted（決定稍後處理）與 False positive（分析判斷有誤），需要 Administer Issues 權限；這些狀態會影響報告／評級。不能為了 A 而混用兩者。19 項候選仍須對照正式重掃後的實際 issue、逐項確認理由；4 項產品取捨須明確接受剩餘風險。未取得授權前不改任何狀態，也不把這些項目算成 32 項程式修復。
+
+## PR #3 首輪正式檢查與後續修正
+
+`abb6e19` 的正式 PR 增量分析 Quality Gate 未通過：New Code Security C。GitHub annotations 指向 `db.go:437` 的編譯期常數串接 `schemaSQL` 與 `RuleNodeSearch.vue:124` 的冗餘原生 list role；不是原始 55 項整體問題已全部清除。未操作任何 Sonar disposition。
+
+後續修正將初始／舊表重建 SQL 各自保持完整 literal，執行 SQL 與先前版本逐位元組相同，另增實際 SQLite schema 等價測試防止維護漂移；清單改用可見原生 marker，而非移除 Safari 所需語意。首輪 Chromium 實跑 58 項，56 通過、2 失敗：拖線開搜尋後焦點遭 pane-click 奪走，及既有 undo 測試仍對已不再可聚焦的 canvas 操作。後續保留原有所有節點／連線／撤銷斷言並補明確焦點契約，等待新 SHA CI 重新驗證。
+
+此後續版本的本機 SQLite schema 契約／37-pair migration focused race 通過；真實 PostgreSQL／Redis 下完整 store race 通過（41.251 秒），最終前端 assets 凍結後全 Go build 通過。前端 typecheck、含 E2E 的型別檢查、accessibility、build 與核心 SonarJS 通過；58 項 E2E 重新收集，實際執行等待 CI。

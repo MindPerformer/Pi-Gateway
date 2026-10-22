@@ -7,6 +7,7 @@ import {parse as parseTemplate} from '@vue/compiler-dom'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const templates = new Map()
+const styles = new Map()
 function elements(node) {
     const children = (node.children ?? []).flatMap(elements)
     return node.type === 1 ? [node, ...children] : children
@@ -24,6 +25,7 @@ await Promise.all(['components', 'views'].map(async directory => {
         const {descriptor} = parse(await readFile(join(base, file), 'utf8'))
         const nodes = elements(parseTemplate(descriptor.template.content))
         templates.set(`${directory}/${file}`, nodes)
+        styles.set(`${directory}/${file}`, descriptor.styles.map(style => style.content).join('\n'))
         assert(!nodes.some(node => prop(node, 'role') === 'status'), `${file}: use native status output`)
         for (const output of nodes.filter(node => node.tag === 'output')) {
             assert(!elements(output).slice(1).some(node => ['div', 'p', 'section', 'fieldset'].includes(node.tag)), `${file}: output contains non-phrasing content`)
@@ -58,7 +60,11 @@ assert(nodes('components/QuotaPanel.vue').some(node => node.tag === 'progress' &
 assert(nodes('components/BaseChart.vue').some(node => node.tag === 'figcaption'), 'chart has accessible native figure caption')
 assert(nodes('components/HeadersTable.vue').some(node => node.tag === 'th' && prop(node, 'scope') === 'row'), 'headers table names each row')
 const searchNodes = nodes('components/rules/RuleNodeSearch.vue')
-assert(searchNodes.some(node => node.tag === 'ul' && prop(node, 'aria-label') && prop(node, 'role') === 'list'), 'command results are a labelled native list')
+assert(searchNodes.some(node => node.tag === 'ul' && prop(node, 'aria-label') && prop(node, 'role') === undefined), 'command results are a labelled native list without a redundant role')
+const searchStyles = styles.get('components/rules/RuleNodeSearch.vue')
+assert.match(searchStyles, /\.search-results\s*\{[^}]*\blist-style:\s*disc\s*;/, 'native visible markers preserve Safari list semantics')
+assert.match(searchStyles, /\.search-results\s*\{[^}]*\bpadding-inline-start:\s*1\.25rem\s*;/, 'visible markers have a logical gutter rather than being clipped')
+assert.match(searchStyles, /\.search-results > li::marker\s*\{\s*color:\s*var\(--color-ink-muted\);\s*\}/, 'markers remain visible instead of using empty content or transparency')
 assert(searchNodes.some(node => node.tag === 'button' && prop(node, 'data-search-index') && prop(node, 'aria-labelledby') && prop(node, 'aria-describedby')), 'commands have real buttons with separate names and help')
 assert(!searchNodes.some(node => ['combobox', 'listbox', 'option'].includes(prop(node, 'role'))), 'immediate commands do not claim value-selection widget roles')
 assert(searchNodes.some(node => node.tag === 'output' && prop(node, 'aria-live') === 'polite'), 'search exposes a persistent polite no-results announcement')

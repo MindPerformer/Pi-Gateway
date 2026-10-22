@@ -85,13 +85,13 @@ internal/store/captures.go,Stats,372,QueryRowContext,True,"`SELECT
 			COALESCE(SUM(completion_tokens),0)
 		FROM (SELECT * FROM captures ORDER BY id DESC LIMIT ?) AS sampled`"
 internal/store/compaction.go,CompactionKey,18,ExecContext,True,"`INSERT INTO settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO NOTHING`"
-internal/store/db.go,migrateOnce,419,ExecContext,True,"""BEGIN IMMEDIATE"""
-internal/store/db.go,migrateOnce,425,ExecContext,True,"""ROLLBACK"""
-internal/store/db.go,migrateOnce,437,ExecContext,True,schemaSQL
-internal/store/db.go,migrateOnce,445,ExecContext,True,proxyBindingSchema
-internal/store/db.go,migrateOnce,453,ExecContext,True,"""COMMIT"""
-internal/store/db.go,ensureColumns,511,QueryContext,True,"`SELECT cid, name, type, ""notnull"", dflt_value, pk FROM pragma_table_info(?)`"
-internal/store/db.go,ensureColumns,538,ExecContext,False,statement.sqlite
+internal/store/db.go,migrateOnce,435,ExecContext,True,"""BEGIN IMMEDIATE"""
+internal/store/db.go,migrateOnce,441,ExecContext,True,"""ROLLBACK"""
+internal/store/db.go,migrateOnce,453,ExecContext,True,schemaSQL
+internal/store/db.go,migrateOnce,461,ExecContext,True,proxyBindingSchema
+internal/store/db.go,migrateOnce,469,ExecContext,True,"""COMMIT"""
+internal/store/db.go,ensureColumns,527,QueryContext,True,"`SELECT cid, name, type, ""notnull"", dflt_value, pk FROM pragma_table_info(?)`"
+internal/store/db.go,ensureColumns,554,ExecContext,False,statement.sqlite
 internal/store/deployment.go,DeploymentID,22,QueryRowContext,True,`SELECT value FROM settings WHERE key=?`
 internal/store/deployment.go,DeploymentID,32,ExecContext,True,"`INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO NOTHING`"
 internal/store/deployment.go,DeploymentID,35,QueryRowContext,True,`SELECT value FROM settings WHERE key=?`

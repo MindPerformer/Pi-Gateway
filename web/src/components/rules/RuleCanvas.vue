@@ -252,7 +252,10 @@ function openNodeQuickAdd(id: string, request: QuickRequest) {
     connectionError.value = ''
 }
 function closeSearch() { quick.value = null; addNodeButton.value?.focus({preventScroll: true}) }
+// A connection release can open search before the following pane click.
+// Keep its input focus so typing and Escape remain owned by the dialog.
 function canvasPaneClick(event: MouseEvent) {
+    if (quick.value) { return }
     addNodeButton.value?.focus({preventScroll: true})
     if (event.detail === 2) { canvasDoubleClick(event) }
 }

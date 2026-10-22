@@ -6,9 +6,9 @@
 
 ### 已改為靜態 DDL
 
-- `OVERALL-0003`：`db.go` 的 `api_keys` 定義抽出為編譯期常數；不再透過執行期字串切割／替換重建舊表。
+- `OVERALL-0003`：`db.go` 的 SQLite additive migration 不再格式化 table/column/definition；改從完整固定 SQL 登錄表選取，未知配對拒絕。
 - `OVERALL-0010`：37 個已知 additive migration 各自具有完整 SQLite / PostgreSQL 字面量 SQL。`registeredAdditiveMigration` 僅接受已登錄 table/column 配對；未知名稱拒絕。沒有把任意 SQL 輸入改名或搬到另一層。
-- `OVERALL-0011`：舊 API key 表重建直接使用 `legacyAPIKeyTableSQL` 常數。
+- `OVERALL-0011`：舊 API key 表重建直接使用完整字面量 `legacyAPIKeyTableSQL` 常數；初始 schema 也保持完整字面量，`TestAPIKeySchemaMatchesLegacyRebuild` 比對兩者實際 SQLite 建表定義，避免漂移。
 - `TestAdditiveMigrationStatements` 逐條比對現行 canonical schema，`TestAdditiveMigrationRejectsUnregisteredNames` 驗證未知／注入樣式名稱拒絕。SQLite、真實 PostgreSQL 的完整 migration 與 store 測試涵蓋其執行。
 
 ### 六個方言 wrapper 為何仍需要審查

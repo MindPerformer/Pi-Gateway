@@ -298,10 +298,12 @@ test('从动作输出端口拖到空白只搜索动作，取消不新增，确�
         await expect(page.getByTestId('node-search-context')).toContainText('替换文本')
         await expect(nodeSearch(page).locator('[data-testid^="node-search-condition-"]')).toHaveCount(0)
         await expect(page.getByTestId('node-search-action-text_replace')).toBeVisible()
+        await expect(page.getByTestId('node-search-input')).toBeFocused()
     }
     await dragToBackground()
     await page.keyboard.press('Escape')
     await expect(nodeSearch(page)).toHaveCount(0)
+    await expect(page.getByTestId('canvas-add-node')).toBeFocused()
     await expect(graphNodes(page)).toHaveCount(originalIDs.length)
     await expect(page.locator('.vue-flow__edge')).toHaveCount(5)
     expect(await graphNodes(page).evaluateAll(nodes => nodes.map(node => node.getAttribute('data-node-id')))).toEqual(originalIDs)

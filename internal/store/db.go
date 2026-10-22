@@ -127,8 +127,9 @@ func (s *Store) Close() error { return s.db.Close() }
 // Portable SQL must use Store.ExecContext/QueryContext/QueryRowContext instead.
 func (s *Store) DB() *sql.DB { return s.db }
 
-// Shared compile-time DDL keeps initial creation and legacy rebuild identical.
-const apiKeyTableDefinition = `(
+// Keep the legacy rebuild and initial schema as complete static statements.
+// TestAPIKeySchemaMatchesLegacyRebuild checks their effective SQLite definitions.
+const legacyAPIKeyTableSQL = `CREATE TABLE api_keys_new (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  name TEXT NOT NULL,
  key TEXT NOT NULL UNIQUE,
@@ -145,7 +146,6 @@ const apiKeyTableDefinition = `(
  created_at INTEGER NOT NULL,
  updated_at INTEGER NOT NULL
 );`
-const legacyAPIKeyTableSQL = `CREATE TABLE api_keys_new ` + apiKeyTableDefinition
 
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS admin_sessions (
@@ -203,7 +203,23 @@ CREATE TABLE IF NOT EXISTS account_model_catalog (
  attempted_at INTEGER NOT NULL DEFAULT 0,
  error TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS api_keys ` + apiKeyTableDefinition + `
+CREATE TABLE IF NOT EXISTS api_keys (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ name TEXT NOT NULL,
+ key TEXT NOT NULL UNIQUE,
+ enabled INTEGER NOT NULL DEFAULT 1,
+ strategy TEXT NOT NULL DEFAULT '',
+ transport TEXT NOT NULL DEFAULT '',
+ label TEXT NOT NULL DEFAULT '',
+ max_concurrency INTEGER NOT NULL DEFAULT 0,
+ requests_per_minute INTEGER NOT NULL DEFAULT 0,
+ daily_limit_usd REAL NOT NULL DEFAULT 0,
+ weekly_limit_usd REAL NOT NULL DEFAULT 0,
+ last_used_at INTEGER NOT NULL DEFAULT 0,
+ request_count INTEGER NOT NULL DEFAULT 0,
+ created_at INTEGER NOT NULL,
+ updated_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
 CREATE TABLE IF NOT EXISTS usage_records (
  id INTEGER PRIMARY KEY AUTOINCREMENT,

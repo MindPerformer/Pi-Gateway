@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -38,4 +39,27 @@ func TestAdditiveMigrationRejectsUnregisteredNames(t *testing.T) {
 			t.Fatalf("unregistered migration accepted: %q", names)
 		}
 	}
+}
+
+func TestAPIKeySchemaMatchesLegacyRebuild(t *testing.T) {
+	s := openTestStore(t)
+	_, err := s.db.ExecContext(t.Context(), legacyAPIKeyTableSQL)
+	requireDataNoError(t, err)
+	initial := sqliteTableDefinition(t, s, "api_keys")
+	rebuilt := sqliteTableDefinition(t, s, "api_keys_new")
+	if initial != rebuilt {
+		t.Fatalf("legacy rebuild differs from initial schema:\ninitial: %s\nrebuilt: %s", initial, rebuilt)
+	}
+}
+
+func sqliteTableDefinition(t *testing.T, s *Store, table string) string {
+	t.Helper()
+	var ddl string
+	err := s.db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&ddl)
+	requireDataNoError(t, err)
+	_, definition, ok := strings.Cut(ddl, "(")
+	if !ok {
+		t.Fatalf("table %q has no definition: %q", table, ddl)
+	}
+	return definition
 }

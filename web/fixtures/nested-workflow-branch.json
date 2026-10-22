@@ -1,0 +1,46 @@
+{
+  "id": "branch",
+  "type": "if",
+  "params": {
+    "predicate": {
+      "op": "always"
+    },
+    "then": [
+      {
+        "id": "each",
+        "type": "for_each",
+        "params": {
+          "path": "/input",
+          "steps": [
+            {
+              "id": "shared",
+              "type": "json_set",
+              "params": {
+                "path": "/shared",
+                "value": false
+              }
+            },
+            {
+              "id": "second",
+              "type": "json_set",
+              "params": {
+                "path": "/second",
+                "value": false
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "else": [
+      {
+        "id": "shared",
+        "type": "json_set",
+        "params": {
+          "path": "/shared",
+          "value": false
+        }
+      }
+    ]
+  }
+}

@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// The rebuild copies a fixed projection; no runtime identifier or query formatting.
+// TestLegacyAPIKeyCopyColumns guards alignment with the key scanner contract.
+const legacyAPIKeyCopySQL = `INSERT INTO api_keys_new (id,name,key,enabled,label,max_concurrency,requests_per_minute,daily_limit_usd,weekly_limit_usd,strategy,transport,last_used_at,request_count,created_at,updated_at) SELECT id,name,key,enabled,label,max_concurrency,requests_per_minute,daily_limit_usd,weekly_limit_usd,strategy,transport,last_used_at,request_count,created_at,updated_at FROM api_keys`
+
 func hasLegacyKeyColumns(ctx context.Context, conn *sql.Conn) (bool, error) {
 	var n int
 	err := conn.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('api_keys') WHERE name IN ('scope','account_ids')`).Scan(&n)
@@ -108,7 +112,7 @@ func migrateLegacyKeyGroups(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, legacyAPIKeyTableSQL); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, `INSERT INTO api_keys_new (`+keyColumns+`) SELECT `+keyColumns+` FROM api_keys`); err != nil {
+	if _, err := conn.ExecContext(ctx, legacyAPIKeyCopySQL); err != nil {
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, `DROP TABLE api_keys; ALTER TABLE api_keys_new RENAME TO api_keys; CREATE INDEX idx_api_keys_key ON api_keys(key)`); err != nil {

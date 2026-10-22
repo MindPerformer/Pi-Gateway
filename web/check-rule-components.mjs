@@ -9,7 +9,7 @@ import {compileScript, parse} from '@vue/compiler-sfc'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
-const {createRenderer, h, shallowRef, nextTick} = require('vue')
+const {createRenderer, h, shallowRef, nextTick, reactive} = require('vue')
 const {createPinia} = require('pinia')
 
 export async function checkRuleComponents(schema) {
@@ -126,6 +126,17 @@ export async function checkRuleComponents(schema) {
         await nextTick()
     }
 
+    // Multiple listeners can depend on a previous asynchronous model update.
+    // This ordering contract must survive any future concurrency refactor.
+    const eventOrder = []
+    const orderedControl = node('input')
+    orderedControl.props.onChange = [
+        async () => { await Promise.resolve(); eventOrder.push('first') },
+        () => { assert.deepEqual(eventOrder, ['first']); eventOrder.push('second') },
+    ]
+    await fire(orderedControl, 'onChange', 'value')
+    assert.deepEqual(eventOrder, ['first', 'second'])
+
     function mount(component, value, props = {}) {
         const state = shallowRef(value), host = node('root')
         const app = renderer.createApp({
@@ -144,6 +155,11 @@ export async function checkRuleComponents(schema) {
 
     // Independent wire-format oracle; do not reuse production cloneJson here.
     const normalized = value => JSON.parse(JSON.stringify(value))
+    const wireOnly = {omitted: undefined, values: [undefined, Number.NaN, Number.POSITIVE_INFINITY]}
+    assert.deepEqual(normalized(wireOnly), {values: [null, null, null]})
+    assert.notDeepEqual(structuredClone(wireOnly), normalized(wireOnly), 'memory cloning is not the JSON wire oracle')
+    assert.deepEqual(normalized(reactive({nested: wireOnly})), {nested: {values: [null, null, null]}})
+
     let fieldsEdited = 0, enumsEdited = 0, capabilitiesRendered = 0, roundtrips = 0
 
     async function editField(field) {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {readFile} from 'node:fs/promises'
 import {build} from 'esbuild'
 
 export async function checkRuleGraph(schema, backend) {
@@ -238,7 +239,7 @@ export async function checkRuleGraph(schema, backend) {
     children.forEach((edge, index) => edge.order = children.length - index)
     assert.deepEqual(m.graphToRule(order, schema).when.conditions, [...special.when.conditions].reverse())
     checkQuickAdd(m, schema)
-    checkNestedWorkflow(m, schema)
+    checkNestedWorkflow(m, schema, await loadNestedWorkflowFixture())
     // Layout persistence only contains stable AST/action identities and geometry, never rule/sample values.
     const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage'), stored = new Map()
     try {
@@ -364,17 +365,20 @@ function checkCatalogLabels(m, schema, backend) {
     return labels
 }
 
-function checkNestedWorkflow(m, schema) {
+async function loadNestedWorkflowFixture() {
+    // This is serialized rule data, not a Promise-like JavaScript API.
+    // Keep the exact `then` wire name used by the backend and stored rules.
+    const serialized = await readFile(new URL('./fixtures/nested-workflow-branch.json', import.meta.url), 'utf8')
+    const branch = JSON.parse(serialized)
+    assert.ok(Array.isArray(branch.params.then), 'the wire then branch is an action array')
+    assert.notEqual(typeof branch.params.then, 'function', 'wire branch data must never be callable')
+    assert.equal(await Promise.resolve(branch.params), branch.params, 'Promise resolution must preserve non-callable wire then data')
+    assert.equal(`${JSON.stringify(branch, null, 2)}\n`, serialized, 'serialization must reproduce the canonical wire fixture bytes')
+    return branch
+}
+
+function checkNestedWorkflow(m, schema, branch) {
     const set = id => ({id, type: 'json_set', params: {path: `/${id}`, value: false}})
-    // `then` is the required JSON wire branch, not a callable Promise method.
-    const branch = {
-        id: 'branch', type: 'if', params: {
-            predicate: {op: 'always'},
-            then: [{id: 'each', type: 'for_each', params: {path: '/input', steps: [set('shared'), set('second')]}}],
-            else: [set('shared')],
-        },
-    }
-    assert.ok(Array.isArray(branch.params.then), 'the wire then branch is data, never a callable thenable')
     const rule = {...m.newRule(), actions: [set('before'), branch, set('after')]}
     const graph = m.ruleToGraph(rule), owner = graph.nodes.find(node => node.data.id === 'branch')
     assert.deepEqual(m.graphToRule(graph, schema), rule)

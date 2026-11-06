@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -248,40 +249,55 @@ func runActualBlockedUpstreamSocketWriteCanceledClosedOrAgedWithoutReplayCase(t 
 
 	release := make(chan struct{})
 	var releaseOnce sync.Once
-	defer releaseOnce.Do(func() { close(release) })
 	var dials, posts atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serveActualBlockedUpstreamSocketWriteCanceledClosedOrAgedWithoutReplayRequest(w, r, &release, &dials, &posts)
 	}))
-	defer server.Close()
 	observed := make(chan *observedTCPWrite, 1)
 	factory := egress.NewFactory(egress.Options{})
 	factory.BaseDialer = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return verifyActualBlockedUpstreamSocketWriteCanceledClosedOrAgedWithoutReplay(ctx, network, addr, &observed)
 	}
 	c := New(Config{Pool: true, WSURL: "ws" + strings.TrimPrefix(server.URL, "http"), SSEURL: server.URL, IdleTimeout: time.Second}, factory)
-	defer c.Close()
 	if (*capturedMode) == "age" {
 		c.pool.maxAge = 500 * time.Millisecond
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	req := continuationRequest(1, "large")
 	req.Transport = "auto"
 	req.Body = []byte(`{"model":"m","input":["` + strings.Repeat("x", 8<<20) + `"]}`)
 	result := make(chan error, 1)
-	go func() { _, err := c.Stream(ctx, req, func(*Event) error { return nil }); result <- err }()
-	var wire *observedTCPWrite
-	select {
-	case wire = <-observed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("dial did not start")
+	finished := make(chan struct{})
+	defer func() {
+		cancel()
+		c.Close()
+		// Unblock the hijacked peer on every exit, including t.Fatal.
+		// server.Close does not manage hijacked WebSocket connections.
+		releaseOnce.Do(func() { close(release) })
+		server.Close()
+		select {
+		case <-finished:
+		case <-time.After(10 * time.Second):
+			t.Error("stream goroutine did not exit during cleanup")
+		}
+	}()
+	// Preparing and framing 8 MiB of JSON under -race is CPU work, not a
+	// blocked socket. Give setup a separate bounded budget; retain the original
+	// backpressure proof, connection age and post-cancellation deadlines below.
+	setup, stopSetup := context.WithTimeout(ctx, 10*time.Second)
+	defer stopSetup()
+	started := time.Now()
+	go func() {
+		defer close(finished)
+		_, err := c.Stream(ctx, req, func(*Event) error { return nil })
+		result <- err
+	}()
+	wire, err := awaitSocketWriteSetup(setup, observed, result)
+	if err != nil {
+		t.Fatal(err)
 	}
-	select {
-	case <-wire.started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("socket write did not start")
-	}
+	stopSetup()
+	t.Logf("request preparation, dial and first socket write: %s", time.Since(started))
 	// Prove a real Write remains in progress while completed-write count is stable.
 	deadline := time.Now().Add(300 * time.Millisecond)
 	blocked := false
@@ -307,7 +323,7 @@ func runActualBlockedUpstreamSocketWriteCanceledClosedOrAgedWithoutReplayCase(t 
 	} else if (*capturedMode) == "close" {
 		c.Close()
 	}
-	err := awaitStreamError(t, result)
+	err = awaitStreamError(t, result)
 	var transport *transportError
 	reportTestFailure(t, err == nil || !errors.As(err, &transport) || transport.requestNotSent, func() {
 		t.Fatalf("blocked write lost send boundary: %v", err)
@@ -353,4 +369,82 @@ func verifyActualBlockedUpstreamSocketWriteCanceledClosedOrAgedWithoutReplay(ctx
 	wrapped := &observedTCPWrite{Conn: conn, started: make(chan struct{})}
 	(*capturedObserved) <- wrapped
 	return wrapped, nil
+}
+
+// awaitSocketWriteSetup distinguishes slow request preparation from an early
+// stream failure. One context bounds both setup phases without changing the
+// deadlines that verify a blocked write is actually interrupted.
+func awaitSocketWriteSetup(ctx context.Context, observed <-chan *observedTCPWrite, result <-chan error) (*observedTCPWrite, error) {
+	var wire *observedTCPWrite
+	select {
+	case wire = <-observed:
+	case err := <-result:
+		return nil, fmt.Errorf("stream ended before dialing: %v", err)
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for request preparation and dial: %w", ctx.Err())
+	}
+	select {
+	case <-wire.started:
+		return wire, nil
+	case err := <-result:
+		return nil, fmt.Errorf("stream ended before first socket write: %v", err)
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for first socket write: %w", ctx.Err())
+	}
+}
+
+func TestAwaitSocketWriteSetupReportsPhaseAndEarlyFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, phase, want string
+	}{
+		{"ready", "write", ""},
+		{"failure_before_dial", "dial", "stream ended before dialing: setup failure"},
+		{"failure_before_write", "write", "stream ended before first socket write: setup failure"},
+		{"cancellation_before_dial", "dial", "waiting for request preparation and dial: context canceled"},
+		{"cancellation_before_write", "write", "waiting for first socket write: context canceled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			observed := make(chan *observedTCPWrite)
+			result := make(chan error, 1)
+			wire := &observedTCPWrite{started: make(chan struct{})}
+			producerDone := make(chan struct{})
+			signal := func() {
+				if tc.want == "" {
+					close(wire.started)
+				} else if strings.HasPrefix(tc.name, "cancellation") {
+					cancel()
+				} else {
+					result <- errors.New("setup failure")
+				}
+			}
+			if tc.phase == "dial" {
+				signal()
+				close(producerDone)
+			} else {
+				go func() {
+					defer close(producerDone)
+					select {
+					case observed <- wire:
+						signal()
+					case <-ctx.Done():
+					}
+				}()
+			}
+			got, err := awaitSocketWriteSetup(ctx, observed, result)
+			if tc.want == "" {
+				if err != nil || got != wire {
+					t.Fatalf("ready write not returned: wire=%p error=%v", got, err)
+				}
+			} else if err == nil || err.Error() != tc.want || got != nil {
+				t.Fatalf("got wire=%p error=%v; want %s", got, err, tc.want)
+			}
+			select {
+			case <-producerDone:
+			case <-time.After(time.Second):
+				t.Fatal("setup signal producer did not exit")
+			}
+		})
+	}
 }

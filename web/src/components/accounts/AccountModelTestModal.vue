@@ -16,6 +16,7 @@ const { c } = useAccountControls()
 const { models: catalogModels, selectedCatalog, issues, loading: reading, refreshing, refresh, abort: abortCatalog } = useAccountModelCatalog(computed(() => [props.account]))
 const model = ref('')
 const message = ref('Hi')
+const transport = ref<'' | 'sse' | 'websocket'>('')
 const result = ref<AccountModelTestResult | null>(null)
 const sending = ref(false)
 const error = ref('')
@@ -45,7 +46,7 @@ const protocol = computed(() => (() => {
     if (props.account.upstream_protocol) {
         return transportLabel(props.account.upstream_protocol)
     }
-    return c('protocolDefault', { value: props.settings?.upstream_transport ? transportLabel(props.settings.upstream_transport) : c('settingsFailed') })
+    return c('modelTestProtocolDefault', { value: props.settings?.upstream_transport ? transportLabel(props.settings.upstream_transport) : c('settingsFailed') })
 })())
 function reason(id: string) {
 	const reasons: string[] = []
@@ -79,7 +80,7 @@ async function send() {
 	error.value = ''
 	cancelled.value = false
 	try {
-		const next = await api.testAccountModel(accountId, { model: model.value, message: message.value }, controller.signal)
+		const next = await api.testAccountModel(accountId, { model: model.value, message: message.value, ...(transport.value ? { transport: transport.value } : {}) }, controller.signal)
 		if (controller.signal.aborted || testController !== controller) { return }
 		result.value = next
 		if (!next.ok) { error.value = next.error || c('testFailed') }
@@ -107,7 +108,7 @@ onBeforeUnmount(abort)
 	<Modal :open="true" :title="`${c('modelTest')} · ${account.name || account.email || c('unnamedAccount')}`" width="max-w-2xl" @close="close">
 		<div class="test-modal">
 			<div class="test-meta">
-				<div><span>{{ c('protocol') }}</span><strong>{{ protocol }}</strong><small>{{ c('protocolChain') }}</small></div>
+				<div><span>{{ c('protocol') }}</span><strong>{{ protocol }}</strong><small>{{ c('modelTestProtocolChain') }}</small></div>
 				<div><span>{{ c('proxy') }}</span><strong>{{ proxyName }}</strong><small v-if="account.email">{{ account.email }}</small></div>
 			</div>
 			<div class="field-grid">
@@ -132,6 +133,15 @@ onBeforeUnmount(abort)
 			<p v-if="selectedModel && isCodexOnlyModel(selectedModel)" class="notice notice-warning">{{ c('codexOnlyModel') }}</p>
 			<p v-if="accountUnavailable" class="notice notice-warning">{{ c('accountUnavailable') }}</p>
 			<p v-if="model && reason(model)" class="notice notice-warning">{{ reason(model) }}</p>
+			<label class="field" for="account-test-transport">
+				<span id="account-test-transport-label" class="label">{{ c('modelTestTransport') }}</span>
+				<select id="account-test-transport" v-model="transport" class="input" :disabled="sending" aria-labelledby="account-test-transport-label" aria-describedby="account-test-transport-hint">
+					<option value="">{{ c('modelTestTransportCurrent', { value: protocol }) }}</option>
+					<option value="sse">SSE</option>
+					<option value="websocket">WS</option>
+				</select>
+				<small id="account-test-transport-hint">{{ c('modelTestTransportHint') }}</small>
+			</label>
 			<label class="field" for="account-test-message"><span class="label">{{ c('message') }}</span><textarea id="account-test-message" v-model="message" class="input" rows="3" :disabled="sending" maxlength="4000" /></label>
 			<p v-if="!message.trim()" class="control-hint">{{ c('requiredMessage') }}</p>
 			<p class="quota-warning">{{ c('quotaWarning') }}</p>

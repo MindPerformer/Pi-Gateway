@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"pi-gateway/internal/config"
 	"pi-gateway/internal/egress"
 	"pi-gateway/internal/oauth"
+	"pi-gateway/internal/rulesruntime"
 	"pi-gateway/internal/session"
 	"pi-gateway/internal/settings"
 	"pi-gateway/internal/store"
@@ -94,6 +96,45 @@ func sseUpstream(captureRecord *upstreamCapture) http.HandlerFunc {
 	}
 }
 
+// acceptWSCreate models the upstream's transport-specific validation. Presence,
+// not truthiness, makes stream/background invalid on a response.create frame.
+func acceptWSCreate(conn *websocket.Conn, body map[string]any) bool {
+	param, message := "", ""
+	for _, name := range []string{"stream", "background"} {
+		if _, exists := body[name]; exists {
+			param, message = name, "Unknown parameter: '"+name+"'."
+			break
+		}
+	}
+	if message == "" && body["type"] != "response.create" {
+		param, message = "type", "Expected response.create"
+	}
+	if message == "" && body["store"] != false {
+		param, message = "store", "Expected store:false"
+	}
+	if message == "" {
+		return true
+	}
+	_ = conn.WriteJSON(map[string]any{
+		"type": "error", "status": http.StatusBadRequest,
+		"error": map[string]any{"type": "invalid_request_error", "code": "invalid_request_error", "param": param, "message": message},
+	})
+	return false
+}
+
+func assertWSCreateTransportFields(t *testing.T, body map[string]any) {
+	t.Helper()
+	reportTestFailure(t, body["type"] != "response.create" || body["store"] != false, func() {
+		t.Fatalf("upstream WS frame must retain response.create/store:false: %v", body)
+	})
+	for _, name := range []string{"stream", "background"} {
+		_, present := body[name]
+		reportTestFailure(t, present, func() {
+			t.Errorf("HTTP-only parameter %s reached upstream WS: %v", name, body)
+		})
+	}
+}
+
 // wsUpstream is a fake backend that upgrades to a WebSocket and answers each
 // response.create frame with the same event sequence.
 func wsUpstream(t *testing.T, captureRecord *upstreamCapture) http.HandlerFunc {
@@ -113,6 +154,14 @@ func wsUpstream(t *testing.T, captureRecord *upstreamCapture) http.HandlerFunc {
 			return
 		}
 		captureRecord.setWS(frame)
+		var body map[string]any
+		if err := json.Unmarshal(frame, &body); err != nil {
+			t.Errorf("fake upstream invalid JSON: %v", err)
+			return
+		}
+		if !acceptWSCreate(conn, body) {
+			return
+		}
 
 		for _, payload := range []string{
 			`{"type":"response.created","response":{"id":"resp_ws_1"}}`,
@@ -122,6 +171,92 @@ func wsUpstream(t *testing.T, captureRecord *upstreamCapture) http.HandlerFunc {
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
 				return
 			}
+		}
+	}
+}
+
+func TestWSUpstreamRejectsHTTPOnlyParameters(t *testing.T) {
+	for _, param := range []string{"stream", "background"} {
+		for _, value := range []any{true, false, nil} {
+			t.Run(fmt.Sprintf("%s/%v", param, value), func(t *testing.T) {
+				server := httptest.NewServer(wsUpstream(t, &upstreamCapture{}))
+				t.Cleanup(server.Close)
+				conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer conn.Close()
+				_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+				body := map[string]any{"type": "response.create", "model": "test-model", "input": []any{}, "store": false, param: value}
+				if err := conn.WriteJSON(body); err != nil {
+					t.Fatal(err)
+				}
+				var event map[string]any
+				if err := conn.ReadJSON(&event); err != nil {
+					t.Fatal(err)
+				}
+				detail, _ := event["error"].(map[string]any)
+				reportTestFailure(t, event["type"] != "error" || event["status"] != float64(http.StatusBadRequest) || detail["type"] != "invalid_request_error" || detail["param"] != param, func() {
+					t.Fatalf("invalid WS parameter was not rejected precisely: %v", event)
+				})
+			})
+		}
+	}
+}
+
+func TestLegacyMiddlewareUpstreamTransportFields(t *testing.T) {
+	for _, transport := range []string{"sse", "websocket"} {
+		for _, downstream := range []string{"http", "ws"} {
+			t.Run(downstream+"/"+transport, func(t *testing.T) {
+				observed := &upstreamCapture{}
+				var backend http.Handler = sseUpstream(observed)
+				if transport == "websocket" {
+					backend = wsUpstream(t, observed)
+				}
+				h := newHarness(t, backend, transport)
+				// Migration validates disabled regexes too, whereas the legacy chain
+				// skips their execution. This creates a usable ErrMigration fallback.
+				for _, row := range []*store.MiddlewareRow{
+					{Name: "block_prompt", Enabled: false, Config: `{"pattern":"["}`},
+					{Name: "rewrite_model", Enabled: true, Config: `{"model":"legacy-model"}`},
+				} {
+					if err := h.store.UpsertMiddleware(t.Context(), row); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, _, err := h.dataPlane.ruleService.Load(t.Context()); !errors.Is(err, rulesruntime.ErrMigration) {
+					t.Fatalf("fixture must trigger legacy fallback, got %v", err)
+				}
+				request := `{"type":"response.create","model":"test-model","input":"hello","stream":true,"background":true,"store":true}`
+				if downstream == "ws" {
+					events, _ := unifiedWSResponse(t, h, request)
+					if unifiedObject(t, events[len(events)-1])["type"] != "response.completed" {
+						t.Fatalf("legacy WS request failed: %s", events[len(events)-1])
+					}
+				} else {
+					response, raw, _ := capturedHTTPResponse(t, h, request)
+					if response.StatusCode != http.StatusOK || !strings.Contains(string(raw), "response.completed") {
+						t.Fatalf("legacy HTTP request failed: %d %s", response.StatusCode, raw)
+					}
+				}
+				_, raw := observed.get()
+				if transport == "websocket" {
+					raw = observed.getWS()
+				}
+				body := unifiedObject(t, raw)
+				if body["model"] != "legacy-model" || body["store"] != false {
+					t.Fatalf("legacy chain did not rewrite model/preserve store:false: %s", raw)
+				}
+				if transport == "websocket" {
+					assertWSCreateTransportFields(t, body)
+				} else if body["stream"] != true {
+					t.Fatalf("legacy SSE request lost stream:true: %s", raw)
+				}
+				snapshot, err := h.store.LoadRuleSet(t.Context())
+				if err != nil || snapshot.LegacyMigrated {
+					t.Fatalf("request unexpectedly migrated legacy fixture: snapshot=%+v err=%v", snapshot, err)
+				}
+			})
 		}
 	}
 }
@@ -866,7 +1001,7 @@ func TestSSEClientUsesAccountWebSocketUpstream(t *testing.T) {
 	}
 
 	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/v1/responses",
-		strings.NewReader(`{"model":"gpt-5.1-codex","input":"hi","stream":true}`))
+		strings.NewReader(`{"model":"gpt-5.1-codex","input":"hi","stream":true,"background":true,"store":true}`))
 	req.Header.Set("Authorization", "Bearer "+h.key)
 	resp, err := http.DefaultClient.Do(req)
 	reportTestFailure(t, err != nil, func() {
@@ -915,9 +1050,7 @@ func TestSSEClientUsesAccountWebSocketUpstream(t *testing.T) {
 			t.Fatalf("decode upstream response.create frame: %v", err)
 		})
 	}
-	reportTestFailure(t, envelope["type"] != "response.create", func() {
-		t.Fatalf("upstream frame type = %#v, want response.create", envelope["type"])
-	})
+	assertWSCreateTransportFields(t, envelope)
 }
 
 // TestEnvironmentContextIsDropped verifies the Codex environment block never
@@ -994,7 +1127,7 @@ func TestWebSocketClientAndUpstream(t *testing.T) {
 	defer conn.Close()
 
 	// Pi sends the response.create envelope.
-	frame := `{"type":"response.create","model":"gpt-5.1-codex","instructions":"hi","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}`
+	frame := `{"type":"response.create","model":"gpt-5.1-codex","instructions":"hi","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"stream":true,"background":true,"store":true}`
 	{
 		err := conn.WriteMessage(websocket.TextMessage, []byte(frame))
 		reportTestFailure(t, err != nil, func() {
@@ -1017,6 +1150,9 @@ func TestWebSocketClientAndUpstream(t *testing.T) {
 			})
 		}
 		events = append(events, ev)
+		if ev["type"] == "error" || ev["type"] == "response.failed" {
+			t.Fatalf("upstream rejected request: %s", payload)
+		}
 		if ev["type"] == "response.completed" {
 			break
 		}
@@ -1039,8 +1175,9 @@ func TestWebSocketClientAndUpstream(t *testing.T) {
 	reportTestFailure(t, !strings.HasPrefix(sentFrame, `{"type":"response.create","model":"gpt-5.1-codex","input":`), func() {
 		t.Errorf("upstream websocket frame is not Pi-shaped:\n%s", sentFrame)
 	})
-	reportTestFailure(t, !strings.Contains(sentFrame, `"stream":true,`) || !strings.Contains(sentFrame, `"store":false`) || !strings.Contains(sentFrame, `"instructions":"hi"`), func() {
-		t.Errorf("upstream websocket frame lacks Pi's field order:\n%s", sentFrame)
+	assertWSCreateTransportFields(t, unifiedObject(t, []byte(sentFrame)))
+	reportTestFailure(t, !strings.Contains(sentFrame, `"store":false`) || !strings.Contains(sentFrame, `"instructions":"hi"`), func() {
+		t.Errorf("upstream websocket frame lost store/instructions:\n%s", sentFrame)
 	})
 }
 

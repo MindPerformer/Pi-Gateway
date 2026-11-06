@@ -179,7 +179,7 @@ func (s *Server) handleTestAccountModel(w http.ResponseWriter, r *http.Request) 
 		userAgent, globalTransport = rt.UserAgent, rt.UpstreamTransport
 		reasoningEffort, reasoningSummary = rt.ReasoningEffort, rt.ReasoningSummary
 	}
-	result.Transport = diagnosticTransport(account.UpstreamProtocol, globalTransport)
+	result.Transport = diagnosticTransport(account.UpstreamProtocol, globalTransport, body.Transport)
 	// Test the chosen catalog identifier, not an API-key alias. Never substitute
 	// an empty message/default model or apply unrelated model mappings.
 	built, err := piwire.BuildRequest(map[string]any{
@@ -209,7 +209,7 @@ func (s *Server) handleTestAccountModel(w http.ResponseWriter, r *http.Request) 
 		finish(http.StatusConflict, "account is unavailable")
 		return
 	}
-	result.Transport = diagnosticTransport(account.UpstreamProtocol, globalTransport)
+	result.Transport = diagnosticTransport(account.UpstreamProtocol, globalTransport, body.Transport)
 	session := "admin-test-" + uuid.NewString()
 	headers := accounts.ModelHeaderOptions(s.cfg, userAgent, token, upstreamAccountID, session)
 	req := &upstream.Request{
@@ -223,7 +223,11 @@ func (s *Server) handleTestAccountModel(w http.ResponseWriter, r *http.Request) 
 	finishModelTest(ctx, &result, &collector, redactor, streamResult, streamErr, finish)
 }
 
-func diagnosticTransport(account, global string) string {
+func diagnosticTransport(account, global, requested string) string {
+	// An explicit, validated selection applies only to this diagnostic request.
+	if requested != "" {
+		return requested
+	}
 	switch strings.ToLower(strings.TrimSpace(account)) {
 	case "ws", "websocket", cachedWebSocketTransport:
 		return cachedWebSocketTransport
@@ -412,8 +416,9 @@ func (c *modelTestCollector) appendCompletedOutput(response map[string]any) erro
 }
 
 type modelTestInput struct {
-	Model   string `json:"model"`
-	Message string `json:"message"`
+	Model     string `json:"model"`
+	Message   string `json:"message"`
+	Transport string `json:"transport"`
 }
 
 func decodeModelTestInput(r *http.Request, result *accountModelTestResult, finish func(int, string)) (modelTestInput, bool) {
@@ -437,6 +442,15 @@ func decodeModelTestInput(r *http.Request, result *accountModelTestResult, finis
 	}
 	if strings.TrimSpace(body.Message) == "" || len(body.Message) > maxModelTestMessage {
 		finish(http.StatusBadRequest, "message is required and must not exceed 16384 bytes")
+		return body, false
+	}
+	body.Transport = strings.ToLower(strings.TrimSpace(body.Transport))
+	switch body.Transport {
+	case "", "sse", "websocket":
+	case "ws":
+		body.Transport = "websocket"
+	default:
+		finish(http.StatusBadRequest, "transport must be sse or websocket, or omitted to use the current protocol")
 		return body, false
 	}
 	return body, true

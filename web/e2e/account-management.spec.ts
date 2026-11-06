@@ -12,9 +12,9 @@ const sample = (id: number): Account => ({
     group_ids: [1], disabled_models: [], inherited_model_restrictions: [],
 })
 
-async function fixture(page: Page, count = 23, meStatus = 200) {
-    let accounts = Array.from({length: count}, (_, i) => sample(i + 1))
-    const requests: Array<{ path: string; body: any }> = []
+async function fixture(page: Page, count = 23, meStatus = 200, accountOverrides: Partial<Account> = {}) {
+    let accounts = Array.from({length: count}, (_, i) => ({...sample(i + 1), ...accountOverrides}))
+    const requests: Array<{ path: string; method: string; body: any }> = []
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     await page.addInitScript(({token}) => {
@@ -28,7 +28,7 @@ async function fixture(page: Page, count = 23, meStatus = 200) {
     await page.route(url => url.pathname.startsWith('/api/'), async route => {
         const req = route.request(), path = new URL(req.url()).pathname
         const body = req.postData() ? req.postDataJSON() : undefined
-        requests.push({path, body})
+        requests.push({path, method: req.method(), body})
         const reply = (json: unknown, status = 200) => route.fulfill({json, status})
         if (path === '/api/auth/me') {
             if (meStatus === -1) return route.abort('connectionrefused')
@@ -50,6 +50,10 @@ async function fixture(page: Page, count = 23, meStatus = 200) {
         })
         if (path === '/api/proxies') return reply({items: [], total: 0, page: 1, page_size: 100})
         if (path === '/api/settings') return reply({current: {upstream_transport: 'sse'}, defaults: {}})
+        if (/^\/api\/accounts\/\d+\/models$/.test(path)) return reply({
+            models: [{id: 'fixture-model', name: 'Fixture model', source: 'upstream', origins: ['chatgpt']}],
+            fetched_at: 0, attempted_at: 0, error: '',
+        })
         if (path === '/api/accounts/batch') {
             accounts = accounts.map(a => body.ids.includes(a.id) ? {
                 ...a,
@@ -204,6 +208,79 @@ test('恢复登录遇到明确 401 清除 token 并回到登录页', async ({pag
     expect(state.requests.some(r => r.path === '/api/auth/logout')).toBe(false)
     expect(state.errors).toEqual([])
 })
+
+for (const upstreamProtocol of ['', 'ws'] as const) {
+    test(`模型测试协议仅本次有效，默认${upstreamProtocol ? '账号' : '全局'}协议、显式 SSE/WS 与取消`, async ({page}) => {
+        const state = await fixture(page, 1, 200, {upstream_protocol: upstreamProtocol})
+        const requests: Array<{model: string; message: string; transport?: 'sse' | 'websocket'}> = []
+        let complete: (() => void) | undefined
+        await page.route('**/api/accounts/1/test-model', async route => {
+            const body = route.request().postDataJSON()
+            requests.push(body)
+            await new Promise<void>(resolve => { complete = resolve })
+            await route.fulfill({json: {
+                ok: true, model: body.model,
+                transport: body.transport || (upstreamProtocol ? 'websocket-cached' : 'sse'),
+                output: 'Fixture output', latency_ms: 12, first_token_ms: 4,
+            }})
+        })
+        await page.goto('/accounts')
+        const open = async () => {
+            await page.getByRole('button', {name: '更多操作', exact: true}).click()
+            await page.getByRole('menuitem', {name: '测试模型', exact: true}).click()
+        }
+        await open()
+        const dialog = page.getByRole('dialog', {name: '测试模型 · Account 1'})
+        const protocol = dialog.getByLabel('测试连接协议', {exact: true})
+        const summary = upstreamProtocol ? 'WebSocket · 会话复用' : '跟随全局：HTTP 事件流（SSE）'
+        await expect(protocol).toHaveValue('')
+        await expect(protocol.locator('option:checked')).toHaveText(`当前连接协议（${summary}）`)
+        await expect(protocol).toHaveAccessibleDescription('协议选择仅本次测试有效，不保存账号设置；WS 每次新建连接。')
+        await expect(dialog).toContainText('模型测试默认优先级：账号设置 > 全局设置。')
+        await expect(dialog).not.toContainText('密钥')
+        await dialog.getByRole('combobox', {name: /^模型/}).selectOption('fixture-model')
+        await dialog.getByLabel('测试消息', {exact: true}).fill('Fixture message')
+        for (const transport of ['', 'sse', 'websocket', ''] as const) {
+            await protocol.selectOption(transport)
+            const before = requests.length
+            await dialog.getByRole('button', {name: '发送测试', exact: true}).click()
+            await expect.poll(() => requests.length).toBe(before + 1)
+            await expect(protocol).toBeDisabled()
+            await expect(dialog.getByRole('combobox', {name: /^模型/})).toBeDisabled()
+            await expect(dialog.getByLabel('测试消息', {exact: true})).toBeDisabled()
+            expect(requests[before]).toEqual({
+                model: 'fixture-model', message: 'Fixture message', ...(transport ? {transport} : {}),
+            })
+            complete!()
+            await expect(protocol).toBeEnabled()
+            const actual = transport === 'websocket' ? 'WebSocket · 独立连接'
+                : transport === 'sse' || !upstreamProtocol ? 'HTTP 事件流（SSE）' : 'WebSocket · 会话复用'
+            await expect(dialog).toContainText(`实际协议: ${actual}`)
+            await expect(dialog).toContainText('Fixture output')
+        }
+        await protocol.selectOption('websocket')
+        await dialog.getByRole('button', {name: '发送测试', exact: true}).click()
+        await expect.poll(() => requests.length).toBe(5)
+        await dialog.getByRole('button', {name: '取消测试', exact: true}).click()
+        await expect(protocol).toBeEnabled()
+        await expect(dialog).toContainText('已取消测试')
+        complete!()
+        await expect(dialog.locator('.result-card')).toHaveCount(0)
+        await dialog.getByRole('button', {name: '关闭', exact: true}).last().click()
+        await open()
+        await expect(protocol).toHaveValue('')
+        await expect(protocol.locator('option:checked')).toHaveText(`当前连接协议（${summary}）`)
+        await dialog.getByRole('button', {name: '关闭', exact: true}).last().click()
+        await page.getByLabel('语言', {exact: true}).selectOption('en')
+        await page.getByRole('button', {name: 'More actions', exact: true}).click()
+        await page.getByRole('menuitem', {name: 'Test model', exact: true}).click()
+        const english = page.getByRole('dialog', {name: 'Test model · Account 1'})
+        await expect(english.getByLabel('Test connection protocol', {exact: true})).toHaveValue('')
+        await expect(english).toContainText('Applies only to this test; account settings are not saved.')
+        expect(state.requests.filter(request => request.method !== 'GET')).toEqual([])
+        expect(state.errors).toEqual([])
+    })
+}
 
 test('恢复登录遇到网络错误保留 token，批量工具与导入窗口随语言切换', async ({page}) => {
     const state = await fixture(page, 1, -1)

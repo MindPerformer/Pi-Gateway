@@ -1,6 +1,7 @@
 package upstream
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,14 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"pi-gateway/internal/piwire"
 	"pi-gateway/internal/session"
 
 	"github.com/gorilla/websocket"
 )
-
-// responseCreatePrefix mirrors Pi's `JSON.stringify({ type: "response.create", ...requestBody })`.
-// The envelope is prepended byte-wise so the body's own key order is preserved exactly.
-const responseCreatePrefix = `{"type":"response.create",`
 
 const maxWSFrameBytes = 4 << 20
 
@@ -32,24 +30,46 @@ func (e *WSFrameTooLargeError) Error() string {
 }
 func (e *WSFrameTooLargeError) Unwrap() error { return ErrWSFrameTooLarge }
 
-// buildWSFrame wraps the Pi-shaped request body in the response.create envelope.
-// Pi's custom openai-codex-responses transport sends stream:true and store:false
-// unchanged (buildRequestBody + processWebSocketStream); the SDK ResponsesWS
-// comment about implicit streaming does not describe that custom wire payload.
+// buildWSFrame creates an API Responses WebSocket request without mutating the
+// HTTP body. Streaming is implicit on this transport: stream and background are
+// HTTP-only options, unlike the legacy Pi Codex backend's wire format.
 func buildWSFrame(body []byte) ([]byte, error) {
-	trimmed := strings.TrimSpace(string(body))
-	if trimmed == "" || trimmed == "{}" {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
 		return []byte(`{"type":"response.create"}`), nil
 	}
-	if !strings.HasPrefix(trimmed, "{") {
+	if trimmed[0] != '{' {
 		return nil, fmt.Errorf("upstream: request body is not a JSON object")
 	}
-	// Replace the leading '{' with the envelope, which already contains it.
-	rest := trimmed[1:]
-	out := make([]byte, 0, len(responseCreatePrefix)+len(rest))
-	out = append(out, responseCreatePrefix...)
-	out = append(out, rest...)
-	return out, nil
+	if !json.Valid(trimmed) {
+		return nil, fmt.Errorf("upstream: request body is not valid JSON")
+	}
+
+	// Decode values as raw JSON to preserve nested key order, number precision,
+	// and extension fields. OrderedMap keeps the remaining top-level key order.
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("upstream: decode websocket request: %w", err)
+	}
+	frame := piwire.NewOrderedMap().Set("type", "response.create")
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("upstream: decode websocket request key: %w", err)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("upstream: decode websocket request value: %w", err)
+		}
+		name := key.(string) // A validated JSON object's keys are strings.
+		switch name {
+		case "stream", "background", "type":
+			// The envelope type belongs to the transport, not client extensions.
+		default:
+			frame.Set(name, value)
+		}
+	}
+	return frame.MarshalJSON()
 }
 
 // streamWS makes one attempt. After any response.create write, even a first-frame

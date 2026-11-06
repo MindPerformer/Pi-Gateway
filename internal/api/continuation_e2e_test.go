@@ -62,6 +62,9 @@ func (b *gatewayContinuationBackend) ServeHTTP(w http.ResponseWriter, r *http.Re
 		if err := conn.ReadJSON(&body); err != nil {
 			return
 		}
+		if !acceptWSCreate(conn, body) {
+			return
+		}
 		turn := gatewayTurn{connection, fmt.Sprintf("gateway-response-%d", b.generations.Add(1)), r.Header.Clone(), body}
 		b.turns <- turn
 		if b.hook != nil && !b.hook(conn, turn) {
@@ -184,6 +187,7 @@ func gatewayObservedTurn(t *testing.T, b *gatewayContinuationBackend) gatewayTur
 	t.Helper()
 	select {
 	case turn := <-b.turns:
+		assertWSCreateTransportFields(t, turn.body)
 		return turn
 	case <-time.After(5 * time.Second):
 		t.Fatal("upstream did not receive a turn")
@@ -283,6 +287,15 @@ func TestGatewayContinuationStablePrivateSessionAndToolDelta(t *testing.T) {
 			})
 		}
 	}
+	// A history that no longer matches the cached prefix must be sent in full,
+	// without reintroducing HTTP-only fields while rebuilding the WS frame.
+	fallbackInput := []any{gatewayUser("replacement history"), gatewayUser("third")}
+	gatewayResponseID(t, gatewayExchange(t, conn, gatewayCreate(fallbackInput, "", "")))
+	fallback := gatewayObservedTurn(t, b)
+	_, hasParent := fallback.body["previous_response_id"]
+	reportTestFailure(t, hasParent || !reflect.DeepEqual(fallback.body["input"], fallbackInput), func() {
+		t.Fatalf("non-prefix history did not fall back to a full request: %v", fallback.body)
+	})
 	_ = conn.Close()
 	gatewayAwait(t, func() bool {
 		h.dataPlane.lifecycle.mu.Lock()

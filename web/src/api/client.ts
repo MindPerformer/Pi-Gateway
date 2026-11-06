@@ -237,7 +237,7 @@ export const api = {
     async refreshAccountModels(id: number, signal?: AbortSignal) {
         return request<ModelCatalog>(`/api/accounts/${id}/models/refresh`, {method: 'POST', signal})
     },
-    async testAccountModel(id: number, payload: {model: string; message: string}, signal?: AbortSignal) {
+    async testAccountModel(id: number, payload: {model: string; message: string; transport?: 'sse' | 'websocket'}, signal?: AbortSignal) {
         return request<AccountModelTestResult>(`/api/accounts/${id}/test-model`, {
             method: 'POST', body: JSON.stringify(payload), signal,
         })

@@ -51,9 +51,16 @@ func runPreviewOptionsAcrossTransportsAndRulesCase(t *testing.T, capturedTranspo
 		observed.mu.Unlock()
 	}
 	payload := unifiedObject(t, raw)
-	reportTestFailure(t, payload["instructions"] != "from rule" || payload["parallel_tool_calls"] != false || payload["stream"] != true || payload["store"] != false, func() {
+	reportTestFailure(t, payload["instructions"] != "from rule" || payload["parallel_tool_calls"] != false || payload["store"] != false, func() {
 		t.Fatalf("client options or route constraints changed: %s", raw)
 	})
+	if wsUpstream {
+		assertWSCreateTransportFields(t, payload)
+	} else {
+		reportTestFailure(t, payload["stream"] != true, func() {
+			t.Fatalf("SSE upstream lost stream:true: %s", raw)
+		})
+	}
 	reportTestFailure(t, !reflect.DeepEqual(payload["text"], map[string]any{"verbosity": "low", "format": map[string]any{"type": "text"}}) || !reflect.DeepEqual(payload["future_option"], map[string]any{"flag": false, "nullable": nil}), func() {
 		t.Fatalf("nested options lost: %s", raw)
 	})

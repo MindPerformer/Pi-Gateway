@@ -76,6 +76,29 @@ func TestBuildDeltaBodySendsOnlyNewItems(t *testing.T) {
 	reportTestFailure(t, item["content"] != "again", func() {
 		t.Errorf("delta item = %v, want the new user message", item)
 	})
+	// Delta construction keeps the HTTP baseline intact. Only final WS framing
+	// removes transport fields, on continuations just as on the first turn.
+	for _, raw := range [][]byte{turn1, delta} {
+		frame, err := buildWSFrame(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire := mustDecode(t, frame)
+		for _, field := range []string{"stream", "background"} {
+			if _, present := wire[field]; present {
+				t.Fatalf("HTTP field %s leaked into WS continuation: %s", field, frame)
+			}
+		}
+		if wire["store"] != false || wire["type"] != "response.create" {
+			t.Fatalf("invalid continuation envelope: %s", frame)
+		}
+		if !jsonEqual(wire["input"], mustDecode(t, raw)["input"]) || wire["previous_response_id"] != mustDecode(t, raw)["previous_response_id"] {
+			t.Fatalf("framing changed continuation input or parent: %s", frame)
+		}
+	}
+	if mustDecode(t, delta)["stream"] != true {
+		t.Fatal("framing mutated the delta's HTTP baseline")
+	}
 	// previous_response_id must be present but not leak into the compared body.
 	{
 		_, exists := mustDecode(t, exceptInput)["previous_response_id"]

@@ -144,7 +144,7 @@ func TestAccountModelTestValidationHealthPolicyAndConcurrencyMakeNoRequest(t *te
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(500) }))
 	defer target.Close()
 	s, a := newModelAdmin(t, target.URL)
-	for _, payload := range []string{`{}`, `{"model":"","message":"Hi"}`, `{"model":"chosen-model","message":" "}`, `{"model":"chosen-model","message":"Hi"}{}`, `{"model":"chosen-model","message":"Hi","access_token":"bad"}`, `{"model":"chosen-model","message":"` + strings.Repeat("x", maxModelTestMessage+1) + `"}`} {
+	for _, payload := range []string{`{}`, `{"model":"","message":"Hi"}`, `{"model":"chosen-model","message":" "}`, `{"model":"chosen-model","message":"Hi"}{}`, `{"model":"chosen-model","message":"Hi","access_token":"bad"}`, `{"model":"chosen-model","message":"Hi","transport":"auto"}`, `{"model":"chosen-model","message":"Hi","transport":"websocket-cached"}`, `{"model":"chosen-model","message":"Hi","transport":"smtp"}`, `{"model":"chosen-model","message":"Hi","transport":123}`, `{"model":"chosen-model","message":"` + strings.Repeat("x", maxModelTestMessage+1) + `"}`} {
 		w, result := modelAdminRequest(t, s.handleTestAccountModel, context.Background(), a.ID, "POST", payload)
 		reportTestFailure(t, w.Code != 400 || result.OK, func() {
 			t.Fatalf("bad request accepted: %d %s", w.Code, w.Body.String())
@@ -296,14 +296,15 @@ func TestAccountModelsGETReadOnlyAndRefreshFailureKeepsList(t *testing.T) {
 }
 
 func TestAccountModelDiagnosticTransportAndCompletedOutput(t *testing.T) {
-	for _, tc := range []struct{ account, global, want string }{
-		{"ws", "sse", "websocket-cached"}, {"sse", "websocket", "sse"}, {"", "websocket", "websocket"},
-		{"", "websocket-cached", "websocket-cached"}, {"", "auto", "auto"}, {"", "passthrough", "sse"},
+	for _, tc := range []struct{ account, global, requested, want string }{
+		{"ws", "sse", "", "websocket-cached"}, {"sse", "websocket", "", "sse"}, {"", "websocket", "", "websocket"},
+		{"", "websocket-cached", "", "websocket-cached"}, {"", "auto", "", "auto"}, {"", "passthrough", "", "sse"},
+		{"sse", "sse", "websocket", "websocket"}, {"ws", "websocket", "sse", "sse"}, {"", "auto", "sse", "sse"},
 	} {
 		{
-			got := diagnosticTransport(tc.account, tc.global)
+			got := diagnosticTransport(tc.account, tc.global, tc.requested)
 			reportTestFailure(t, got != tc.want, func() {
-				t.Errorf("transport(%q,%q)=%q want=%q", tc.account, tc.global, got, tc.want)
+				t.Errorf("transport(%q,%q,%q)=%q want=%q", tc.account, tc.global, tc.requested, got, tc.want)
 			})
 		}
 	}
@@ -749,4 +750,102 @@ func verifyAccountModelCatalogDualSourceLocalContracts(capturedT **testing.T, ca
 	reportTestFailure((*capturedT), (*capturedChatCalls).Load() != 2 || (*capturedCodexCalls).Load() != wantCodexCalls, func() {
 		(*capturedT).Fatalf("unexpected real requests: chatgpt=%d codex=%d", (*capturedChatCalls).Load(), (*capturedCodexCalls).Load())
 	})
+}
+
+func TestAccountModelTestTransportOverrideIsRequestScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name, account, global, requested, want, defaultWire string
+	}{
+		{"sse_account_ws_test", "sse", "sse", "websocket", "websocket", "sse"},
+		{"ws_account_sse_test", "ws", "websocket", "sse", "sse", "websocket"},
+		{"ws_alias", "sse", "sse", "ws", "websocket", "sse"},
+		{"normalized_sse", "ws", "websocket", " SSE ", "sse", "websocket"},
+		{"current_account_sse", "sse", "websocket", "", "sse", "sse"},
+		{"current_account_ws", "ws", "sse", "", "websocket", "websocket"},
+		{"current_global_ws", "", "websocket", "", "websocket", "websocket"},
+		{"current_global_auto", "", "auto", "", "websocket", "websocket"},
+		{"current_passthrough", "", "passthrough", "", "sse", "sse"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			observed := make(chan string, 2)
+			const completed = `{"type":"response.completed","response":{"id":"model-test","status":"completed","output":[]}}`
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if websocket.IsWebSocketUpgrade(r) {
+					conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+					if err != nil {
+						t.Errorf("upgrade: %v", err)
+						return
+					}
+					defer conn.Close()
+					if err := conn.ReadJSON(&body); err != nil {
+						t.Errorf("read WS request: %v", err)
+						return
+					}
+					for _, field := range []string{"stream", "background"} {
+						if _, present := body[field]; present {
+							t.Errorf("HTTP-only field reached WS: %s", field)
+						}
+					}
+					if body["type"] != "response.create" || body["store"] != false {
+						t.Errorf("invalid WS body: %v", body)
+					}
+					observed <- "websocket"
+					_ = conn.WriteMessage(websocket.TextMessage, []byte(completed))
+					return
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("read SSE request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if body["stream"] != true || body["store"] != false {
+					t.Errorf("invalid SSE body: %v", body)
+				}
+				observed <- "sse"
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintf(w, "data: %s\n\n", completed)
+			}))
+			defer target.Close()
+			s, account := newModelAdmin(t, target.URL)
+			account.UpstreamProtocol = tc.account
+			if err := s.store.UpdateAccount(t.Context(), account); err != nil {
+				t.Fatal(err)
+			}
+			runtime := s.settings.Get()
+			runtime.UpstreamTransport = tc.global
+			if err := s.settings.Set(t.Context(), runtime); err != nil {
+				t.Fatal(err)
+			}
+			for turn, want := range []string{tc.want, tc.defaultWire} {
+				payload := map[string]string{"model": "chosen-model", "message": "Hi"}
+				if turn == 0 {
+					payload["transport"] = tc.requested
+				}
+				raw, err := json.Marshal(payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				w, result := modelAdminRequest(t, s.handleTestAccountModel, t.Context(), account.ID, http.MethodPost, string(raw))
+				if w.Code != http.StatusOK || !result.OK {
+					t.Fatalf("turn %d failed: %d %s", turn, w.Code, w.Body.String())
+				}
+				select {
+				case got := <-observed:
+					if got != want || (want == "sse" && result.Transport != "sse") || (want == "websocket" && !strings.HasPrefix(result.Transport, "websocket")) {
+						t.Fatalf("turn %d: wire=%s result=%s want=%s", turn, got, result.Transport, want)
+					}
+				default:
+					t.Fatal("model test made no upstream request")
+				}
+			}
+			stored, err := s.store.GetAccount(t.Context(), account.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.UpstreamProtocol != tc.account || s.settings.Get().UpstreamTransport != tc.global {
+				t.Fatal("model test changed persistent protocol settings")
+			}
+		})
+	}
 }

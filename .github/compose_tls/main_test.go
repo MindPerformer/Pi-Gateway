@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -243,5 +244,23 @@ func TestTLSHealthcheckVerifiesIdentityAndStatus(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatal("healthcheck followed redirect or bypassed CA verification")
+	}
+}
+
+func TestCertificateAuthorityKeyIdentifierMatchesIssuer(t *testing.T) {
+	directory := fixtureCertificates(t, net.ParseIP("127.0.0.1"))
+	ca := readCertificate(t, filepath.Join(directory, "ca.crt"))
+	certificate := readCertificate(t, filepath.Join(directory, "server.crt"))
+	if len(ca.SubjectKeyId) == 0 {
+		t.Fatal("CA certificate is missing its subject key identifier")
+	}
+	if len(certificate.AuthorityKeyId) == 0 {
+		t.Fatal("server certificate is missing its authority key identifier")
+	}
+	if !bytes.Equal(certificate.AuthorityKeyId, ca.SubjectKeyId) {
+		t.Fatal("server authority key identifier does not match the issuing CA")
+	}
+	if err := certificate.CheckSignatureFrom(ca); err != nil {
+		t.Fatalf("server certificate was not signed by the identified CA: %v", err)
 	}
 }

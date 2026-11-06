@@ -151,6 +151,17 @@ class ComposeProbeTest(TLSFixture):
 
 
 class ProbeBoundaryTest(TLSFixture):
+    def test_fixture_supports_strict_certificate_verification(self):
+        # Python 3.13+ enables strict X.509 checks by default. Set the flag
+        # explicitly so older Python versions catch malformed fixture chains too.
+        context = ssl.create_default_context(cafile=self.ca_file)
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
+        with self.running_tls_server(HealthServer) as server:
+            with socket.create_connection(("127.0.0.1", server.server_port), timeout=5) as connection:
+                with context.wrap_socket(connection, server_hostname="127.0.0.1") as secure:
+                    self.assertTrue(secure.getpeercert())
+            self.assertEqual(server.received, [])
+
     def test_tls_rejects_untrusted_ca_before_sending_credentials(self):
         other = Path(self.scratch.name) / "other-ca"
         subprocess.run([str(self.tls_binary), "certs", "--dir", str(other)], check=True, timeout=15)

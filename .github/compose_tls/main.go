@@ -112,6 +112,13 @@ func createCertificates(directory string, ips []net.IP) error {
 	if err != nil {
 		return err
 	}
+	// CreateCertificate generates the CA's SubjectKeyId in the DER without
+	// updating the template. Use the issued CA as the parent so the server
+	// certificate receives the matching AuthorityKeyId for strict X.509 checks.
+	ca, err = x509.ParseCertificate(caDER)
+	if err != nil {
+		return err
+	}
 	if err := writePEM(filepath.Join(directory, "ca.crt"), "CERTIFICATE", caDER); err != nil {
 		return err
 	}

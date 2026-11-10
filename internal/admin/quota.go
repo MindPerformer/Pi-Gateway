@@ -43,6 +43,10 @@ type quotaWindowCost struct {
 	EstimatedTotalUSD     *float64         `json:"estimated_total_usd"`
 	EstimatedRemainingUSD *float64         `json:"estimated_remaining_usd"`
 	UnavailableReason     string           `json:"unavailable_reason,omitempty"`
+	// Partial distinguishes a lower-bound projection from a complete estimate,
+	// including the legacy numeric zero when no retained request can be priced.
+	Partial bool `json:"partial"`
+	Unknown bool `json:"unknown"`
 }
 
 func (s *Server) buildQuotaView(ctx context.Context, account *store.Account) quotaView {
@@ -101,6 +105,10 @@ func (s *Server) buildQuotaWindowCost(ctx context.Context, accountID int64, wind
 	}
 	var err error
 	cost.Usage, err = s.store.AccountUsageCost(ctx, accountID, store.UsageRange{Start: cost.StartAt, End: asOf}, asOf)
+	if cost.Usage != nil {
+		cost.Partial = cost.Usage.UnpricedRequests > 0
+		cost.Unknown = cost.Partial && cost.Usage.PricedRequests == 0
+	}
 	switch {
 	case err != nil:
 		cost.Usage = nil

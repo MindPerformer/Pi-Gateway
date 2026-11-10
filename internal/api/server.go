@@ -23,6 +23,7 @@ import (
 	"pi-gateway/internal/keylimit"
 	"pi-gateway/internal/middleware"
 	"pi-gateway/internal/piwire"
+	"pi-gateway/internal/pricing"
 	"pi-gateway/internal/rules"
 	"pi-gateway/internal/rulescapture"
 	"pi-gateway/internal/rulesruntime"
@@ -42,6 +43,7 @@ type Server struct {
 	accounts     *accounts.Manager
 	upstream     *upstream.Client
 	settings     *settings.Holder
+	pricing      pricing.Provider
 	limiter      *keylimit.Limiter
 	registry     map[string]middleware.Middleware
 	ruleService  *rulesruntime.Service
@@ -58,6 +60,7 @@ type Options struct {
 	Accounts *accounts.Manager
 	Upstream *upstream.Client
 	Settings *settings.Holder
+	Pricing  pricing.Provider
 	Logger   *slog.Logger
 	// CatalogCache must share the database deployment's isolated namespace.
 	CatalogCache   session.CatalogCache
@@ -82,6 +85,7 @@ func New(opts Options) *Server {
 		accounts:     opts.Accounts,
 		upstream:     opts.Upstream,
 		settings:     opts.Settings,
+		pricing:      opts.Pricing,
 		limiter:      keylimit.NewLimiter(opts.Store),
 		registry:     middleware.Registry(),
 		ruleService:  rulesruntime.New(opts.Store),

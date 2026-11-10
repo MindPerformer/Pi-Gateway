@@ -97,6 +97,7 @@ for (const [kind, values] of Object.entries(dynamic)) {
     for (const value of values) for (const part of ['label', 'description']) verifyKey(`ui.${kind}.${value}.${part}`, 'uiOptions dynamic values')
 }
 for (const value of ['ready', 'expired', 'invalid', 'banned', 'quota_exhausted', 'unknown']) verifyKey(`ui.accountStatus.${value}`, 'account status options')
+for (const value of ['catalog', 'sources', 'history', 'priced', 'unpriced', 'blocked', 'standard', 'flex', 'fast', 'long_standard', 'long_flex', 'long_fast', 'input', 'cached_input', 'cache_write', 'output', 'reset', 'resetHint', 'block', 'blockHint', 'follow', 'followHint']) verifyKey(`pricing.${value}`, 'pricing dynamic tabs, rates, states and actions')
 for (const key of ['accounts.disable', 'accounts.enable']) {
     verifyKey(key, 'account toggle actions')
     assert.notEqual(translate('zh-CN', key), key)

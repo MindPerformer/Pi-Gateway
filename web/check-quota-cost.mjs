@@ -75,8 +75,16 @@ async function checkLocale(locale) {
         usage: missing,
         windowCost: {...windowCost, usage: missing, estimated_total_usd: 0, estimated_remaining_usd: 0}
     })
-    assert.ok(zero.includes(money.money(0)))
-    assert.ok(!zero.includes('—'))
+    assert.ok(zero.includes('—'))
+    assert.ok(zero.includes(t('pricing.costUnknown')))
+    assert.ok(!textContent(zero).includes(money.money(0)))
+    const repriced = await render({usage: {...usage, repriced_requests: 2, repriced_cost_micros: 1250000}, windowCost: {...windowCost, partial: true}})
+    assert.ok(repriced.includes(t('pricing.repricedHint')))
+    assert.ok(repriced.includes(t('pricing.costPartial')))
+    assert.ok(repriced.includes(t('pricing.repricedSummary', {count: 2, amount: money.money(1.25)})))
+    const free = await render({usage: {...usage, cost_micros: 0}, windowCost: {...windowCost, estimated_total_usd: 0, estimated_remaining_usd: 0}})
+    assert.ok(free.includes(money.money(0)))
+    assert.ok(!free.includes(t('pricing.costUnknown')))
     const unavailable = await render({
         usage: null,
         windowCost: {

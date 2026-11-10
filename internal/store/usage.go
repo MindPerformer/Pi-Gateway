@@ -60,6 +60,8 @@ type UsageCost struct {
 	CostMicros       int64 `json:"cost_micros"`
 	PricedRequests   int64 `json:"priced_requests"`
 	UnpricedRequests int64 `json:"unpriced_requests"`
+	RepricedRequests int64 `json:"repriced_requests"`
+	RepricedMicros   int64 `json:"repriced_cost_micros"`
 }
 
 func (s *Store) AccountUsageCost(ctx context.Context, accountID int64, interval UsageRange, settledBefore int64) (*UsageCost, error) {
@@ -74,7 +76,15 @@ func (s *Store) AccountUsageCost(ctx context.Context, accountID int64, interval 
 		args = append(args, settledBefore)
 	}
 	var cost UsageCost
-	err := s.QueryRowContext(ctx, `SELECT coalesce(sum(cost_micros),0),count(cost_micros),count(*)-count(cost_micros) FROM usage_records WHERE `+where, args...).Scan(&cost.CostMicros, &cost.PricedRequests, &cost.UnpricedRequests)
+	// Original prices (including measured zero) always win. Historical estimates
+	// only fill NULLs and remain distinguishable from the immutable bill.
+	err := s.QueryRowContext(ctx, `SELECT coalesce(sum(coalesce(original_cost,estimated_cost)),0),
+ count(coalesce(original_cost,estimated_cost)),count(*)-count(coalesce(original_cost,estimated_cost)),
+ count(CASE WHEN original_cost IS NULL THEN estimated_cost END),
+ coalesce(sum(CASE WHEN original_cost IS NULL THEN estimated_cost ELSE 0 END),0)
+ FROM (SELECT cost_micros AS original_cost,
+ (SELECT p.cost_micros FROM usage_repriced_costs p WHERE p.usage_record_id=usage_records.id) AS estimated_cost
+ FROM usage_records WHERE `+where+`) AS usage_costs`, args...).Scan(&cost.CostMicros, &cost.PricedRequests, &cost.UnpricedRequests, &cost.RepricedRequests, &cost.RepricedMicros)
 	if err != nil {
 		return nil, err
 	}

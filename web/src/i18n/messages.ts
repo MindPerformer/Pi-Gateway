@@ -4,6 +4,7 @@
 import {uiOptionsEn, uiOptionsZh} from './uiOptionsMessages'
 import {rulesEn, rulesZh} from './rulesMessages'
 import {captureRulesEn, captureRulesZh} from './captureRulesMessages'
+import {pricingEn, pricingZh} from './pricingMessages'
 
 export type Locale = 'en' | 'zh-CN'
 
@@ -24,6 +25,7 @@ const en = {
     ...uiOptionsEn,
     ...rulesEn,
     ...captureRulesEn,
+    ...pricingEn,
     'accounts.groups': 'Groups',
     'accounts.allGroups': 'All groups',
     'accounts.ungrouped': 'Ungrouped',
@@ -615,6 +617,7 @@ const zh: Catalogue = {
     ...uiOptionsZh,
     ...rulesZh,
     ...captureRulesZh,
+    ...pricingZh,
     'accounts.groups': '账号分组',
     'accounts.allGroups': '全部分组',
     'accounts.ungrouped': '未分组',

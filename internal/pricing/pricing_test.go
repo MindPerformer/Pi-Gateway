@@ -14,6 +14,7 @@ func TestLookupKnownModel(t *testing.T) {
 	}{
 		{"gpt-6-astra", [4]float64{10, 1, 12.5, 50}},
 		{"gpt-6.1-sol", [4]float64{2, 0.1, 2.5, 10}},
+		{"gpt-6.1-terra", [4]float64{1, 0.05, 1.25, 5}},
 		{"gpt-6-sol", [4]float64{2, 0.2, 2.5, 10}},
 		{"gpt-6-luna", [4]float64{0.1, 0.01, 0.125, 0.5}},
 		{"gpt-5.6-sol", [4]float64{5, 0.5, 6.25, 30}},
@@ -55,8 +56,8 @@ func TestLookupKnownModel(t *testing.T) {
 		{"gpt-5.5-cyber", [4]float64{12.5, 1.25, 0, 75}},
 		{"chat-latest", [4]float64{5, 0.5, 0, 30}},
 	}
-	if len(pricingRules) != len(cases) || len(cases) != 42 {
-		t.Fatalf("catalog has %d models, want all 42", len(pricingRules))
+	if len(pricingRules) != len(cases) || len(cases) != 43 {
+		t.Fatalf("catalog has %d models, want all 43", len(pricingRules))
 	}
 	for _, tc := range cases {
 		t.Run(tc.model, func(t *testing.T) {

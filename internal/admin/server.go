@@ -20,6 +20,7 @@ import (
 	"pi-gateway/internal/accounts"
 	"pi-gateway/internal/config"
 	"pi-gateway/internal/egress"
+	"pi-gateway/internal/modelpricing"
 	"pi-gateway/internal/oauth"
 	"pi-gateway/internal/settings"
 	"pi-gateway/internal/store"
@@ -31,14 +32,18 @@ const adminPasswordHashKey = "admin.password_hash"
 
 // Server serves the admin API. Browser sessions are persisted by Store.
 type Server struct {
-	cfg      *config.Config
-	store    *store.Store
-	accounts *accounts.Manager
-	settings *settings.Holder
-	flows    *oauth.FlowManager
-	upstream *upstream.Client
-	factory  *egress.Factory
-	logger   *slog.Logger
+	cfg                 *config.Config
+	store               *store.Store
+	accounts            *accounts.Manager
+	settings            *settings.Holder
+	flows               *oauth.FlowManager
+	upstream            *upstream.Client
+	factory             *egress.Factory
+	pricing             *modelpricing.Service
+	pricingImports      chan struct{}
+	pricingImportBudget float64
+	pricingImportRefill time.Time
+	logger              *slog.Logger
 
 	mu sync.Mutex
 	// generatedPassword is surfaced once at startup when no password was configured.
@@ -54,6 +59,7 @@ type Options struct {
 	Flows    *oauth.FlowManager
 	Upstream *upstream.Client
 	Factory  *egress.Factory
+	Pricing  *modelpricing.Service
 	Logger   *slog.Logger
 }
 
@@ -64,14 +70,16 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		cfg:      opts.Config,
-		store:    opts.Store,
-		accounts: opts.Accounts,
-		settings: opts.Settings,
-		flows:    opts.Flows,
-		upstream: opts.Upstream,
-		factory:  opts.Factory,
-		logger:   logger,
+		cfg:            opts.Config,
+		store:          opts.Store,
+		accounts:       opts.Accounts,
+		settings:       opts.Settings,
+		flows:          opts.Flows,
+		upstream:       opts.Upstream,
+		factory:        opts.Factory,
+		pricing:        opts.Pricing,
+		pricingImports: make(chan struct{}, 2),
+		logger:         logger,
 	}
 	s.bindOAuthProxy()
 	return s
@@ -152,6 +160,7 @@ func (s *Server) Routes(mux *http.ServeMux, spa http.Handler) {
 	mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.handleMe))
 
 	mux.HandleFunc("GET /api/overview", s.requireAuth(s.handleOverview))
+	s.pricingRoutes(mux)
 
 	mux.HandleFunc("GET /api/proxies", s.requireAuth(s.handleListProxies))
 	mux.HandleFunc("POST /api/proxies", s.requireAuth(s.handleCreateProxy))

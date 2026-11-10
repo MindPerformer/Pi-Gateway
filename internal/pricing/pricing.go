@@ -18,46 +18,17 @@ type Rule struct {
 	// UnpricedLongContext 对应参考实现的 unpriced_long_context。
 	// 达到阈值时 Cost 返回 ok=false，而不是把未确认价格当作零。
 	UnpricedLongContext bool
+	// ContextComparison is "gt" only for models with a strict boundary.
+	ContextComparison string
+	// exactRates is immutable per returned rule; nil preserves legacy Rule literals.
+	exactRates *[4]*big.Rat
 }
 
 // Lookup 返回模型价格；tier 为空、standard、default 时使用 standard，
 // fast/priority 使用 fast，flex 使用 flex。映射来源 usage.rs:886-893。
 // overrides 的 key 是模型名（不含 tier），乘数同时作用于短档和长档。
 func Lookup(model, tier string, overrides map[string]float64) (Rule, string, bool) {
-	normalized := normalizeModel(model)
-	canonical := normalized
-	if alias, ok := modelAliases[normalized]; ok {
-		canonical = alias
-	}
-	pricing, ok := pricingRules[canonical]
-	if !ok {
-		return Rule{}, "", false
-	}
-	selectedTier, ok := normalizeTier(tier)
-	if !ok {
-		return Rule{}, "", false
-	}
-	rates, longRates := pricing.standard, pricing.longStandard
-	switch selectedTier {
-	case "flex":
-		rates, longRates = pricing.flex, pricing.longFlex
-	case "fast":
-		rates, longRates = pricing.fast, pricing.longFast
-	}
-	if rates == (tokenRates{}) {
-		return Rule{}, "", false
-	}
-	r := rates.rule(pricing.cacheWritePercent)
-	applyLongContextPricing(&r, pricing, longRates)
-	for _, key := range []string{model, normalized, canonical} {
-		if multiplier, found := overrides[key]; found {
-			if !scaleRule(&r, multiplier) {
-				return Rule{}, "", false
-			}
-			return r, "override", true
-		}
-	}
-	return r, "builtin", true
+	return BuiltinSnapshot().Lookup(model, tier, overrides)
 }
 
 // 来源 usage.rs:965-973：去除外围空白及命名空间，并做 ASCII 小写转换。
@@ -112,6 +83,15 @@ func scaleRule(r *Rule, multiplier float64) bool {
 	if !ok {
 		return false
 	}
+	if r.exactRates != nil {
+		exact := &[4]*big.Rat{}
+		for i, value := range r.exactRates {
+			if value != nil {
+				exact[i] = new(big.Rat).Mul(value, factor)
+			}
+		}
+		r.exactRates = exact
+	}
 	for _, rate := range []*float64{&r.Input, &r.CachedInput, &r.CacheWrite, &r.Output} {
 		value, ok := decimal(*rate)
 		if !ok {
@@ -141,7 +121,7 @@ func Cost(r Rule, input, cached, cacheWrite, output int64) (int64, bool) {
 	if input < 0 || cached < 0 || cacheWrite < 0 || output < 0 {
 		return 0, false
 	}
-	if r.LongContextThreshold > 0 && input >= r.LongContextThreshold {
+	if isLongContext(r, input) {
 		if r.UnpricedLongContext {
 			return 0, false
 		}
@@ -153,16 +133,28 @@ func Cost(r Rule, input, cached, cacheWrite, output int64) (int64, bool) {
 	uncached := input - min(input, cached)
 	uncached -= min(uncached, cacheWrite)
 	total := new(big.Rat)
-	for _, segment := range []struct {
+	for i, segment := range []struct {
 		tokens int64
 		rate   float64
 	}{
 		{uncached, r.Input}, {cached, r.CachedInput},
 		{cacheWrite, r.CacheWrite}, {output, r.Output},
 	} {
-		rate, ok := decimal(segment.rate)
-		if !ok {
-			return 0, false
+		var rate *big.Rat
+		if r.exactRates != nil {
+			if segment.tokens == 0 {
+				continue
+			}
+			if r.exactRates[i] == nil {
+				return 0, false
+			}
+			rate = new(big.Rat).Set(r.exactRates[i])
+		} else {
+			var ok bool
+			rate, ok = decimal(segment.rate)
+			if !ok {
+				return 0, false
+			}
 		}
 		// USD/1M token × tokens × 1M micro-USD/USD，两个 1M 恰好抵消。
 		total.Add(total, rate.Mul(rate, new(big.Rat).SetInt64(segment.tokens)))

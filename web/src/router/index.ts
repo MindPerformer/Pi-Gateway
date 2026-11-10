@@ -21,6 +21,7 @@ const router = createRouter({
                 {path: 'keys', name: 'keys', component: () => import('../views/KeysView.vue')},
                 {path: 'stats', name: 'stats', component: () => import('../views/StatsView.vue')},
                 {path: 'usage', name: 'usage', component: () => import('../views/UsageView.vue')},
+                {path: 'pricing', name: 'pricing', component: () => import('../views/PricingView.vue')},
                 {path: 'captures', name: 'captures', component: () => import('../views/CapturesView.vue')},
                 {
                     path: 'captures/:id',

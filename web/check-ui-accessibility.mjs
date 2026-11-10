@@ -24,8 +24,9 @@ await Promise.all(['components', 'views'].map(async directory => {
     await Promise.all(files.map(async file => {
         const {descriptor} = parse(await readFile(join(base, file), 'utf8'))
         const nodes = elements(parseTemplate(descriptor.template.content))
-        templates.set(`${directory}/${file}`, nodes)
-        styles.set(`${directory}/${file}`, descriptor.styles.map(style => style.content).join('\n'))
+        const key = `${directory}/${file.replaceAll('\\', '/')}`
+        templates.set(key, nodes)
+        styles.set(key, descriptor.styles.map(style => style.content).join('\n'))
         assert(!nodes.some(node => prop(node, 'role') === 'status'), `${file}: use native status output`)
         for (const output of nodes.filter(node => node.tag === 'output')) {
             assert(!elements(output).slice(1).some(node => ['div', 'p', 'section', 'fieldset'].includes(node.tag)), `${file}: output contains non-phrasing content`)

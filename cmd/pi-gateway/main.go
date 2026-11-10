@@ -27,6 +27,7 @@ import (
 	"pi-gateway/internal/egress"
 	"pi-gateway/internal/logging"
 	"pi-gateway/internal/middleware"
+	"pi-gateway/internal/modelpricing"
 	"pi-gateway/internal/oauth"
 	"pi-gateway/internal/quota"
 	"pi-gateway/internal/rulesruntime"
@@ -130,6 +131,12 @@ func runGateway(cfg *config.Config) error {
 		IdleTimeout:    time.Duration(cfg.Upstream.IdleTimeoutSeconds) * time.Second,
 	})
 
+	priceService, err := modelpricing.New(rootCtx, st, modelpricing.Options{Factory: factory, Logger: logger})
+	if err != nil {
+		return fmt.Errorf("initialize model pricing: %w", err)
+	}
+	priceService.Start(rootCtx)
+
 	oauthClient := oauth.NewClient(nil)
 	oauthClient.SetOriginator(cfg.Upstream.Originator)
 
@@ -213,6 +220,7 @@ func runGateway(cfg *config.Config) error {
 		Upstream:       upstreamClient,
 		Settings:       settingsHolder,
 		Logger:         logger,
+		Pricing:        priceService,
 		CatalogCache:   sessions,
 		CatalogTTL:     time.Duration(cfg.Redis.CatalogTTLSeconds) * time.Second,
 		CatalogTimeout: time.Duration(cfg.Redis.CommitTimeoutMS) * time.Millisecond,
@@ -229,6 +237,7 @@ func runGateway(cfg *config.Config) error {
 		Upstream: upstreamClient,
 		Factory:  factory,
 		Logger:   logger,
+		Pricing:  priceService,
 	})
 	if err := adminServer.BootstrapPassword(rootCtx); err != nil {
 		return err

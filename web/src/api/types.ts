@@ -223,12 +223,21 @@ export interface BillingDetails {
     tier: string
     tier_source: string
     price_source: string
+    catalog_version?: string | number
+    calculation_version?: string
+    source_id?: string
+    source_url?: string
+    model?: string
+    context_comparison?: 'gt' | 'gte'
     unavailable_reason?: string
     long_context: boolean
     context_threshold: number
     base_rates: BillingRates | null
     context_rates: BillingRates | null
     effective_rates: BillingRates | null
+    base_decimal_rates?: import('./pricing').DecimalRates | null
+    context_decimal_rates?: import('./pricing').DecimalRates | null
+    effective_decimal_rates?: import('./pricing').DecimalRates | null
     context_multipliers: BillingRates | null
     tier_multipliers: BillingRates | null
     base_cost_micros: number | null
@@ -587,6 +596,8 @@ export interface AccountUsageCost {
     cost_micros: number
     priced_requests: number
     unpriced_requests: number
+    repriced_requests?: number
+    repriced_cost_micros?: number
 }
 
 export interface QuotaWindowCost {
@@ -597,6 +608,8 @@ export interface QuotaWindowCost {
     usage: AccountUsageCost | null
     estimated_total_usd: number | null
     estimated_remaining_usd: number | null
+    partial?: boolean
+    unknown?: boolean
     unavailable_reason?: string
 }
 

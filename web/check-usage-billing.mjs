@@ -49,6 +49,16 @@ async function checkLocale(locale) {
     for (const cost of [0.6, 1.05, 2.1]) assert.ok(html.includes(money.money(cost)))
     assert.ok(html.includes('×1.5'))
     assert.ok(html.includes('priority'))
+    const exact = await render(billing, {...row, billing_details: {
+        ...row.billing_details, catalog_version: 42, source_id: 'fixture-source', source_url: 'https://example.test/prices.json', model: 'billing-alias', context_comparison: 'gt',
+        base_decimal_rates: {input: '0.123456789', cached_input: '', cache_write: '0', output: '10'},
+        context_decimal_rates: {input: '0.246913578', cached_input: '', cache_write: '0', output: '20'},
+        effective_decimal_rates: {input: '0.493827156', cached_input: '', cache_write: '0', output: '40'},
+    }})
+    assert.ok(exact.includes('$0.123456789 / — / $0 / $10'))
+    assert.ok(exact.includes('$0.493827156 / — / $0 / $40'))
+    assert.ok(exact.includes('fixture-source') && exact.includes('billing-alias') && exact.includes('https://example.test/prices.json'))
+    assert.ok(exact.includes('42 / model-pricing-v2') && exact.includes('&gt;'))
     const historical = await render(billing, {...row, billing_details: null})
     assert.ok(historical.includes(t('usage.historicalBilling')))
     assert.ok(!historical.includes('×2'))

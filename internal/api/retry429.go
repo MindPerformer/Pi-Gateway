@@ -182,7 +182,7 @@ func (s *Server) prepareRetryAccount(ctx context.Context, p *prepared, next *sto
 	if p.Recorder != nil {
 		p.Recorder.SetRoute(next.ID, next.Name, p.Built.Model, p.SessionID, p.Transport)
 	}
-	p.Usage = s.newUsageTracker(p.Key, next, p.Built.Model, clientTransport, p.Transport, p.SessionID, stringField(p.ClientBody, "service_tier"))
+	p.Usage = s.newUsageTracker(p.Key, next, p.Built.Model, clientTransport, p.Transport, p.SessionID, stringField(p.ClientBody, "service_tier"), p.Usage)
 	p.Usage.noteRequestMetadata(p.Built.JSON)
 	if p.Compact {
 		p.Usage.requestKind = "compaction"

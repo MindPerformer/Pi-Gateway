@@ -28,6 +28,7 @@ const nav = computed(() => [
 	{ name: 'keys', label: t('nav.keys'), to: '/keys', icon: KeyRound },
 	{ name: 'stats', label: t('nav.stats'), to: '/stats', icon: ChartNoAxesCombined },
 	{ name: 'usage', label: t('nav.usage'), to: '/usage', icon: ListFilter },
+	{ name: 'pricing', label: t('pricing.title'), to: '/pricing', icon: ChartNoAxesCombined },
 	{ name: 'captures', label: t('nav.captures'), to: '/captures', icon: Activity },
 	{ name: 'rules', label: t('rules.title'), to: '/rules', icon: Braces },
 	{ name: 'settings', label: t('nav.settings'), to: '/settings', icon: SettingsIcon },
@@ -87,7 +88,7 @@ async function signOut() {
 				<button class="btn btn-ghost btn-icon sidebar-mobile-close" :aria-label="t('nav.closeMenu')" @click="closeMobile"><X /></button>
 			</div>
 			<nav class="sidebar-nav" :aria-label="t('nav.navigation')">
-				<RouterLink v-for="item in nav" :key="item.name" :to="item.to" class="sidebar-link" :class="{ 'is-active': activeName === item.name }" :title="ui.sidebarCollapsed ? item.label : undefined" :aria-current="activeName === item.name ? 'page' : undefined">
+				<RouterLink v-for="item in nav" :key="item.name" :to="item.to" class="sidebar-link" :class="{ 'is-active': activeName === item.name }" :title="ui.sidebarCollapsed ? item.label : undefined" :aria-current="activeName === item.name ? 'page' : undefined" @click="mobileOpen && closeMobile()">
 					<component :is="item.icon" aria-hidden="true" />
 					<span class="sidebar-label">{{ item.label }}</span>
 				</RouterLink>

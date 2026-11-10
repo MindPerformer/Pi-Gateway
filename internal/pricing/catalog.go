@@ -13,12 +13,18 @@ type modelPricing struct {
 	longStandard, longFlex, longFast tokenRates
 	cacheWritePercent                int64
 	unpricedLongContext              bool
+	contextComparison                string
 }
 
 // 来源 :16（LONG_CONTEXT_THRESHOLD）；input >= 阈值才切换整次请求的价格。
 const longContextThreshold int64 = 272_000
 
 var pricingRules = map[string]modelPricing{
+	// 官方核对：30 分钟缓存写入；Terra 独立使用 input > 272000 边界。
+	"gpt-6.1-terra": {
+		standard: tokenRates{10_000, 50_000, 500}, flex: tokenRates{5_000, 25_000, 250}, fast: tokenRates{20_000, 100_000, 1_000},
+		longStandard: tokenRates{20_000, 75_000, 1_000}, longFlex: tokenRates{10_000, 37_500, 500}, longFast: tokenRates{40_000, 150_000, 2_000}, cacheWritePercent: 125, contextComparison: "gt",
+	},
 	// 来源 :237-246。
 	"gpt-6-astra": {
 		standard: tokenRates{100_000, 500_000, 10_000}, flex: tokenRates{50_000, 250_000, 5_000}, fast: tokenRates{200_000, 1_000_000, 20_000},

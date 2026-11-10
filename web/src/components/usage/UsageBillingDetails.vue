@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { BillingRates, UsageRecord } from '../../api/types'
+import type { DecimalRates } from '../../api/pricing'
+const rateFields = ['input', 'cached_input', 'cache_write', 'output'] as const
 import { metric, money } from '../../api/stats-format'
 import { useI18n } from '../../i18n'
 const props = defineProps<{ record: UsageRecord }>()
 const { t } = useI18n()
 const billing = computed(() => props.record.billing_details)
 const usd = (micros: number | null | undefined) => money(micros == null ? null : micros / 1e6)
-function rates(value: BillingRates | null | undefined) {
+function rates(value: BillingRates | null | undefined, decimal?: DecimalRates | null) {
+	if (decimal) return rateFields.map(field => decimal[field] === '' ? '—' : `$${decimal[field]}`).join(' / ')
 	return value ? [value.input, value.cached_input, value.cache_write, value.output].map(v => money(v)).join(' / ') : '—'
 }
 function multipliers(value: BillingRates | null | undefined) {
@@ -24,16 +27,20 @@ const reasonKeys: Record<string, string> = {
 		<strong>{{ t('usage.billingDetails') }}</strong>
 		<template v-if="billing">
 			<dl>
+				<div><dt>{{ t('pricing.billingSource') }}</dt><dd>{{ billing.source_id || billing.price_source || '—' }}</dd></div>
+				<div><dt>{{ t('pricing.billingVersion') }}</dt><dd>{{ billing.catalog_version ?? '—' }} / {{ billing.calculation_version || billing.version || '—' }}</dd></div>
+				<div v-if="billing.model"><dt>{{ t('pricing.billingModel') }}</dt><dd>{{ billing.model }}</dd></div>
+				<div v-if="billing.source_url"><dt>{{ t('pricing.sourceUrl') }}</dt><dd>{{ billing.source_url }}</dd></div>
 				<div><dt>{{ t('usage.originalCost') }}</dt><dd>{{ usd(billing.base_cost_micros) }}</dd></div>
-				<div><dt>{{ t('usage.baseRates') }}</dt><dd>{{ rates(billing.base_rates) }}</dd></div>
-				<div><dt>{{ t('usage.contextBand') }}</dt><dd>{{ billing.long_context ? t('usage.longContext') : t('usage.shortContext') }}<template v-if="billing.context_threshold"> (≥ {{ metric(billing.context_threshold) }})</template></dd></div>
-				<div><dt>{{ t('usage.contextRates') }}</dt><dd>{{ rates(billing.context_rates) }}</dd></div>
+				<div><dt>{{ t('usage.baseRates') }}</dt><dd>{{ rates(billing.base_rates, billing.base_decimal_rates) }}</dd></div>
+				<div><dt>{{ t('usage.contextBand') }}</dt><dd>{{ billing.long_context ? t('usage.longContext') : t('usage.shortContext') }}<template v-if="billing.context_threshold"> ({{ billing.context_comparison === 'gt' ? '>' : '≥' }} {{ metric(billing.context_threshold) }})</template></dd></div>
+				<div><dt>{{ t('usage.contextRates') }}</dt><dd>{{ rates(billing.context_rates, billing.context_decimal_rates) }}</dd></div>
 				<div><dt>{{ t('usage.contextMultipliers') }}</dt><dd>{{ multipliers(billing.context_multipliers) }}</dd></div>
 				<div><dt>{{ t('usage.contextCost') }}</dt><dd>{{ usd(billing.context_cost_micros) }}</dd></div>
 				<div><dt>{{ t('usage.actualTier') }}</dt><dd>{{ record.service_tier || t('usage.tierUnconfirmed') }}</dd></div>
 				<div><dt>{{ t('usage.requestedTier') }}</dt><dd>{{ record.requested_service_tier || '—' }}</dd></div>
 				<div><dt>{{ t('usage.fastRates') }}</dt><dd>{{ multipliers(billing.tier_multipliers) }}</dd></div>
-				<div><dt>{{ t('usage.effectiveRates') }}</dt><dd>{{ rates(billing.effective_rates) }}</dd></div>
+				<div><dt>{{ t('usage.effectiveRates') }}</dt><dd>{{ rates(billing.effective_rates, billing.effective_decimal_rates) }}</dd></div>
 				<div><dt>{{ t('usage.totalCost') }}</dt><dd class="billing-total">{{ money(record.cost_usd) }}</dd></div>
 			</dl>
 			<p>{{ t('usage.rateOrder') }}</p>

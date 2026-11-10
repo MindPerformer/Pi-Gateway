@@ -56,6 +56,7 @@ type usageTracker struct {
 	actualTier        string
 	reasoningEffort   string
 	overrides         map[string]float64
+	priceSnapshot     *pricing.Snapshot
 }
 
 // usageSink feeds the tracker while preserving every capture callback.
@@ -87,7 +88,7 @@ func (s *usageSink) OnUsage(u upstream.Usage) {
 	s.Sink.OnUsage(u)
 }
 
-func (s *Server) newUsageTracker(key *store.APIKey, account *store.Account, model, clientTransport, upstreamTransport, sessionID, tier string) *usageTracker {
+func (s *Server) newUsageTracker(key *store.APIKey, account *store.Account, model, clientTransport, upstreamTransport, sessionID, tier string, previous ...*usageTracker) *usageTracker {
 	t := &usageTracker{
 		store:             s.store,
 		logger:            s.logger,
@@ -99,7 +100,22 @@ func (s *Server) newUsageTracker(key *store.APIKey, account *store.Account, mode
 		upstreamTransport: upstreamTransport,
 		sessionID:         sessionID,
 		tier:              tier,
-		overrides:         s.pricingOverrides(),
+	}
+	t.priceSnapshot = pricing.BuiltinSnapshot()
+	if len(previous) > 0 && previous[0] != nil {
+		// An account retry is still the same client request: retain both the
+		// catalog and its final operator multiplier even if settings changed.
+		t.priceSnapshot, t.overrides = previous[0].priceSnapshot, previous[0].overrides
+		if t.priceSnapshot == nil {
+			t.priceSnapshot = pricing.BuiltinSnapshot()
+		}
+	} else {
+		t.overrides = s.pricingOverrides()
+		if s.pricing != nil {
+			if snapshot := s.pricing.Snapshot(); snapshot != nil {
+				t.priceSnapshot = snapshot
+			}
+		}
 	}
 	if key != nil {
 		t.keyID = key.ID
@@ -330,7 +346,11 @@ func (t *usageTracker) billingDetails() pricing.Breakdown {
 		tier = "standard"
 		source = "default"
 	}
-	d := pricing.Explain(t.model, tier, t.overrides, t.usage.InputTokens, t.usage.CachedTokens, t.usage.CacheWriteTokens, t.usage.OutputTokens)
+	snapshot := t.priceSnapshot
+	if snapshot == nil {
+		snapshot = pricing.BuiltinSnapshot()
+	}
+	d := snapshot.Explain(t.model, tier, t.overrides, t.usage.InputTokens, t.usage.CachedTokens, t.usage.CacheWriteTokens, t.usage.OutputTokens)
 	d.TierSource = source
 	if !t.usage.HasUsage {
 		d.BaseCostMicros = nil
@@ -388,7 +408,7 @@ func (t *usageTracker) finalize(ctx context.Context, outcome string, errText str
 		RequestedServiceTier: t.tier,
 		ServiceTier:          t.actualTier,
 		BillingDetails:       string(detailsJSON),
-		PriceVersion:         pricing.Version,
+		PriceVersion:         details.Version,
 		SessionID:            t.sessionID,
 		CompletedAt:          t.completedMS,
 	}

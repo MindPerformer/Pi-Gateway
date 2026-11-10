@@ -393,7 +393,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
  created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at DESC);
-`
+` + PricingSchemaSQL + UsageRepricingSchemaSQL
 
 // migrate retries transient SQLite setup contention between starting processes.
 func (s *Store) migrate() error {

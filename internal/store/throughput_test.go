@@ -19,7 +19,7 @@ func TestOutputTPSCodex2APIBoundaries(t *testing.T) {
 		{"first past completion", 1001, 1000, "succeeded", 200, usageInt(400), floatPtr(400)},
 		{"failed", 200, 1000, "failed", 200, usageInt(400), nil},
 		{"http failure", 200, 1000, "succeeded", 429, usageInt(400), nil},
-		{"cancelled", 200, 1000, "cancelled", 200, usageInt(400), nil},
+		{"cancelled", 200, 1000, "cancelled", 200, usageInt(400), floatPtr(500)},
 		{"incomplete", 200, 1000, "incomplete", 200, usageInt(400), nil},
 		{"empty output", 200, 1000, "succeeded", 200, usageInt(0), nil},
 		{"missing output", 200, 1000, "succeeded", 200, nil, nil},

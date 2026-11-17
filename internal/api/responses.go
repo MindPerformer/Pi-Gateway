@@ -145,6 +145,14 @@ func (s *Server) serveSSE(w http.ResponseWriter, ctx context.Context, p *prepare
 	_, err := s.streamWith429Retry(ctx, p, req, func(event *upstream.Event) error { return delivery.onEvent(ctx, event) })
 	if err != nil {
 		outcome := outcomeFor(err, ctx)
+		// Once a terminal event has reached the client, a subsequent context
+		// cancellation must not append a second, contradictory error frame.
+		if delivery.terminal {
+			if delivery.completed {
+				return store.OutcomeOK, nil
+			}
+			return outcome, err
+		}
 		if !delivery.wroteHeaders {
 			writeError(captureJSONResponse(w, p.Recorder, "error"), errorFromUpstream(err, p.ResponseHeaders))
 			return outcome, err
@@ -347,6 +355,7 @@ type sseDelivery struct {
 	prepared                            *prepared
 	flusher                             http.Flusher
 	wroteHeaders, first, errorForwarded bool
+	terminal, completed               bool
 }
 
 func (delivery *sseDelivery) commit() {
@@ -387,6 +396,10 @@ func (delivery *sseDelivery) onEvent(ctx context.Context, event *upstream.Event)
 	}
 	if upstreamEventContainsError(event) {
 		delivery.errorForwarded = true
+	}
+	if upstream.IsTerminal(event.Type) {
+		delivery.terminal = true
+		delivery.completed = event.Type == upstream.EventResponseCompleted || event.Type == upstream.EventResponseDone
 	}
 	if delivery.prepared.Recorder != nil {
 		// The client hop: exactly the bytes handed to the client.

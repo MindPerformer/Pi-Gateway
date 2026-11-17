@@ -81,7 +81,7 @@ func (s *Server) streamWith429RetryWindow(ctx context.Context, p *prepared, req 
 			defer cancelWait()
 		}
 		recordErr := s.recordRetryAttempt(ctx, p, err, status, message, now)
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && err != nil {
 			return result, ctx.Err()
 		}
 		if err == nil || status != 429 || !mayRetry || delivery.delivered || (recordErr != nil && !maySwitch) {

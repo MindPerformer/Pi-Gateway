@@ -18,6 +18,54 @@ const mappingText = ref('{}')
 const loading = ref(false)
 const saving = ref(false)
 
+const versionPlaceholder = '{version}'
+const defaultCodexClientName = 'codex-tui'
+const defaultCodexTemplate = `${defaultCodexClientName}/${versionPlaceholder}`
+const codexVersionMode = ref<'auto' | 'fixed'>('auto')
+const codexFixedVersion = ref('')
+const codexClientName = ref('')
+const codexPlatform = ref('')
+const codexRawTemplate = ref('')
+const codexEditTemplate = ref(false)
+const guidedTemplatePattern = /^([^/{}\s]+)\/\{version\}(?: \(([^{}]+)\))?$/
+
+const codexTemplate = computed(() => {
+	if (codexEditTemplate.value) return codexRawTemplate.value
+	if (!codexClientName.value && !codexPlatform.value) return ''
+	const product = `${codexClientName.value || defaultCodexClientName}/${versionPlaceholder}`
+	return codexPlatform.value ? `${product} (${codexPlatform.value})` : product
+})
+const codexVersionInvalid = computed(() => codexVersionMode.value === 'fixed' && (
+	codexFixedVersion.value === 'auto' || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(codexFixedVersion.value)
+))
+const codexClientNameInvalid = computed(() => !codexEditTemplate.value && /[/{}\s]/.test(codexClientName.value))
+const codexTemplateInvalid = computed(() => {
+	const template = codexTemplate.value
+	return !!template && (template.length > 256 || template.trim() !== template || /[^ -~]/.test(template) ||
+		!template.includes(versionPlaceholder) || /[{}]/.test(template.replace(versionPlaceholder, '')))
+})
+const codexInvalid = computed(() => codexVersionInvalid.value || codexClientNameInvalid.value || codexTemplateInvalid.value)
+const codexPreview = computed(() => {
+	const template = codexTemplate.value || defaultCodexTemplate
+	return codexVersionMode.value === 'fixed' && !codexVersionInvalid.value
+		? template.replace(versionPlaceholder, () => codexFixedVersion.value)
+		: template
+})
+const codexCanUseBuilder = computed(() => !codexRawTemplate.value || guidedTemplatePattern.test(codexRawTemplate.value))
+
+function loadCodexTemplate(template: string) {
+	const parts = guidedTemplatePattern.exec(template)
+	codexClientName.value = parts?.[1] ?? ''
+	codexPlatform.value = parts?.[2] ?? ''
+	codexRawTemplate.value = template
+	codexEditTemplate.value = !!template && !parts
+}
+
+function editCodexTemplate() {
+	codexRawTemplate.value = codexTemplate.value
+	codexEditTemplate.value = true
+}
+
 // password change
 const currentPassword = ref('')
 const newPassword = ref('')
@@ -30,6 +78,10 @@ async function load() {
 		data.value = result
 		form.value = { ...result.current, compaction_mode: result.current.compaction_mode || 'on', compaction_model: result.current.compaction_model || 'gpt-6-luna', compaction_prompt: result.current.compaction_prompt ?? result.defaults.compaction_prompt ?? '', switch_on_429: result.current.switch_on_429 ?? true, account_cooldown_seconds: result.current.account_cooldown_seconds ?? 60, max_attempts: result.current.max_attempts ?? 2 }
 		mappingText.value = JSON.stringify(result.current.model_mappings ?? {}, null, 2)
+		const version = result.current.codex_client_version || 'auto'
+		codexVersionMode.value = version === 'auto' ? 'auto' : 'fixed'
+		codexFixedVersion.value = version === 'auto' ? '' : version
+		loadCodexTemplate(result.current.codex_user_agent_template ?? '')
 	} catch (err) {
 		toast.error(err instanceof Error ? err.message : 'failed to load settings')
 	} finally {
@@ -40,7 +92,7 @@ async function load() {
 onMounted(load)
 
 async function save() {
-	if (!form.value) return
+	if (!form.value || codexInvalid.value) return
 	saving.value = true
 	try {
 		let mappings: Record<string, string> = {}
@@ -51,7 +103,12 @@ async function save() {
 			saving.value = false
 			return
 		}
-		const result = await api.putSettings({ ...form.value, model_mappings: mappings })
+		const result = await api.putSettings({
+			...form.value,
+			model_mappings: mappings,
+			codex_client_version: codexVersionMode.value === 'auto' ? 'auto' : codexFixedVersion.value,
+			codex_user_agent_template: codexTemplate.value,
+		})
 		form.value = { ...result.settings }
 		toast.success(t('settings.saved'))
 		await load()
@@ -85,7 +142,7 @@ const compactionModels = computed(() => [...new Set(['gpt-6-luna', form.value?.c
 	<div class="page-view">
 		<PageHeader :title="t('settings.title')" :subtitle="t('settings.subtitle')">
 			<button class="btn" :disabled="loading || saving" @click="load"><RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" />{{ t('settings.reload') }}</button>
-			<button class="btn btn-primary" :disabled="saving || loading || !form" @click="save">
+			<button class="btn btn-primary" :disabled="saving || loading || !form || codexInvalid" @click="save">
 				<Save class="h-4 w-4" />{{ saving ? t('settings.saving') : t('settings.save') }}
 			</button>
 		</PageHeader>
@@ -223,6 +280,58 @@ const compactionModels = computed(() => [...new Set(['gpt-6-luna', form.value?.c
 
 			<!-- Right column -->
 			<div class="settings-stack">
+				<section class="card panel-content" aria-labelledby="s-codex-title">
+					<h2 id="s-codex-title" class="section-title"><Settings2 aria-hidden="true" />{{ t('settings.codexSection') }}</h2>
+					<div class="space-y-3">
+						<div class="grid gap-4 sm:grid-cols-2">
+							<div>
+								<label class="label" for="s-codex-version-mode">{{ t('settings.codexVersionMode') }}</label>
+								<select id="s-codex-version-mode" v-model="codexVersionMode" class="input" aria-describedby="s-codex-version-hint">
+									<option value="auto">{{ t('settings.codexVersionAuto') }}</option>
+									<option value="fixed">{{ t('settings.codexVersionFixed') }}</option>
+								</select>
+								<p id="s-codex-version-hint" class="setting-option-hint">{{ t(codexVersionMode === 'auto' ? 'settings.codexAutoHint' : 'settings.codexFixedHint') }}</p>
+							</div>
+							<div v-if="codexVersionMode === 'fixed'">
+								<label class="label" for="s-codex-version">{{ t('settings.codexVersionValue') }}</label>
+								<input id="s-codex-version" v-model="codexFixedVersion" class="input font-mono" placeholder="1.2.3" spellcheck="false" :aria-invalid="codexVersionInvalid" :aria-describedby="codexVersionInvalid ? 's-codex-version-error' : undefined" />
+								<p v-if="codexVersionInvalid" id="s-codex-version-error" class="setting-option-hint">{{ t('settings.codexVersionError') }}</p>
+							</div>
+						</div>
+
+						<div class="border-t border-[color:var(--color-line)] pt-3">
+							<div v-if="!codexEditTemplate" class="grid gap-4 sm:grid-cols-2">
+								<div>
+									<label class="label" for="s-codex-client-name">{{ t('settings.codexClientName') }}</label>
+									<input id="s-codex-client-name" v-model="codexClientName" class="input font-mono" :placeholder="defaultCodexClientName" spellcheck="false" :aria-invalid="codexClientNameInvalid || codexTemplateInvalid" :aria-describedby="codexClientNameInvalid ? 's-codex-client-error' : codexTemplateInvalid ? 's-codex-template-error' : undefined" />
+									<p v-if="codexClientNameInvalid" id="s-codex-client-error" class="setting-option-hint">{{ t('settings.codexClientNameError') }}</p>
+								</div>
+								<div>
+									<label class="label" for="s-codex-platform">{{ t('settings.codexPlatform') }}</label>
+									<input id="s-codex-platform" v-model="codexPlatform" class="input font-mono" placeholder="Linux; x64" spellcheck="false" :aria-invalid="codexTemplateInvalid" :aria-describedby="codexTemplateInvalid ? 's-codex-template-error' : undefined" />
+								</div>
+							</div>
+							<div v-else>
+								<label class="label" for="s-codex-template">{{ t('settings.codexTemplate') }}</label>
+								<input id="s-codex-template" v-model="codexRawTemplate" class="input font-mono" :placeholder="defaultCodexTemplate" spellcheck="false" :aria-invalid="codexTemplateInvalid" :aria-describedby="codexTemplateInvalid ? 's-codex-template-help s-codex-template-error' : 's-codex-template-help'" />
+								<p id="s-codex-template-help" class="setting-option-hint">{{ t('settings.codexTemplateHelp') }} <code class="font-mono">{{ versionPlaceholder }}</code></p>
+							</div>
+							<p v-if="codexTemplateInvalid" id="s-codex-template-error" class="setting-option-hint">{{ t('settings.codexTemplateError') }}</p>
+							<div class="mt-2 flex flex-wrap gap-2">
+								<button v-if="!codexEditTemplate" type="button" class="btn" @click="editCodexTemplate">{{ t('settings.codexEditTemplate') }}</button>
+								<button v-else-if="codexCanUseBuilder" type="button" class="btn" @click="loadCodexTemplate(codexRawTemplate)">{{ t('settings.codexUseBuilder') }}</button>
+								<button v-if="codexEditTemplate || codexTemplate" type="button" class="btn" @click="loadCodexTemplate('')">{{ t('settings.codexResetTemplate') }}</button>
+							</div>
+						</div>
+
+						<div class="rounded-lg border border-[color:var(--color-line)] px-3 py-2">
+							<p id="s-codex-preview-label" class="label">{{ t('settings.codexPreview') }}</p>
+							<output class="block break-all whitespace-pre-wrap font-mono text-[12px]" aria-labelledby="s-codex-preview-label">{{ codexPreview }}</output>
+							<p v-if="codexVersionMode === 'auto'" class="setting-option-hint">{{ t('settings.codexPreviewAuto') }}</p>
+						</div>
+					</div>
+				</section>
+
 				<div class="card panel-content">
 					<h2 class="section-title"><Activity aria-hidden="true" />{{ t('settings.captureSection') }}</h2>
 					<div class="space-y-3">

@@ -382,6 +382,8 @@ export interface Capture {
 }
 
 export interface Settings {
+    codex_client_version?: string
+    codex_user_agent_template?: string
     compaction_mode?: 'auto' | 'on' | 'off'
     compaction_model?: string
     compaction_prompt?: string

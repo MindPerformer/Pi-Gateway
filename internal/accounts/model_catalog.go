@@ -171,6 +171,10 @@ func (m *Manager) fetchCatalogSource(ctx context.Context, accountID int64, sourc
 	return result
 }
 
+type codexCatalogIdentity struct {
+	version, userAgentTemplate string
+}
+
 func (m *Manager) fetchCodexModelCatalog(ctx context.Context, account *store.Account, cfg *config.Config) ([]store.CatalogModel, error) {
 	token, accountID, linked, err := m.EnsureFreshCodexToken(ctx, account)
 	if err != nil {
@@ -179,7 +183,16 @@ func (m *Manager) fetchCodexModelCatalog(ctx context.Context, account *store.Acc
 	if !linked || token == "" || strings.TrimSpace(accountID) == "" {
 		return nil, errors.New("a linked Codex credential and its own account identity are required")
 	}
-	version, err := m.resolveCodexClientVersion(ctx, cfg.Models.CodexClientVersion, account.ProxyURL)
+	m.mu.Lock()
+	identity := m.codexCatalogSettings
+	m.mu.Unlock()
+	if identity.version == "" {
+		identity.version = cfg.Models.CodexClientVersion
+	}
+	if identity.userAgentTemplate == "" {
+		identity.userAgentTemplate = config.DefaultCodexUserAgentTemplate
+	}
+	version, err := m.resolveCodexClientVersion(ctx, identity.version, account.ProxyURL)
 	if err != nil {
 		return nil, modelCatalogContextError(err)
 	}
@@ -193,7 +206,7 @@ func (m *Manager) fetchCodexModelCatalog(ctx context.Context, account *store.Acc
 	headers.Set("Authorization", "Bearer "+token)
 	headers.Set("ChatGPT-Account-Id", accountID)
 	headers.Set("Accept", "application/json")
-	headers.Set("User-Agent", "codex-tui/"+version)
+	headers.Set("User-Agent", strings.Replace(identity.userAgentTemplate, config.CodexVersionPlaceholder, version, 1))
 	headers.Set("Originator", codexCatalogOriginator)
 	headers.Set("Version", version)
 	return m.fetchModelCatalogRequest(ctx, account, resolved.CodexModelsURL(), headers, store.ModelSourceCodex)

@@ -135,8 +135,8 @@ upstream:
   stainless_runtime_version: v24.21.0
 
 accounts:
-  # Refresh an access token when it expires within this window.
-  refresh_margin_seconds: 3600
+  # Refresh an access token when it expires within this window, capped at half its known lifetime.
+  refresh_margin_seconds: 300
   refresh_interval_seconds: 30
   refresh_concurrency: 2
   max_concurrent_per_account: 3

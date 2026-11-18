@@ -18,6 +18,74 @@ import (
 	"pi-gateway/internal/store"
 )
 
+func TestCodexRuntimeSettingsAffectOnlyCodexCatalog(t *testing.T) {
+	const fixed = "0.172.3"
+	const template = "codex-custom/{version} (Linux; x64)"
+	const primaryUA = "unmodified-pi"
+	type request struct{ path, queryVersion, version, userAgent string }
+	seen := make(chan request, 8)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- request{r.URL.Path, r.URL.Query().Get("client_version"), r.Header.Get("Version"), r.UserAgent()}
+		_, _ = io.WriteString(w, `{"models":[]}`)
+	}))
+	t.Cleanup(target.Close)
+	h := newProxyHarness(t, target.URL+"/v1", "sse")
+	h.admin.cfg.Models.CodexBaseURL = target.URL + "/codex"
+	ctx := context.Background()
+	if err := h.db.SaveCodexCredential(ctx, h.account.ID, "local-codex-token", "local-codex-refresh", "", time.Now().Add(time.Hour).UnixMilli(), "local-codex-account"); err != nil {
+		t.Fatal(err)
+	}
+	settingsURL := "/api/settings"
+	initial := h.request(t, http.MethodGet, settingsURL, "", http.StatusOK, true)
+	if got := initial["current"].(map[string]any)["codex_client_version"]; got != config.DefaultCodexClientVersion {
+		t.Fatalf("settings did not inherit configured version: %v", got)
+	}
+	h.request(t, http.MethodPut, settingsURL, fmt.Sprintf(`{"codex_client_version":%q,"codex_user_agent_template":%q,"user_agent":%q}`, fixed, template, primaryUA), http.StatusOK, true)
+	for _, body := range []string{
+		`{"codex_client_version":"bad version"}`,
+		`{"codex_user_agent_template":"client/{version}\r\nInjected: yes"}`,
+		`{"codex_user_agent_template":"client/{version} ({unknown})"}`,
+		`{"codex_user_agent_template":"client/{version}/{version}"}`,
+	} {
+		h.request(t, http.MethodPut, settingsURL, body, http.StatusBadRequest, true)
+	}
+	// A partial settings update from an older admin client must preserve Codex values.
+	h.request(t, http.MethodPut, settingsURL, `{"switch_on_429":false}`, http.StatusOK, true)
+	h.request(t, http.MethodPost, fmt.Sprintf("/api/accounts/%d/models/refresh", h.account.ID), "", http.StatusOK, true)
+	var primary, codex bool
+	for len(seen) > 0 {
+		r := <-seen
+		switch {
+		case strings.HasPrefix(r.path, "/codex/"):
+			codex = true
+			if r.queryVersion != fixed || r.version != fixed || r.userAgent != strings.Replace(template, "{version}", fixed, 1) {
+				t.Fatalf("Codex settings not applied consistently: %+v", r)
+			}
+		default:
+			primary = true
+			if r.queryVersion != "" || r.version != "" || r.userAgent != primaryUA {
+				t.Fatalf("Codex settings leaked to primary catalog: %+v", r)
+			}
+		}
+	}
+	if !primary || !codex {
+		t.Fatalf("expected both catalogs, primary=%v codex=%v", primary, codex)
+	}
+	if err := h.admin.settings.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.admin.settings.Get(); got.CodexClientVersion != fixed || got.CodexUserAgentTemplate != template {
+		t.Fatal("Codex settings did not survive reload")
+	}
+	h.request(t, http.MethodPut, settingsURL, `{"codex_client_version":"auto","codex_user_agent_template":""}`, http.StatusOK, true)
+	if err := h.admin.settings.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.admin.settings.Get(); got.CodexClientVersion != "auto" || got.CodexUserAgentTemplate != "" {
+		t.Fatal("resetting Codex settings did not survive reload")
+	}
+}
+
 // This covers the real admin -> Manager -> release/manifest -> SQLite -> public
 // catalog path. Model entries are supplied only by the local Codex manifest.
 func TestCodexAutoVersionAdminRefreshAndPublicModels(t *testing.T) {

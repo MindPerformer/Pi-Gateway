@@ -21,7 +21,7 @@ const (
 	codexVersionCacheTTL       = time.Hour
 	codexVersionRetryDelay     = time.Minute
 	codexVersionRequestTimeout = 5 * time.Second
-	maxCodexReleaseBytes       = 256 << 10
+	maxCodexReleaseBytes       = 2 << 20
 	codexCatalogOriginator     = "codex_cli_rs"
 )
 

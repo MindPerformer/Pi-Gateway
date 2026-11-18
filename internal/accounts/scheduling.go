@@ -37,6 +37,7 @@ func (m *Manager) SetSettings(s *store.Settings) {
 	if s.RefreshMarginSecs > 0 {
 		m.refreshMargin = time.Duration(s.RefreshMarginSecs) * time.Second
 	}
+	m.codexCatalogSettings = codexCatalogIdentity{s.CodexClientVersion, s.CodexUserAgentTemplate}
 	m.smartWeights = w
 	m.warnSmartLocked(err)
 }

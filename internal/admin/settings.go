@@ -117,6 +117,17 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if !validateSchedulingSettings(w, &body) {
 		return
 	}
+	if body.CodexClientVersion == "" {
+		body.CodexClientVersion = config.AutoCodexClientVersion
+	}
+	if err := config.ValidateCodexVersion(body.CodexClientVersion); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := config.ValidateCodexUserAgentTemplate(body.CodexUserAgentTemplate); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if body.ModelMappings == nil {
 		body.ModelMappings = map[string]string{}
 	}

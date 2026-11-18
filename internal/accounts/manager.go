@@ -32,7 +32,8 @@ type Manager struct {
 	factory *egress.Factory
 
 	// Codex catalog negotiation is independent of Pi generation identity.
-	codexVersions codexVersionCache
+	codexVersions        codexVersionCache
+	codexCatalogSettings codexCatalogIdentity // protected by mu
 
 	mu sync.Mutex
 	// inflight tracks concurrent requests per account id.
@@ -88,7 +89,7 @@ func New(st *store.Store, oauthClient *oauth.Client, factory *egress.Factory, op
 		opts.Logger = slog.Default()
 	}
 	if opts.RefreshMargin <= 0 {
-		opts.RefreshMargin = time.Hour
+		opts.RefreshMargin = 5 * time.Minute
 	}
 	if opts.MaxPerAccount < 0 {
 		opts.MaxPerAccount = 0
@@ -135,8 +136,16 @@ func New(st *store.Store, oauthClient *oauth.Client, factory *egress.Factory, op
 // SetRefreshMargin updates the refresh margin (runtime settings).
 func (m *Manager) SetRefreshMargin(d time.Duration) {
 	if d > 0 {
+		m.mu.Lock()
 		m.refreshMargin = d
+		m.mu.Unlock()
 	}
+}
+
+func (m *Manager) currentRefreshMargin() time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.refreshMargin
 }
 
 // SetMaxPerAccount updates the per-account concurrency ceiling.
@@ -463,8 +472,32 @@ func (m *Manager) EnsureFreshToken(ctx context.Context, a *store.Account) (strin
 		return "", "", err
 	}
 	defer lock.Unlock()
-	if a.AccessToken != "" && a.ExpiresAt > 0 && time.Now().Add(2*time.Minute).Before(time.UnixMilli(a.ExpiresAt)) {
+	if primaryTokenUsable(a, m.nowTime()) {
 		return a.AccessToken, a.AccountID, nil
+	}
+	if a.RefreshToken != "" && m.store != nil && a.ID > 0 {
+		// A scheduled or on-demand refresh may have rotated this snapshot's
+		// refresh token while we waited for the lock.
+		latest, err := m.store.GetAccount(ctx, a.ID)
+		if err != nil {
+			return "", "", err
+		}
+		if latest == nil {
+			return "", "", fmt.Errorf("account %q no longer exists", a.Name)
+		}
+		// Some callers use the updated credential on their snapshot after this
+		// call; leave its management and routing fields untouched.
+		snapshot := a
+		defer func() {
+			snapshot.AccessToken, snapshot.RefreshToken = latest.AccessToken, latest.RefreshToken
+			snapshot.ExpiresAt, snapshot.AccountID = latest.ExpiresAt, latest.AccountID
+			snapshot.PlanType, snapshot.OAuthClientID = latest.PlanType, latest.OAuthClientID
+			snapshot.Status, snapshot.LastError = latest.Status, latest.LastError
+		}()
+		a = latest
+		if primaryTokenUsable(a, m.nowTime()) {
+			return a.AccessToken, a.AccountID, nil
+		}
 	}
 	if a.RefreshToken == "" {
 		if a.AccessToken == "" {
@@ -476,6 +509,10 @@ func (m *Manager) EnsureFreshToken(ctx context.Context, a *store.Account) (strin
 		return "", "", err
 	}
 	return a.AccessToken, a.AccountID, nil
+}
+
+func primaryTokenUsable(a *store.Account, now time.Time) bool {
+	return a.AccessToken != "" && a.ExpiresAt > 0 && now.Add(2*time.Minute).Before(time.UnixMilli(a.ExpiresAt))
 }
 
 // Refresh forces a token refresh for one account's primary (Sign in with ChatGPT)
@@ -818,8 +855,8 @@ func (m *Manager) StartRefresher(ctx context.Context, interval time.Duration, co
 }
 
 func (m *Manager) refreshDue(ctx context.Context, concurrency int) {
-	deadline := time.Now().Add(m.refreshMargin).UnixMilli()
-	due, err := m.store.ListAccountsDueForRefresh(ctx, deadline)
+	now, margin := m.nowTime(), m.currentRefreshMargin()
+	due, err := m.store.ListAccountsDueForRefresh(ctx, now.Add(margin).UnixMilli())
 	if err != nil {
 		m.logger.Error("listing refresh candidates failed", "error", err)
 		return
@@ -831,6 +868,9 @@ func (m *Manager) refreshDue(ctx context.Context, concurrency int) {
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for _, a := range due {
+		if !primaryRefreshDue(a, now, margin) {
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			wg.Wait()
@@ -843,12 +883,67 @@ func (m *Manager) refreshDue(ctx context.Context, concurrency int) {
 			defer func() { <-sem }()
 			tctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 			defer cancel()
-			if err := m.Refresh(tctx, acc); err != nil {
+			if err := m.refreshScheduled(tctx, acc.ID); err != nil {
 				m.logger.Debug("scheduled refresh failed", "account", acc.Name, "error", err)
 			}
 		}(a)
 	}
 	wg.Wait()
+}
+
+func (m *Manager) refreshScheduled(ctx context.Context, id int64) error {
+	lock := m.refreshLock(id)
+	if err := lock.LockContext(ctx); err != nil {
+		return err
+	}
+	defer lock.Unlock()
+
+	// Another refresh or account edit may have made the candidate stale.
+	a, err := m.store.GetAccount(ctx, id)
+	if err != nil || a == nil {
+		return err
+	}
+	if !primaryRefreshDue(a, m.nowTime(), m.currentRefreshMargin()) {
+		return nil
+	}
+	return m.refreshPrimaryLocked(ctx, a)
+}
+
+func primaryRefreshDue(a *store.Account, now time.Time, margin time.Duration) bool {
+	if !a.Enabled || a.RefreshToken == "" {
+		return false
+	}
+	switch a.Status {
+	case store.AccountStatusReady, store.AccountStatusUnknown, store.AccountStatusExpired:
+	default:
+		return false
+	}
+	if a.ExpiresAt <= now.UnixMilli() {
+		return true
+	}
+
+	expires := time.UnixMilli(a.ExpiresAt)
+	// The stored expiry includes the provider safety buffer. Use the latest
+	// known issuance/rotation time so an oversized margin cannot make a
+	// newly refreshed credential due again on the next scheduler tick.
+	var issued time.Time
+	if a.AccessToken != "" {
+		if a.LastRefreshAt > 0 && a.LastRefreshAt <= now.UnixMilli() {
+			issued = time.UnixMilli(a.LastRefreshAt)
+		}
+		if claims, err := oauth.DecodeJWT(a.AccessToken); err == nil {
+			if seconds, ok := claims["iat"].(float64); ok && seconds > 0 && seconds <= float64(now.Unix()) {
+				jwtIssued := time.Unix(int64(seconds), 0)
+				if jwtIssued.After(issued) {
+					issued = jwtIssued
+				}
+			}
+		}
+	}
+	if !issued.IsZero() {
+		margin = min(margin, expires.Sub(issued)/2)
+	}
+	return a.ExpiresAt <= now.Add(margin).UnixMilli()
 }
 
 // ValidateProxy checks a proxy URL for an account.

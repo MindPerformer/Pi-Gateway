@@ -51,7 +51,7 @@ func (c *Config) codexModelsURL() (*url.URL, error) {
 	if version == "" || version == AutoCodexClientVersion {
 		version = DefaultCodexClientVersion
 	}
-	if err := validateCodexVersion(version); err != nil {
+	if err := ValidateCodexVersion(version); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(base) != base {
@@ -129,7 +129,33 @@ func hasCodexURLControl(value string) bool {
 	return false
 }
 
-func validateCodexVersion(version string) error {
+const (
+	DefaultCodexUserAgentTemplate = "codex-tui/{version}"
+	CodexVersionPlaceholder       = "{version}"
+)
+
+// ValidateCodexUserAgentTemplate checks a printable template with exactly one version placeholder.
+// An empty template selects the built-in default.
+func ValidateCodexUserAgentTemplate(template string) error {
+	if template == "" {
+		return nil
+	}
+	if len(template) > 256 || strings.TrimSpace(template) != template {
+		return errors.New("codex_user_agent_template: maximum 256 bytes with no leading or trailing whitespace")
+	}
+	for i := range len(template) {
+		if template[i] < ' ' || template[i] > '~' {
+			return errors.New("codex_user_agent_template: only printable ASCII is allowed")
+		}
+	}
+	if strings.Count(template, CodexVersionPlaceholder) != 1 || strings.ContainsAny(strings.Replace(template, CodexVersionPlaceholder, "", 1), "{}") {
+		return errors.New("codex_user_agent_template: expected exactly one {version} placeholder and no other braces")
+	}
+	return nil
+}
+
+// ValidateCodexVersion accepts auto or an explicit version safe for use on the wire.
+func ValidateCodexVersion(version string) error {
 	if len(version) > 64 {
 		return errors.New("models.codex_client_version: invalid length (maximum 64 bytes)")
 	}

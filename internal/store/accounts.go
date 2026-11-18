@@ -174,11 +174,12 @@ func (s *Store) CreateAccount(ctx context.Context, a *Account, cooldownOverride 
 func (s *Store) UpdateAccount(ctx context.Context, a *Account) error {
 	a.UpdatedAt = NowMS()
 	_, err := s.ExecContext(ctx, `UPDATE accounts SET
+		last_refresh_at=CASE WHEN access_token<>? OR expires_at<>? THEN 0 ELSE last_refresh_at END,
 		name=?, email=?, account_id=?, plan_type=?, access_token=?, refresh_token=?, id_token=?,
 		expires_at=?, enabled=?, weight=?, concurrency=?, proxy_url=?, status=?, last_error=?, updated_at=?,
 		oauth_client_id=?, upstream_protocol=?
 		WHERE id=?`,
-		a.Name, a.Email, a.AccountID, a.PlanType, a.AccessToken, a.RefreshToken, a.IDToken,
+		a.AccessToken, a.ExpiresAt, a.Name, a.Email, a.AccountID, a.PlanType, a.AccessToken, a.RefreshToken, a.IDToken,
 		a.ExpiresAt, boolToInt(a.Enabled), a.Weight, a.Concurrency, a.ProxyURL, a.Status, a.LastError,
 		a.UpdatedAt, a.OAuthClientID, a.UpstreamProtocol, a.ID)
 	if err != nil {
@@ -306,7 +307,7 @@ func (s *Store) AttachChatGPTCredential(ctx context.Context, id int64, credentia
 	result, err := s.ExecContext(ctx, `UPDATE accounts SET
 	 enabled=CASE WHEN access_token='' THEN 1 ELSE enabled END,
 	 email=?,plan_type=?,access_token=?,refresh_token=?,id_token=?,oauth_client_id=?,
-	 expires_at=?,status=?,last_error='',updated_at=? WHERE id=?`,
+	 expires_at=?,status=?,last_error='',last_refresh_at=0,updated_at=? WHERE id=?`,
 		email, plan, access, refresh, idToken, clientID, expiresAt, AccountStatusReady, NowMS(), id)
 	if err != nil {
 		return err

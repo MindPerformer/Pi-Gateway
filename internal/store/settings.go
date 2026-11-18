@@ -29,6 +29,8 @@ type Settings struct {
 	ReasoningSummary              string            `json:"reasoning_default_summary"`
 	DefaultProxyURL               string            `json:"default_proxy_url"`
 	UserAgent                     string            `json:"user_agent"`
+	CodexClientVersion            string            `json:"codex_client_version"`
+	CodexUserAgentTemplate        string            `json:"codex_user_agent_template"`
 	RotationStrategy              string            `json:"rotation_strategy"`
 	RequestIntervalMS             int               `json:"request_interval_ms"`
 	MaxWaitingPerKey              int               `json:"max_waiting_per_key"`
@@ -99,6 +101,8 @@ func (s *Store) SaveSettings(ctx context.Context, in *Settings) error {
 		"reasoning_default_summary":        in.ReasoningSummary,
 		"default_proxy_url":                in.DefaultProxyURL,
 		"user_agent":                       in.UserAgent,
+		"codex_client_version":             in.CodexClientVersion,
+		"codex_user_agent_template":        in.CodexUserAgentTemplate,
 		"rotation_strategy":                in.RotationStrategy,
 		"request_interval_ms":              fmt.Sprintf("%d", in.RequestIntervalMS),
 		"max_waiting_per_key":              fmt.Sprintf("%d", in.MaxWaitingPerKey),
@@ -264,6 +268,8 @@ func (out *Settings) applyStringValues(values map[string]string) {
 		"reasoning_default_summary": &out.ReasoningSummary,
 		"default_proxy_url":         &out.DefaultProxyURL,
 		"user_agent":                &out.UserAgent,
+		"codex_client_version":      &out.CodexClientVersion,
+		"codex_user_agent_template": &out.CodexUserAgentTemplate,
 	} {
 		if value, exists := values[name]; exists {
 			*field = value

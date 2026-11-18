@@ -158,7 +158,7 @@ func (codexVersionTestReadError) Read([]byte) (int, error) {
 }
 
 func TestFetchLatestCodexClientVersionResponses(t *testing.T) {
-	const limit = 256 << 10
+	const limit = 2 << 20
 	const valid = `{"tag_name":"rust-v0.161.0"}`
 	const padded = `{"tag_name":"rust-v0.161.0","padding":""}`
 	atLimit := strings.Replace(padded, `"padding":""`, `"padding":"`+strings.Repeat("x", limit-len(padded))+`"`, 1)
@@ -170,6 +170,7 @@ func TestFetchLatestCodexClientVersionResponses(t *testing.T) {
 		{name: "plain", body: valid},
 		{name: "gzip", body: valid, encoding: "gzip"},
 		{name: "deflate", body: valid, encoding: "deflate"},
+		{name: "large_release", body: strings.Replace(padded, `"padding":""`, `"padding":"`+strings.Repeat("x", 330<<10)+`"`, 1), encoding: "gzip"},
 		{name: "exact_limit", body: atLimit},
 		{name: "over_limit", body: atLimit + " ", wantError: "exceeds size limit"},
 		{name: "gzip_expansion_limit", body: atLimit + " ", encoding: "gzip", wantError: "exceeds size limit"},

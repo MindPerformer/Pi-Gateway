@@ -227,7 +227,7 @@ func Default() *Config {
 			StainlessRuntimeVersion:        "v24.21.0",
 		},
 		Accounts: AccountsConfig{
-			RefreshMarginSeconds:    3600,
+			RefreshMarginSeconds:    300,
 			RefreshIntervalSeconds:  30,
 			RefreshConcurrency:      2,
 			MaxConcurrentPerAccount: 3,

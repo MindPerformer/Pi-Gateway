@@ -60,9 +60,9 @@ func TestUsageSummaryAndDimensionsFrozenMetrics(t *testing.T) {
 	reportStoreTestFailure(t, u.TTFT != (UsagePercentiles{200, 200, 200}), func() {
 		t.Errorf("TTFT=%+v", u.TTFT)
 	})
-	// Successful samples are 25 and 50 (TTFT equals duration, so use total).
-	// Cancelled/incomplete requests are excluded from throughput.
-	reportStoreTestFailure(t, u.OutputTPS != (UsagePercentiles{50, 50, 50}), func() {
+	// Successful samples are 25 and 50; the cancelled request contributes 40.
+	// Incomplete requests remain excluded because their generation did not finish.
+	reportStoreTestFailure(t, u.OutputTPS != (UsagePercentiles{40, 50, 50}), func() {
 		t.Errorf("TPS=%+v", u.OutputTPS)
 	})
 
@@ -72,7 +72,7 @@ func TestUsageSummaryAndDimensionsFrozenMetrics(t *testing.T) {
 	checkFloat(t, "model a request share", models[0].Share, .6)
 	checkFloat(t, "model b request share", models[1].Share, .4)
 	checkFloat(t, "model a TPS", models[0].OutputTPS, 37.5)
-	checkFloat(t, "model b TPS", models[1].OutputTPS, 0)
+	checkFloat(t, "model b TPS", models[1].OutputTPS, 40)
 	keys, err := s.UsageByKey(ctx, f)
 	requireDataNoError(t, err)
 	requireDataTruef(t, !(len(keys) != 2 || keys[0].ID != 2 || keys[0].RequestCount != 3 || keys[1].ID != 1 || keys[1].RequestCount != 2), "keys must group by ID despite renaming: %+v", keys)
@@ -83,7 +83,7 @@ func TestUsageSummaryAndDimensionsFrozenMetrics(t *testing.T) {
 	requireDataNoError(t, err)
 	requireDataTruef(t, !(len(trend) != 2 || trend[0].BucketStart != start || trend[0].RequestCount != 3 || trend[1].BucketStart != start+86400000 || trend[1].RequestCount != 2), "daily trend=%+v", trend)
 	checkFloat(t, "daily first TPS", trend[0].OutputTPS, 37.5)
-	checkFloat(t, "daily second TPS", trend[1].OutputTPS, 0)
+	checkFloat(t, "daily second TPS", trend[1].OutputTPS, 40)
 	hours, err := s.UsageTrend(ctx, f, "hour")
 	requireDataNoError(t, err)
 	requireDataTruef(t, !(len(hours) != 3 || hours[0].BucketStart != start || hours[1].BucketStart != start+3600000 || hours[2].BucketStart != start+86400000), "hourly trend=%+v", hours)

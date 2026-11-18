@@ -287,15 +287,15 @@ func (s *Store) ListUsageRecords(ctx context.Context, f UsageFilter) ([]UsageRec
 }
 
 // Match codex2api's computeOutputTokensPerSec, including the 20ms fallback.
-// Unfinished/failed requests are not throughput samples.
-const outputTPSValid = `outcome='succeeded' AND status_code<400 AND output_tokens>0 AND latency_ms>0`
+// Cancelled requests with measured partial output are valid throughput samples.
+const outputTPSValid = `(outcome='succeeded' AND status_code<400 OR outcome='cancelled') AND output_tokens>0 AND latency_ms>0`
 const outputTPSExpr = `CASE WHEN ` + outputTPSValid + `
  THEN output_tokens*1000.0/(CASE WHEN first_token_ms>0 AND first_token_ms<latency_ms AND latency_ms-first_token_ms>=20
  THEN latency_ms-first_token_ms ELSE latency_ms END) END`
 
 // OutputTPS uses the same generation interval as aggregate throughput metrics.
 func (r UsageRecord) OutputTPS() *float64 {
-	if r.Outcome != "succeeded" || r.StatusCode >= 400 || r.OutputTokens == nil || *r.OutputTokens <= 0 || r.LatencyMS <= 0 {
+	if (r.Outcome != "succeeded" && r.Outcome != "cancelled") || (r.Outcome != "cancelled" && r.StatusCode >= 400) || r.OutputTokens == nil || *r.OutputTokens <= 0 || r.LatencyMS <= 0 {
 		return nil
 	}
 	generationMS := r.LatencyMS
